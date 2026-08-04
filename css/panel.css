@@ -1,0 +1,138 @@
+/* 轨迹独立模式下隐藏的常规区块 */
+.hidden-by-mode {
+  display: none !important;
+}
+
+/* ---------- 底部面板 ---------- */
+.bottom-panel {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  background: var(--bg-panel);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: var(--shadow-panel);
+  max-height: 45vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 面板顶部渐变光晕 */
+.bottom-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0, 212, 170, 0.35), rgba(0, 163, 255, 0.35), transparent);
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* 面板把手 */
+.panel-handle {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0 6px;
+  cursor: grab;
+}
+
+.handle-bar {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--handle-bar);
+  transition: background 0.2s;
+}
+
+.panel-handle:active .handle-bar {
+  background: var(--handle-bar-active);
+}
+
+/* 面板头部 */
+.panel-header {
+  position: relative;
+  padding: 0 20px 10px;
+  text-align: center;
+}
+
+.panel-title {
+  font-size: 16px;
+  font-weight: normal;
+  letter-spacing: -0.02em;
+  background: var(--accent-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  display: inline;
+}
+/* ---------- 面板主体 ---------- */
+.panel-body {
+  padding: 0 20px calc(16px + var(--safe-bottom));
+}
+/* ---------- 操作按钮 ---------- */
+.action-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: normal;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn-primary {
+  background: var(--accent-gradient);
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(0, 212, 170, 0.25);
+}
+
+.btn-primary:active {
+  box-shadow: 0 2px 8px rgba(0, 212, 170, 0.2);
+}
+
+.btn-secondary {
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+.btn-secondary:active {
+  background: var(--bg-hover);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-tertiary);
+  border: none;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.btn-ghost:hover {
+  color: var(--text-secondary);
+}
+
+.btn-ghost:active {
+  color: var(--accent-1);
+}
