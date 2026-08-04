@@ -1,6 +1,6 @@
 {
-  "appId": "com.trailrecorder.app",
-  "appName": "TrailRecorder",
+  "appId": "com.hzr.tujie",
+  "appName": "途刻",
   "webDir": "web",
   "server": {
     "hostname": "localhost",

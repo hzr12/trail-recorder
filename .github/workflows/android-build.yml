@@ -1,0 +1,238 @@
+﻿name: 构建 Android APK（途刻 TraceCraft）
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+    paths:
+      - 'native/**'
+      - 'index.html'
+      - 'js/**'
+      - 'css/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 构建途刻 APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 缓存 npm 依赖
+        uses: actions/cache@v5
+        with:
+          path: native/node_modules
+          key: npm-${{ hashFiles('native/package-lock.json') }}
+          restore-keys: npm-
+
+      - name: 缓存 Gradle
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('native/android/**/*.gradle') }}
+          restore-keys: gradle-
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: 配置 Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: 安装原生项目依赖
+        working-directory: native
+        run: npm install --no-audit --no-fund
+
+      - name: 构建 GNSS 插件（TypeScript → JS）
+        working-directory: native/gnss-plugin
+        run: npx tsc
+
+      - name: 添加 Android 平台
+        working-directory: native
+        run: npx cap add android || true
+
+      - name: 复制 Web 资源到 native/web/
+        run: |
+          mkdir -p native/web
+          cp -R index.html js css native/web/
+          ls -la native/web/
+
+      - name: 同步 Web 资源到 Android 项目
+        working-directory: native
+        run: npx cap sync android
+
+      - name: 配置原生后台定位（@capgo/background-geolocation）
+        working-directory: native
+        run: |
+          chmod +x scripts/setup-background-location.sh
+          ./scripts/setup-background-location.sh
+          echo "=== 验证通知图标 ==="
+          ls -la android/app/src/main/res/drawable/ic_tracking.xml
+
+      - name: 覆盖 User-Agent（桌面版 UA 测试瓦片差异）
+        run: |
+          cp native/ua-override/MainActivity.java native/android/app/src/main/java/com/hzr/tujie/MainActivity.java
+          echo "=== 验证 MainActivity.java ==="
+          head -15 native/android/app/src/main/java/com/hzr/tujie/MainActivity.java
+
+      - name: 集成 GNSS 插件到 Android 项目
+        working-directory: native
+        run: |
+          echo "" >> android/settings.gradle
+          echo "// GNSS data plugin" >> android/settings.gradle
+          echo "include ':gnss-data-plugin'" >> android/settings.gradle
+          echo "project(':gnss-data-plugin').projectDir = new File('../gnss-plugin/android')" >> android/settings.gradle
+
+          sed -i "s|implementation project(':capacitor-android')|implementation project(':capacitor-android')\n    implementation project(':gnss-data-plugin')|" android/app/build.gradle
+
+          echo "--- settings.gradle (tail) ---"
+          tail -5 android/settings.gradle
+          echo "--- app/build.gradle dependencies ---"
+          grep -A2 "gnss-data-plugin" android/app/build.gradle || echo "(checking insert location)"
+
+      - name: 确保 Manifest 包含定位权限（后备）
+        working-directory: native
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if ! grep -q "android.hardware.location.gps" "$MANIFEST"; then
+            sed -i '/<\/manifest>/i \ \ \ \ <uses-feature android:name="android.hardware.location.gps" />' "$MANIFEST"
+            echo "+ 已添加 GPS feature"
+          fi
+          if ! grep -q "ACCESS_BACKGROUND_LOCATION" "$MANIFEST"; then
+            sed -i '/<\/manifest>/i \ \ \ \ <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />' "$MANIFEST"
+            echo "+ 已添加 ACCESS_BACKGROUND_LOCATION"
+          fi
+
+      - name: 构建调试版 APK
+        working-directory: native/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: 签名 APK
+        run: |
+          KEYSTORE="native/circlemap.keystore"
+          APK="native/android/app/build/outputs/apk/debug/app-debug.apk"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="dev"
+          fi
+          APK_SIGNED="native/android/app/build/outputs/apk/debug/tujie-v${VERSION}.apk"
+          if [ ! -f "$APK" ]; then
+            echo "APK 不存在，跳过签名"
+            exit 0
+          fi
+          BT_DIR=$(ls "${ANDROID_HOME}/build-tools/" | sort -V | tail -1)
+          echo "使用 build-tools $BT_DIR"
+          "${ANDROID_HOME}/build-tools/${BT_DIR}/zipalign" -p -f 4 "$APK" "$APK_SIGNED"
+          "${ANDROID_HOME}/build-tools/${BT_DIR}/apksigner" sign \
+            --ks "$KEYSTORE" \
+            --ks-key-alias circlemap \
+            --ks-pass pass:circlemap123 \
+            --key-pass pass:circlemap123 \
+            "$APK_SIGNED"
+          echo "签名完成: $APK_SIGNED"
+
+      - name: 验证 APK 中的 GNSS 插件类
+        working-directory: native
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$APK" ]; then
+            echo "APK 不存在，跳过验证"
+            echo "::notice title=GNSS 验证::APK 不存在，跳过类验证"
+            exit 0
+          fi
+          if unzip -p "$APK" "*.dex" 2>/dev/null | strings | grep -qi "GnssData"; then
+            echo "## GNSS 插件类已验证" >> $GITHUB_STEP_SUMMARY
+            echo "在 APK 的 DEX 中找到 GnssData 类" | tee -a $GITHUB_STEP_SUMMARY
+            # 统计匹配行数上报注解器
+            COUNT=$(unzip -p "$APK" "*.dex" 2>/dev/null | strings | grep -c "GnssData")
+            echo "类引用次数: $COUNT" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ⚠️ 未找到 GNSS 插件类" >> $GITHUB_STEP_SUMMARY
+            echo "插件可能未被链接到构建中。" >> $GITHUB_STEP_SUMMARY
+            echo "请检查集成步骤的日志。" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 上传 APK 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: tujie-debug
+          path: native/android/app/build/outputs/apk/debug/tujie-*.apk
+          retention-days: 14
+
+      - name: 发布正式版到 GitHub Release（tag 推送）
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: 途刻 ${{ github.ref_name }}
+          body: |
+            ## 途刻 ${{ github.ref_name }}
+
+            ### 包含
+            - 腾讯地图轨迹记录（Canvas 叠加层，速度分色）
+            - 多轨迹会话管理 + 历史回放
+            - 轨迹活动报告导出（PNG）
+            - 深色/浅色主题
+
+            ### 安装
+            下载 APK 直接安装到 Android 设备（已签名，小米等设备可直接安装）。
+          files: native/android/app/build/outputs/apk/debug/tujie-*.apk
+          generate_release_notes: true
+
+      - name: 发布开发版到 GitHub Release（分支推送）
+        if: github.ref_type == 'branch' && !startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          TAG="dev-build"
+          APK_GLOB="native/android/app/build/outputs/apk/debug/tujie-*.apk"
+          APK_FILES=$(ls $APK_GLOB 2>/dev/null || true)
+          if [ -z "$APK_FILES" ]; then
+            echo "APK 不存在，跳过开发版发布"
+            exit 0
+          fi
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          gh release create "$TAG" \
+            --target "${{ github.sha }}" \
+            --title "途刻 开发版 (${{ github.sha }})" \
+            --prerelease \
+            --notes "自动构建，commit \`${{ github.sha }}\`，分支 \`${{ github.ref_name }}\`
+
+            此为开发版预发布，可能包含未稳定功能。
+
+            **构建信息**
+            - Commit: ${{ github.sha }}
+            - 分支: ${{ github.ref_name }}
+            - 触发: ${{ github.event_name }}" \
+            $APK_FILES
+          echo "开发版已更新"
+
+      - name: 汇总 APK 信息
+        working-directory: native
+        run: |
+          APK_PATH="android/app/build/outputs/apk/debug"
+          if [ -d "$APK_PATH" ]; then
+            echo "## APK 构建成功" >> $GITHUB_STEP_SUMMARY
+            for f in "$APK_PATH"/tujie-*.apk; do
+              if [ -f "$f" ]; then
+                SIZE=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null)
+                SIZE_MB=$(echo "scale=2; $SIZE/1048576" | bc)
+                echo "- \`$(basename "$f")\` ${SIZE_MB}MB（已签名）" >> $GITHUB_STEP_SUMMARY
+              fi
+            done
+          else
+            echo "## APK 不存在" >> $GITHUB_STEP_SUMMARY
+          fi

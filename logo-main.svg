@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 560">
+  <defs>
+    <linearGradient id="t" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2563EB"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="512" height="280" fill="#0B1120"/>
+  <path d="M 96 416 C 256 416, 256 256, 304 208 S 416 96, 448 96"
+    fill="none" stroke="url(#t)" stroke-width="40" stroke-linecap="round" filter="url(#glow)"/>
+  <circle cx="96" cy="416" r="20" fill="#2563EB"/>
+  <circle cx="304" cy="208" r="12" fill="#06B6D4"/>
+  <circle cx="448" cy="96" r="35" fill="url(#t)"/>
+  <circle cx="448" cy="96" r="15" fill="#FFFFFF"/>
+  <rect y="280" width="512" height="280" fill="#0B1120"/>
+  <text x="256" y="360" text-anchor="middle"
+    font-family="'HarmonyOS Sans SC', 'PingFang SC', sans-serif"
+    font-size="80" fill="#FFFFFF" letter-spacing="0.12em">途刻</text>
+  <text x="256" y="410" text-anchor="middle"
+    font-family="'HarmonyOS Sans', -apple-system, sans-serif"
+    font-size="20" fill="rgba(255,255,255,0.35)" letter-spacing="0.2em">TRACECRAFT</text>
+  <line x1="186" y1="460" x2="326" y2="460"
+    stroke="url(#t)" stroke-width="2" opacity="0.40" stroke-linecap="round"/>
+</svg>

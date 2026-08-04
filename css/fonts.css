@@ -1,0 +1,23 @@
+/* ============================================
+   HarmonyOS Sans — 本地字体声明（仅 Medium 字重）
+   使用 font-weight: normal 固定命中，
+   避免浏览器算法合成粗体，确保所有文字以 Medium 原型渲染。
+   ============================================ */
+
+/* 西文 + 西文标点 */
+@font-face {
+  font-family: 'HarmonyOS Sans';
+  font-style: normal;
+  font-weight: normal;
+  font-display: swap;
+  src: url('./fonts/HarmonyOS_Sans_Medium.ttf') format('truetype');
+}
+
+/* 简体中文 */
+@font-face {
+  font-family: 'HarmonyOS Sans SC';
+  font-style: normal;
+  font-weight: normal;
+  font-display: swap;
+  src: url('./fonts/HarmonyOS_Sans_SC_Medium.ttf') format('truetype');
+}

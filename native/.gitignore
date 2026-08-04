@@ -1,0 +1,13 @@
+node_modules/
+dist/
+/web/
+/android/
+*.apk
+*.aab
+*.keystore
+!circlemap.keystore
+*.jks
+local.properties
+.idea/
+.gradle/
+build/

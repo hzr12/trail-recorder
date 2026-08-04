@@ -119,7 +119,7 @@
   color: var(--accent-1);
   flex-shrink: 0;
 }
-/* ---------- 轨迹记录区 ---------- */
+/* ---------- 轨迹记录�?---------- */
 .trail-section {
   margin-bottom: 14px;
 }
@@ -210,6 +210,28 @@
   color: var(--accent-1);
   border-color: rgba(0, 212, 170, 0.3);
 }
+/* 后台+省电模块 */
+.power-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.power-status {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.power-section .btn-sm {
+  font-size: 11px;
+  padding: 4px 8px;
+}
+.power-section .btn-sm.active {
+  background: rgba(0, 212, 170, 0.12);
+  color: var(--accent-1);
+  border-color: rgba(0, 212, 170, 0.3);
+}
 /* 速度色阶图例 */
 .speed-legend {
   display: flex;
@@ -278,4 +300,94 @@
 @keyframes trailPulse {
   0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 6px #FF4757; }
   50% { opacity: 0.5; transform: scale(0.75); box-shadow: 0 0 2px #FF4757; }
+}
+
+/* ========== 会话列表 ========== */
+.sessions-section { margin-bottom: 14px; }
+.sessions-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 8px;
+}
+.sessions-header-actions { display: flex; gap: 6px; }
+.sessions-list {
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: 220px; overflow-y: auto;
+}
+.session-group-label {
+  font-size: 10px; color: var(--text-tertiary); text-transform: uppercase;
+  letter-spacing: 0.08em; margin: 4px 0 2px;
+}
+.session-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.session-item:active { transform: scale(0.98); background: var(--bg-hover); }
+.session-item.selected { border-color: var(--accent-1); background: rgba(0,212,170,0.08); }
+.session-item.replaying { border-color: var(--accent-1); background: rgba(0,212,170,0.10); }
+.session-check {
+  width: 16px; height: 16px; border-radius: 3px;
+  border: 1.5px solid var(--border-color); flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s;
+}
+.session-check.checked { background: var(--accent-1); border-color: var(--accent-1); }
+.session-check.checked::after { content: '✓'; color: #fff; font-size: 10px; }
+.session-name {
+  flex: 1; font-size: 13px; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: text; padding: 1px 4px; border-radius: 3px;
+}
+.session-name:hover { background: var(--bg-input-focus); }
+.session-meta { font-size: 11px; color: var(--text-tertiary); display: flex; gap: 8px; white-space: nowrap; }
+.session-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.session-fav-btn, .session-del-btn {
+  width: 24px; height: 24px; border-radius: 50%; border: none;
+  background: transparent; cursor: pointer; font-size: 11px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-tertiary); transition: all 0.2s;
+}
+.session-fav-btn.active { color: #FFD700; }
+.session-fav-btn:hover { background: rgba(255,215,0,0.15); }
+.session-del-btn:hover { background: rgba(255,71,87,0.12); color: var(--danger); }
+
+/* ========== 回放控制栏 ========== */
+.replay-control {
+  margin: 8px 0; padding: 10px 12px;
+  background: rgba(0,212,170,0.06);
+  border: 1px solid rgba(0,212,170,0.25);
+  border-radius: var(--radius-md);
+}
+.replay-control.hidden { display: none; }
+.replay-progress-wrap { margin-bottom: 6px; }
+.replay-progress {
+  width: 100%; height: 4px; -webkit-appearance: none; appearance: none;
+  background: var(--bg-input); border-radius: 2px; outline: none; cursor: pointer;
+}
+.replay-progress::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px;
+  border-radius: 50%; background: var(--accent-1); cursor: pointer;
+}
+.replay-info {
+  display: flex; justify-content: space-between;
+  font-size: 11px; color: var(--text-tertiary);
+  margin-bottom: 8px; font-family: var(--font-mono);
+}
+.replay-controls { display: flex; align-items: center; gap: 6px; }
+.replay-speed-btns { display: flex; gap: 4px; margin: 0 4px; }
+.speed-btn {
+  padding: 3px 8px; font-size: 11px;
+  background: var(--bg-input); border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm); cursor: pointer;
+  color: var(--text-secondary); transition: all 0.2s;
+}
+.speed-btn:hover { border-color: var(--accent-1); color: var(--accent-1); }
+.speed-btn.active {
+  background: rgba(0,212,170,0.15); color: var(--accent-1);
+  border-color: rgba(0,212,170,0.4);
+}
 }

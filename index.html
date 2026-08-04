@@ -1,31 +1,34 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="dark" data-accent="cyan">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>Trail Recorder - 轨迹记录器</title>
+  <title>途刻</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="css/theme.css?t=20260804v1">
-  <link rel="stylesheet" href="css/base.css?t=20260804v1">
-  <link rel="stylesheet" href="css/map.css?t=20260804v1">
-  <link rel="stylesheet" href="css/gps.css?t=20260804v1">
-  <link rel="stylesheet" href="css/panel.css?t=20260804v1">
-  <link rel="stylesheet" href="css/trail.css?t=20260804v1">
-  <link rel="stylesheet" href="css/history.css?t=20260804v1">
-  <link rel="stylesheet" href="css/stats.css?t=20260804v1">
-  <link rel="stylesheet" href="css/responsive.css?t=20260804v1">
+  <link rel="stylesheet" href="css/fonts.css?t=20260710v1">
+  <link rel="stylesheet" href="css/theme.css?t=20260710v2">
+  <link rel="stylesheet" href="css/base.css?t=20260710v1">
+  <link rel="stylesheet" href="css/map.css?t=20260710v2">
+  <link rel="stylesheet" href="css/panel.css?t=20260710v7">
+  <link rel="stylesheet" href="css/gps.css?t=20260710v2">
+  <link rel="stylesheet" href="css/trail.css?t=20260804v3">
+  <link rel="stylesheet" href="css/toast-modal.css?t=20260710v1">
+  <link rel="stylesheet" href="css/responsive.css?t=20260710v1">
 </head>
 <body>
-  <div id="map"></div>
+  <div id="map">
+    <canvas id="circle-canvas"></canvas>
+    <canvas id="overlay-canvas"></canvas>
+  </div>
 
-  <!-- 浮动控制按钮组 -->
+  <!-- 浮动 GPS 按钮 -->
   <div class="floating-buttons">
     <button id="gps-btn" class="fab-btn" title="定位到我的位置" aria-label="定位">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="10" r="3"/>
-        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l1.41 1.41"/>
       </svg>
       <span class="pulse-ring"></span>
     </button>
@@ -40,11 +43,27 @@
     <!-- GPS 状态条 -->
     <div class="gps-status" id="gps-status">
       <span class="gps-dot"></span>
-      <span class="gps-text gps-offline">⊙ 未定位，点击 GPS 按钮定位</span>
+      <span class="gps-offline">⊙ 未定位，点击 GPS 按钮定位</span>
     </div>
 
     <div class="panel-header">
-      <h1 class="panel-title">轨迹记录器</h1>
+      <h1 class="panel-title">
+        <svg class="panel-logo" viewBox="0 0 256 256" width="24" height="24">
+          <defs>
+            <linearGradient id="lg" x1="0%" y1="100%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#2563EB"/>
+              <stop offset="100%" stop-color="#06B6D4"/>
+            </linearGradient>
+          </defs>
+          <path d="M 36 196 C 96 196, 96 128, 114 114 S 164 36, 180 36"
+            fill="none" stroke="url(#lg)" stroke-width="16" stroke-linecap="round"/>
+          <circle cx="36" cy="196" r="7" fill="#2563EB"/>
+          <circle cx="114" cy="114" r="4" fill="#06B6D4"/>
+          <circle cx="180" cy="36" r="13" fill="url(#lg)"/>
+          <circle cx="180" cy="36" r="5" fill="#FFFFFF"/>
+        </svg>
+        途刻
+      </h1>
       <button id="theme-btn" class="theme-toggle" title="切换浅色主题">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="5"/>
@@ -52,8 +71,9 @@
         </svg>
       </button>
     </div>
+
     <div class="accent-row">
-      <span class="accent-label">主题</span>
+      <span class="accent-label">主色</span>
       <button class="accent-dot active" data-accent="cyan" style="--c:#00D4AA" title="青"></button>
       <button class="accent-dot" data-accent="green" style="--c:#34D399" title="绿"></button>
       <button class="accent-dot" data-accent="blue" style="--c:#60A5FA" title="蓝"></button>
@@ -62,6 +82,7 @@
     </div>
 
     <div class="panel-body">
+
       <!-- 轨迹常驻记录条 -->
       <div class="trail-record-bar" id="trail-record-bar">
         <span class="trail-dot" id="trail-bar-dot"></span>
@@ -70,7 +91,17 @@
         <span class="trail-bar-dist" id="trail-bar-dist">0m</span>
       </div>
 
-      <!-- 轨迹记录区 -->
+      <!-- 最近定位 -->
+      <div class="fix-list-section">
+        <div class="fix-list-header">
+          <span class="field-label">最近定位 (<span id="fix-count">0</span>)</span>
+        </div>
+        <div class="fix-list" id="fix-list">
+          <div class="empty-state">暂无定位数据</div>
+        </div>
+      </div>
+
+      <!-- 轨迹记录 -->
       <div class="trail-section">
         <div class="trail-header">
           <span class="field-label">轨迹记录</span>
@@ -88,6 +119,10 @@
           <button id="trail-smooth-btn" class="btn-sm active">平滑</button>
           <button id="export-report-btn" class="btn-sm" title="导出活动报告图片（含轨迹、速度曲线、统计）">报告</button>
         </div>
+        <div class="power-section" id="power-section">
+          <span class="power-status" id="power-status">定位间隔: --</span>
+          <button id="power-saving-btn" class="btn-sm" title="省电模式">省电</button>
+        </div>
         <!-- 速度色阶图例 -->
         <div class="speed-legend">
           <div class="speed-legend-row">
@@ -104,8 +139,45 @@
         </div>
       </div>
 
+      <!-- 历史轨迹会话列表 -->
+      <div class="sessions-section" id="sessions-section" style="display:none">
+        <div class="sessions-header">
+          <span class="field-label">历史轨迹</span>
+          <div class="sessions-header-actions">
+            <button id="select-all-btn" class="btn-sm">全选</button>
+            <button id="batch-export-btn" class="btn-sm" disabled>导出</button>
+            <button id="sessions-clear-all-btn" class="btn-sm">清空</button>
+          </div>
+        </div>
+        <div class="sessions-list" id="sessions-list">
+          <div class="empty-state">暂无历史轨迹</div>
+        </div>
+      </div>
+
+      <!-- 回放控制栏 -->
+      <div id="replay-control" class="replay-control hidden">
+        <div class="replay-progress-wrap">
+          <input type="range" id="replay-progress" class="replay-progress" min="0" max="1000" value="0">
+        </div>
+        <div class="replay-info">
+          <span id="replay-time">00:00 / 00:00</span>
+          <span id="replay-dist">0m</span>
+          <span id="replay-speed">0 km/h</span>
+        </div>
+        <div class="replay-controls">
+          <button id="replay-play-btn" class="btn-sm">⏸</button>
+          <div class="replay-speed-btns">
+            <button class="speed-btn active" data-speed="1">1x</button>
+            <button class="speed-btn" data-speed="1.5">1.5x</button>
+            <button class="speed-btn" data-speed="2">2x</button>
+            <button class="speed-btn" data-speed="4">4x</button>
+          </div>
+          <button id="replay-close-btn" class="btn-sm">✕</button>
+        </div>
+      </div>
+
       <!-- 速度曲线面板 -->
-      <div id="speed-chart-section" class="speed-chart-section">
+      <div id="speed-chart-section" class="speed-chart-section hidden">
         <div class="speed-chart-header">
           <span class="speed-chart-title">速度曲线</span>
           <span class="speed-chart-info" id="speed-chart-info"></span>
@@ -118,105 +190,23 @@
         </div>
       </div>
 
-      <!-- 历史轨迹 -->
-      <div class="history-section">
-        <div class="history-header">
-          <span class="history-title">历史轨迹</span>
-          <button class="history-manage-btn" id="history-manage-btn">管理</button>
-        </div>
-        <div class="history-list" id="history-list">
-          <div class="history-empty">暂无轨迹记录</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 统计模态框 -->
-  <div class="modal-overlay hidden" id="stats-modal">
-    <div class="modal-box">
-      <div class="modal-header">
-        <span class="modal-title">轨迹统计</span>
-        <button class="modal-close" id="stats-close">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"/>
-            <line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-        </button>
-      </div>
-      <div class="modal-body">
-        <div class="trail-name-edit">
-          <input type="text" class="trail-name-input" id="trail-name-input" placeholder="轨迹名称" maxlength="30">
-          <button class="trail-name-save" id="trail-name-save">保存</button>
-        </div>
-        <div class="stat-grid">
-          <div class="stat-card">
-            <div class="stat-card-value" id="stat-distance">0m</div>
-            <div class="stat-card-label">总距离</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-card-value" id="stat-duration">0s</div>
-            <div class="stat-card-label">总时长</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-card-value" id="stat-avg-speed">--</div>
-            <div class="stat-card-label">平均速度</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-card-value" id="stat-max-speed">--</div>
-            <div class="stat-card-label">最高速度</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-card-value" id="stat-points">0</div>
-            <div class="stat-card-label">轨迹点数</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-card-value" id="stat-start-time">--</div>
-            <div class="stat-card-label">开始时间</div>
-          </div>
-        </div>
-        <div class="histogram-section">
-          <div class="histogram-title">速度分布</div>
-          <div class="histogram-body">
-            <canvas id="histogram-canvas"></canvas>
-          </div>
-        </div>
-        <div class="export-row">
-          <button class="export-btn" id="export-png-btn">导出图片</button>
-          <button class="export-btn" id="export-gpx-btn">导出 GPX</button>
-        </div>
-      </div>
     </div>
   </div>
 
   <!-- Tencent Map API -->
   <script charset="utf-8" src="https://map.qq.com/api/js?v=2.exp&key=OB4BZ-D4W3U-B7VVO-4PJWW-6TKDJ-WPB77&libraries=geometry,convertor"></script>
-
-  <!-- Chart.js（速度曲线 + 直方图） -->
+  <!-- Chart.js（速度曲线） -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 
   <!-- 应用脚本 -->
   <script src="js/config.js?t=20260804v1"></script>
-  <script src="js/toast.js?t=20260804v1"></script>
-  <script src="js/storage.js?t=20260804v1"></script>
-  <script src="js/trail.js?t=20260804v1"></script>
-  <script src="js/gps.js?t=20260804v1"></script>
-  <script src="js/map.js?t=20260804v2"></script>
-  <script src="js/trail-app.js?t=20260804v2"></script>
-  <script src="js/trail-ui.js?t=20260804v2"></script>
-  <script>
-    // 确保页面可见
-    document.addEventListener('DOMContentLoaded', async () => {
-      document.body.classList.add('app-ready');
-      try {
-        window.trailApp = new TrailApp();
-        await trailApp.init();
-        const ui = new TrailUI(trailApp);
-        await ui.init();
-      } catch (e) {
-        console.error('[App] 启动失败:', e);
-        document.body.classList.add('app-ready');
-      }
-    });
-  </script>
+  <script src="js/toast.js?t=20260804v2"></script>
+  <script src="js/storage.js?t=20260804v3"></script>
+  <script src="js/trail-sessions.js"></script>
+  <script src="js/trail.js?t=20260803v4"></script>
+  <script src="js/map.js?t=20260804v8"></script>
+  <script src="js/gps.js?t=20260804v2"></script>
+  <script src="js/app-core.js?t=20260804v8"></script>
+  <script src="js/app-gps-ui.js?t=20260804v1"></script>
 </body>
 </html>
