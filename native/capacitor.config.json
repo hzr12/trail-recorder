@@ -1,0 +1,16 @@
+{
+  "appId": "com.trailrecorder.app",
+  "appName": "TrailRecorder",
+  "webDir": "web",
+  "server": {
+    "hostname": "localhost",
+    "androidScheme": "https",
+    "androidUseLegacyBridge": true
+  },
+  "plugins": {
+    "GnssData": {},
+    "Filesystem": {},
+    "Share": {},
+    "BackgroundGeolocation": {}
+  }
+}
