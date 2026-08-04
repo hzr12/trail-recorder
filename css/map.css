@@ -1,0 +1,15 @@
+#map {
+  z-index: 1;
+}
+
+.leaflet-container {
+  background: var(--bg-primary);
+}
+
+.leaflet-tile {
+  filter: var(--map-filter, none);
+}
+
+[data-theme="dark"] .leaflet-tile {
+  filter: brightness(0.7) contrast(1.1) saturate(0.8);
+}

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Trail Recorder - 轨迹记录器</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/map.css">
+  <link rel="stylesheet" href="css/controls.css">
+  <link rel="stylesheet" href="css/responsive.css">
+</head>
+<body>
+  <div id="map"></div>
+
+  <div class="top-bar">
+    <div class="status-indicator" id="status">
+      <span class="status-dot" id="status-dot"></span>
+      <span class="status-text" id="status-text">未定位</span>
+    </div>
+    <button class="icon-btn" id="theme-btn" title="切换主题">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="5"/>
+        <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.41M18.36 18.36l1.42 1.41M1 12h2M21 12h2M4.22 19.78l1.42-1.41M18.36 5.64l1.42-1.41"/>
+      </svg>
+    </button>
+    <button class="icon-btn" id="locate-btn" title="定位到当前位置">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="10" r="3"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+      </svg>
+    </button>
+  </div>
+
+  <div class="bottom-panel">
+    <div class="panel-header">
+      <h1 class="panel-title">Trail Recorder</h1>
+      <div class="panel-stats">
+        <div class="stat-item">
+          <span class="stat-value" id="distance">0m</span>
+          <span class="stat-label">距离</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-value" id="duration">0s</span>
+          <span class="stat-label">时长</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-value" id="speed">--</span>
+          <span class="stat-label">速度</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="speed-chart-container">
+      <canvas id="speed-chart"></canvas>
+    </div>
+
+    <div class="controls-main">
+      <button id="record-btn" class="btn-record">
+        <span class="trail-dot"></span>
+        <span class="btn-text">开始记录</span>
+      </button>
+      <div class="controls-secondary">
+        <button id="pause-btn" class="btn-secondary" disabled>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="6" y="4" width="4" height="16"/>
+            <rect x="14" y="4" width="4" height="16"/>
+          </svg>
+          <span>暂停</span>
+        </button>
+        <button id="stop-btn" class="btn-secondary" disabled>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="4" width="16" height="16" rx="2"/>
+          </svg>
+          <span>停止</span>
+        </button>
+        <button id="clear-btn" class="btn-secondary" disabled>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          </svg>
+          <span>清除</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="controls-options">
+      <button id="stats-btn" class="btn-option" disabled>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="20" x2="18" y2="10"/>
+          <line x1="12" y1="20" x2="12" y2="4"/>
+          <line x1="6" y1="20" x2="6" y2="14"/>
+        </svg>
+        <span>统计</span>
+      </button>
+      <button id="smooth-btn" class="btn-option active">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 12c2-5 5-7 7-13 2 6 5 8 7 13 2-5 5-7 7-13"/>
+        </svg>
+        <span>平滑</span>
+      </button>
+      <button id="power-btn" class="btn-option">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+        </svg>
+        <span>省电</span>
+      </button>
+      <div class="info-stats">
+        <span id="interval">定位间隔: --</span>
+      </div>
+    </div>
+
+    <div class="speed-legend">
+      <span class="legend-item"><i class="legend-walk"></i>步行</span>
+      <span class="legend-item"><i class="legend-bike"></i>骑行</span>
+      <span class="legend-item"><i class="legend-bus"></i>公交</span>
+      <span class="legend-item"><i class="legend-car"></i>汽车</span>
+    </div>
+  </div>
+
+  <div id="stats-modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>轨迹统计</h2>
+        <button class="modal-close" id="stats-close">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="stats-grid">
+          <div class="stats-card">
+            <div class="stats-value" id="stats-distance">0m</div>
+            <div class="stats-label">总距离</div>
+          </div>
+          <div class="stats-card">
+            <div class="stats-value" id="stats-duration">0s</div>
+            <div class="stats-label">总时长</div>
+          </div>
+          <div class="stats-card">
+            <div class="stats-value" id="stats-avg-speed">--</div>
+            <div class="stats-label">平均速度</div>
+          </div>
+          <div class="stats-card">
+            <div class="stats-value" id="stats-max-speed">--</div>
+            <div class="stats-label">最高速度</div>
+          </div>
+          <div class="stats-card">
+            <div class="stats-value" id="stats-elevation">--</div>
+            <div class="stats-label">累计爬升</div>
+          </div>
+          <div class="stats-card">
+            <div class="stats-value" id="stats-points">0</div>
+            <div class="stats-label">轨迹点数</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script charset="utf-8" src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+
+  <script src="js/config.js"></script>
+  <script src="js/toast.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/trail.js"></script>
+  <script src="js/gps.js"></script>
+  <script src="js/map.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

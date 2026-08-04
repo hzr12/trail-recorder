@@ -1,0 +1,24 @@
+# Build
+dist/
+build/
+*.log
+
+# Dependencies
+node_modules/
+package.json
+package-lock.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vimrc
+.idea/
