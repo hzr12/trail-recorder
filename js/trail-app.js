@@ -325,19 +325,24 @@ class TrailApp {
   }
 
   _processPosition(pos) {
-    if (!this.trail.isRecording) return;
-    const added = this.trail.addPoint({
-      lat: pos.lat,
-      lng: pos.lng,
-      time: pos.timestamp || Date.now(),
-      accuracy: pos.accuracy || 0,
-      speed: pos.speed,
-      heading: pos.heading
-    });
-    if (added) {
-      this.mapManager.setTrail(this.trail.positions, this._trailSmoothing);
-      this._updateTrailUI();
-      this._updateSpeedChart();
+    // 更新地图位置标记
+    this.mapManager.setLocation(pos, pos.accuracy, pos.heading);
+
+    // 如果轨迹正在录制，添加点
+    if (this.trail.isRecording) {
+      const added = this.trail.addPoint({
+        lat: pos.lat,
+        lng: pos.lng,
+        time: pos.timestamp || Date.now(),
+        accuracy: pos.accuracy || 0,
+        speed: pos.speed,
+        heading: pos.heading
+      });
+      if (added) {
+        this.mapManager.setTrail(this.trail.positions, this._trailSmoothing);
+        this._updateTrailUI();
+        this._updateSpeedChart();
+      }
     }
   }
 
