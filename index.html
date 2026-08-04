@@ -18,10 +18,7 @@
   <link rel="stylesheet" href="css/responsive.css?t=20260804v1">
 </head>
 <body>
-  <div id="map">
-    <canvas id="circle-canvas"></canvas>
-    <canvas id="overlay-canvas"></canvas>
-  </div>
+  <div id="map"></div>
 
   <!-- 浮动控制按钮组 -->
   <div class="floating-buttons">
@@ -203,8 +200,17 @@
   <script src="js/storage.js?t=20260804v1"></script>
   <script src="js/trail.js?t=20260804v1"></script>
   <script src="js/gps.js?t=20260804v1"></script>
-  <script src="js/map.js?t=20260804v1"></script>
-  <script src="js/trail-app.js?t=20260804v1"></script>
-  <script src="js/trail-ui.js?t=20260804v1"></script>
+  <script src="js/map.js?t=20260804v2"></script>
+  <script src="js/trail-app.js?t=20260804v2"></script>
+  <script src="js/trail-ui.js?t=20260804v2"></script>
+  <script>
+    // 初始化应用
+    document.addEventListener('DOMContentLoaded', async () => {
+      window.trailApp = new TrailApp();
+      await trailApp.init();
+      const ui = new TrailUI(trailApp);
+      await ui.init();
+    });
+  </script>
 </body>
 </html>

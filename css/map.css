@@ -7,21 +7,17 @@
   z-index: 0;
 }
 
-/* Canvas 轨迹叠加层 */
-#circle-canvas,
-#overlay-canvas {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
+/* 腾讯地图控件适配深色主题 */
+.qq-map {
+  border-radius: 0;
 }
-#circle-canvas { z-index: 10; }
-#overlay-canvas { z-index: 11; }
 
-/* 地图控件调整（适配深色背景） */
-.qq-map .map-controls {
+.qq-map .TMapCtrl {
+  filter: invert(0.85) hue-rotate(180deg);
+}
+
+.qq-map .TmapScaleCtrl,
+.qq-map .TmapZoomCtrl {
   filter: invert(0.85) hue-rotate(180deg);
 }
 

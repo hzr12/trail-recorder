@@ -5,22 +5,41 @@
 
 class Trail {
   constructor() {
+    this.id = null;               // 轨迹唯一 ID
+    this.name = '未命名';         // 轨迹名称
     this.positions = [];
     this.lastPos = null;
     this.isRecording = false;
     this.isPaused = false;
+    this.startPoint = null;       // 起点（自动记录）
+    this.endPoint = null;         // 终点（停止时记录）
+    this.annotations = [];        // 自定义标注点
+    this.createdAt = null;        // 创建时间戳
+    this.updatedAt = null;        // 更新时间戳
   }
 
   start() {
     this.positions = [];
     this.lastPos = null;
+    this.startPoint = null;
+    this.endPoint = null;
+    this.annotations = [];
     this.isRecording = true;
     this.isPaused = false;
+    this.createdAt = Date.now();
+    this.updatedAt = Date.now();
+    if (!this.id) {
+      this.id = 'trail_' + new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 14);
+    }
   }
 
   stop() {
     this.isRecording = false;
     this.isPaused = false;
+    if (this.positions.length > 0) {
+      this.endPoint = this.positions[this.positions.length - 1];
+    }
+    this.updatedAt = Date.now();
   }
 
   pause() {
@@ -35,11 +54,27 @@ class Trail {
   clear() {
     this.positions = [];
     this.lastPos = null;
+    this.startPoint = null;
+    this.endPoint = null;
+    this.annotations = [];
+    this.name = '未命名';
+    this.createdAt = null;
+    this.updatedAt = null;
   }
 
-  restore(positions, lastPos) {
-    this.positions = positions;
-    this.lastPos = lastPos;
+  restore(data) {
+    if (!data) return;
+    this.id = data.id || null;
+    this.name = data.name || '未命名';
+    this.positions = data.positions || [];
+    this.lastPos = this.positions.length > 0 ? this.positions[this.positions.length - 1] : null;
+    this.isRecording = false;
+    this.isPaused = false;
+    this.startPoint = data.startPoint || null;
+    this.endPoint = data.endPoint || null;
+    this.annotations = data.annotations || [];
+    this.createdAt = data.createdAt || null;
+    this.updatedAt = data.updatedAt || Date.now();
   }
 
   addPoint(pt) {
@@ -63,8 +98,13 @@ class Trail {
         return false;
       }
     }
+    // 记录起点（第一个点）
+    if (this.positions.length === 0 && this.startPoint === null) {
+      this.startPoint = { ...pt };
+    }
     this.positions.push(pt);
     this.lastPos = pt;
+    this.updatedAt = Date.now();
     if (this.positions.length > CONFIG.TRAIL_MAX_POINTS) {
       this.positions = this.positions.slice(-CONFIG.TRAIL_MAX_POINTS);
     }
@@ -112,21 +152,6 @@ class Trail {
     return maxSpeed;
   }
 
-  getElevationGain() {
-    let gain = 0;
-    let prevAlt = null;
-    for (const p of this.positions) {
-      if (p.altitude != null) {
-        if (prevAlt != null) {
-          const diff = p.altitude - prevAlt;
-          if (diff > 0) gain += diff;
-        }
-        prevAlt = p.altitude;
-      }
-    }
-    return gain;
-  }
-
   getSmoothedPositions(windowSize = 5) {
     const n = this.positions.length;
     if (n < 4) return this.positions.slice();
@@ -148,5 +173,26 @@ class Trail {
       }));
     }
     return result;
+  }
+
+  toJSON() {
+    return {
+      id: this.id,
+      name: this.name,
+      positions: this.positions,
+      startPoint: this.startPoint,
+      endPoint: this.endPoint,
+      annotations: this.annotations,
+      createdAt: this.createdAt,
+      updatedAt: this.updatedAt,
+      isRecording: this.isRecording,
+      isPaused: this.isPaused
+    };
+  }
+
+  static fromJSON(json) {
+    const t = new Trail();
+    t.restore(json);
+    return t;
   }
 }

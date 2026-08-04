@@ -34,11 +34,12 @@ const CONFIG = {
 
   // ----- 存储 -----
   TRAIL_STORAGE_ENGINE: 'auto',
-  DB_NAME: 'trail_recorder_db',
+  DB_NAME: 'trailrecorder_db',
   DB_VERSION: 1,
-  DB_STORE_TRAIL: 'trail',
+  DB_STORE_TRAIL: 'trails',
   DB_MAX_SIZE: 25 * 1024 * 1024,
   LS_MAX_SIZE: 5 * 1024 * 1024,
+  TRAIL_HISTORY_MAX: 50,
 
   // ----- 交互参数 -----
   LONGPRESS_THRESHOLD_MS: 600,
