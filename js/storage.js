@@ -267,14 +267,13 @@ class Storage {
         const dv = new DataView(bytes.buffer);
         let o = 4;
         for (let i = 0; i < count; i++) {
-          positions.push({
-            lat: dv.getFloat64(o, true), o += 8,
-            lng: dv.getFloat64(o, true), o += 8,
-            time: dv.getUint32(o, true) * 1000, o += 4,
-            speed: dv.getUint16(o, true) / 100, o += 2,
-            heading: dv.getUint16(o, true) / 100, o += 2,
-            accuracy: dv.getUint16(o, true), o += 2
-          });
+          const lat = dv.getFloat64(o, true); o += 8;
+          const lng = dv.getFloat64(o, true); o += 8;
+          const time = dv.getUint32(o, true) * 1000; o += 4;
+          const speed = dv.getUint16(o, true) / 100; o += 2;
+          const heading = dv.getUint16(o, true) / 100; o += 2;
+          const accuracy = dv.getUint16(o, true); o += 2;
+          positions.push({ lat, lng, time, speed, heading, accuracy });
         }
         return { positions, createdAt: positions[0]?.time || Date.now() };
       }
