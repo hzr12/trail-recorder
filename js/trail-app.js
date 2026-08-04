@@ -250,12 +250,15 @@ class TrailApp {
     try {
       await this.gpsManager.startWatching((pos) => {
         this._processPosition(pos);
+        this._updateGPSStatus(true, pos);
       });
       this.isWatching = true;
       this._updateGPSButton(true);
+      this._updateGPSStatus(true, null);
       this._showSpeedChart();
     } catch (e) {
       console.warn('[App] 启动 GPS 失败:', e);
+      this._updateGPSStatus(false, null);
       Toast.show('定位启动失败');
     }
   }
@@ -265,6 +268,7 @@ class TrailApp {
     this.gpsManager.stopWatching();
     this.isWatching = false;
     this._updateGPSButton(false);
+    this._updateGPSStatus(false, null);
     this._hideSpeedChart();
   }
 
@@ -272,6 +276,51 @@ class TrailApp {
     const btn = document.getElementById('gps-btn');
     if (btn) {
       btn.classList.toggle('watching', watching);
+    }
+  }
+
+  _updateGPSStatus(watching, pos) {
+    const statusEl = document.getElementById('gps-status');
+    if (!statusEl) return;
+
+    const dot = statusEl.querySelector('.gps-dot');
+    const text = statusEl.querySelector('.gps-offline') || statusEl.querySelector('.gps-text');
+
+    if (watching && pos) {
+      // 已定位
+      if (dot) {
+        dot.className = 'gps-dot online';
+      }
+      const elapsed = pos.timestamp ? Math.floor((Date.now() - pos.timestamp) / 1000) : 0;
+      const timeStr = elapsed < 60 ? '刚刚' : `${elapsed}秒前`;
+      if (text) {
+        text.textContent = `◉ 已定位 ${timeStr} ±${Math.round(pos.accuracy || 0)}m`;
+        text.className = 'gps-text gps-online';
+      } else {
+        statusEl.innerHTML = `<span class="gps-dot online"></span><span class="gps-text gps-online">◉ 已定位 ${timeStr} ±${Math.round(pos.accuracy || 0)}m</span>`;
+      }
+    } else if (watching) {
+      // 正在定位中
+      if (dot) {
+        dot.className = 'gps-dot tracking';
+      }
+      if (text) {
+        text.textContent = '◎ 定位中...';
+        text.className = 'gps-text gps-tracking';
+      } else {
+        statusEl.innerHTML = `<span class="gps-dot tracking"></span><span class="gps-text gps-tracking">◎ 定位中...</span>`;
+      }
+    } else {
+      // 未定位
+      if (dot) {
+        dot.className = 'gps-dot';
+      }
+      if (text) {
+        text.textContent = '⊙ 未定位，点击 GPS 按钮定位';
+        text.className = 'gps-text gps-offline';
+      } else {
+        statusEl.innerHTML = `<span class="gps-dot"></span><span class="gps-text gps-offline">⊙ 未定位，点击 GPS 按钮定位</span>`;
+      }
     }
   }
 
