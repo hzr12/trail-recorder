@@ -23,38 +23,42 @@ class TrailApp {
   }
 
   async init() {
-    // 初始化地图
-    this.mapManager = new MapManager();
-    this.mapManager.init('map', CONFIG.DEFAULT_CENTER, CONFIG.DEFAULT_ZOOM);
-
-    // 初始化 GPS
-    this.gpsManager = new GPSManager();
-
-    // 恢复主题设置
-    this._loadPreferences();
-
-    // 迁移旧数据
-    await Storage.migrateFromOld();
-
-    // 加载历史轨迹
-    await this._loadHistory();
-
-    // 设置地图回调
-    this.mapManager.onMapClick = (pos) => {
-      this._processPosition({ ...pos, timestamp: Date.now() });
-    };
-
-    // 绑定事件
-    this._bindEvents();
-
-    // 启动时检查是否有进行中的轨迹
-    await this._checkResumeTrail();
-
-    // 启动定期保存
-    this._startAutoSave();
-
-    // 标记就绪
+    // 先让页面可见，避免初始化失败时黑屏
     document.body.classList.add('app-ready');
+
+    try {
+      // 初始化地图
+      this.mapManager = new MapManager();
+      this.mapManager.init('map', CONFIG.DEFAULT_CENTER, CONFIG.DEFAULT_ZOOM);
+
+      // 初始化 GPS
+      this.gpsManager = new GPSManager();
+
+      // 恢复主题设置
+      this._loadPreferences();
+
+      // 迁移旧数据
+      await Storage.migrateFromOld();
+
+      // 加载历史轨迹
+      await this._loadHistory();
+
+      // 设置地图回调
+      this.mapManager.onMapClick = (pos) => {
+        this._processPosition({ ...pos, timestamp: Date.now() });
+      };
+
+      // 绑定事件
+      this._bindEvents();
+
+      // 启动时检查是否有进行中的轨迹
+      await this._checkResumeTrail();
+
+      // 启动定期保存
+      this._startAutoSave();
+    } catch (e) {
+      console.error('[App] 初始化失败:', e);
+    }
 
     if (CONFIG.DEBUG) console.log('[App] 初始化完成');
   }

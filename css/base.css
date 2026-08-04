@@ -20,8 +20,8 @@ html, body {
 
 /* 入口淡入动画 */
 body {
-  opacity: 0;
-  transition: opacity 0.5s ease;
+  opacity: 1;
+  transition: opacity 0.3s ease;
 }
 body.app-ready {
   opacity: 1;

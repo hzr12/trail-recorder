@@ -204,12 +204,18 @@
   <script src="js/trail-app.js?t=20260804v2"></script>
   <script src="js/trail-ui.js?t=20260804v2"></script>
   <script>
-    // 初始化应用
+    // 确保页面可见
     document.addEventListener('DOMContentLoaded', async () => {
-      window.trailApp = new TrailApp();
-      await trailApp.init();
-      const ui = new TrailUI(trailApp);
-      await ui.init();
+      document.body.classList.add('app-ready');
+      try {
+        window.trailApp = new TrailApp();
+        await trailApp.init();
+        const ui = new TrailUI(trailApp);
+        await ui.init();
+      } catch (e) {
+        console.error('[App] 启动失败:', e);
+        document.body.classList.add('app-ready');
+      }
     });
   </script>
 </body>
