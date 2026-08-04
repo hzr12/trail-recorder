@@ -56,6 +56,12 @@ class TrailApp {
 
       // 启动定期保存
       this._startAutoSave();
+
+      // 初始化速度曲线（始终可见）
+      this._initSpeedChart();
+
+      // 默认开启持续定位追踪
+      this._startWatching();
     } catch (e) {
       console.error('[App] 初始化失败:', e);
     }
@@ -397,15 +403,12 @@ class TrailApp {
   }
 
   _showSpeedChart() {
-    const section = document.getElementById('speed-chart-section');
-    if (!section) return;
-    section.classList.remove('hidden');
+    // 速度曲线始终可见，无需切换
     this._initSpeedChart();
   }
 
   _hideSpeedChart() {
-    const section = document.getElementById('speed-chart-section');
-    if (section) section.classList.add('hidden');
+    // 速度曲线始终可见
   }
 
   _initSpeedChart() {
