@@ -253,13 +253,9 @@ class MapManager {
 
   setTheme(theme) {
     this._theme = theme;
-    // 腾讯地图不支持动态切换底图，但可以重新设置
+    // 始终使用标准地图，不切换卫星图
     if (this.map) {
-      const center = this.map.getCenter();
-      this.map.setMapTypeId(
-        theme === 'light' ? qq.maps.MapTypeId.ROADMAP : qq.maps.MapTypeId.HYBRID
-      );
-      this.map.setCenter(center);
+      this.map.setMapTypeId(qq.maps.MapTypeId.ROADMAP);
     }
   }
 
