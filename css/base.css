@@ -81,16 +81,31 @@ input[type="number"] {
   border-color: rgba(255, 255, 255, 0.15);
 }
 
-/* ---------- 滚动条美�?---------- */
-.bottom-panel::-webkit-scrollbar {
+/* ---------- 滚动条美化 ---------- */
+.panel-body::-webkit-scrollbar {
   width: 3px;
 }
 
-.bottom-panel::-webkit-scrollbar-track {
+.panel-body::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.bottom-panel::-webkit-scrollbar-thumb {
+.panel-body::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 3px;
+}
+
+.panel-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* 全局滚动行为 */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 防止内容溢出导致的穿透滚动 */
+.panel-body {
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
 }

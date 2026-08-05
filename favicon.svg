@@ -53,5 +53,5 @@
   <circle cx="340" cy="170" r="3" fill="#06b6d4" opacity="0.8"/>
 
   <!-- TC 文字标识 -->
-  <text x="256" y="460" text-anchor="middle" font-family="'Segoe UI', sans-serif" font-size="28" font-weight="700" fill="rgba(255,255,255,0.6)" letter-spacing="6">TRACECRAFT</text>
+  <text x="256" y="460" text-anchor="middle" font-family="'Segoe UI', sans-serif" font-size="32" font-weight="700" fill="rgba(255,255,255,0.6)" letter-spacing="8">途刻</text>
 </svg>

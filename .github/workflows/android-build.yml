@@ -1,4 +1,4 @@
-name: 构建 Android APK（途刻 TraceCraft）
+name: 构建 Android APK（途刻）
 
 on:
   push:

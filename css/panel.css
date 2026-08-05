@@ -16,9 +16,9 @@
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   box-shadow: var(--shadow-panel);
   max-height: 45vh;
-  overflow-y: auto;
-  overflow-x: hidden;
-  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -44,6 +44,7 @@
   justify-content: center;
   padding: 8px 0 4px;
   cursor: grab;
+  flex-shrink: 0;
 }
 
 .handle-bar {
@@ -62,6 +63,7 @@
   position: relative;
   padding: 0 20px 10px;
   text-align: center;
+  flex-shrink: 0;
 }
 
 .panel-title {
@@ -76,7 +78,15 @@
 }
 
 .panel-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
   padding: 0 20px calc(16px + var(--safe-bottom));
+  min-height: 0;
 }
 
 /* ---------- GPS 状态条 ---------- */

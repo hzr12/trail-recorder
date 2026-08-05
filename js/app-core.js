@@ -1418,7 +1418,7 @@ class App {
       ctx.fillStyle = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)';
       ctx.font = `${11 * S}px "HarmonyOS Sans", sans-serif`;
       ctx.textAlign = 'right';
-      ctx.fillText('途刻 TraceCraft', W - 24 * S, H - 16 * S);
+      ctx.fillText('途刻', W - 24 * S, H - 16 * S);
       ctx.textAlign = 'left';
 
       const dateStr = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
@@ -1445,7 +1445,7 @@ class App {
 
             await Capacitor.Plugins.Share.share({
               title: '途刻活动报告',
-              text: '途刻 TraceCraft — 轨迹活动报告',
+              text: '途刻 — 轨迹活动报告',
               url: result.uri,
               dialogTitle: '分享或保存活动报告',
             });

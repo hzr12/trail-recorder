@@ -1,6 +1,6 @@
 {
   "appId": "com.hzr.tujie",
-  "appName": "途刻 TraceCraft",
+  "appName": "途刻",
   "webDir": "web",
   "server": {
     "hostname": "localhost",
