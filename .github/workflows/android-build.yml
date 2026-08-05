@@ -1,4 +1,4 @@
-﻿name: 构建 Android APK（途刻 TraceCraft）
+name: 构建 Android APK（途刻 TraceCraft）
 
 on:
   push:
@@ -84,9 +84,14 @@ jobs:
 
       - name: 覆盖 User-Agent（桌面版 UA 测试瓦片差异）
         run: |
-          cp native/ua-override/MainActivity.java native/android/app/src/main/java/com/hzr/tujie/MainActivity.java
+          ANDROID_MAIN_DIR="native/android/app/src/main/java/com/hzr/circlemap"
+          if [ ! -d "$ANDROID_MAIN_DIR" ]; then
+            echo "创建目录: $ANDROID_MAIN_DIR"
+            mkdir -p "$ANDROID_MAIN_DIR"
+          fi
+          cp native/ua-override/MainActivity.java "$ANDROID_MAIN_DIR/MainActivity.java"
           echo "=== 验证 MainActivity.java ==="
-          head -15 native/android/app/src/main/java/com/hzr/tujie/MainActivity.java
+          head -15 "$ANDROID_MAIN_DIR/MainActivity.java"
 
       - name: 集成 GNSS 插件到 Android 项目
         working-directory: native

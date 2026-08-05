@@ -851,10 +851,37 @@ class App {
           ? (distance / 1000).toFixed(2) + ' km'
           : Math.round(distance) + ' m';
 
+        // 保存当前轨迹信息用于撤销恢复
+        const savedState = {
+          positions: positions.slice(),
+          trailState: { ...this.trail },
+          hadActiveTrail: true
+        };
+
         Toast.showUndo(' 轨迹已保存到历史', () => {
-          // 撤销保存：删除刚保存的轨迹
-          Storage.deleteTrail(id);
-        });
+          // 撤销保存：删除刚保存的轨迹并恢复原轨迹
+          Storage.deleteTrail(id).then((success) => {
+            if (success) {
+              // 恢复原轨迹
+              this.trail.clear();
+              this.trail.positions = savedState.positions;
+              if (savedState.trailState.lastPos) {
+                this.trail.lastPos = savedState.trailState.lastPos;
+              }
+              this.mapManager.clearTrail();
+              this.mapManager.setTrail(this._getTrailPositions());
+              this._trailDirty = true;
+              this._updateTrailUI();
+              
+              // 切回记录 Tab
+              this._setTab('record');
+              
+              Toast.show(' 已撤销保存');
+            } else {
+              Toast.show(' 撤销失败');
+            }
+          });
+        }, 8000);
 
         // 清空当前轨迹
         this.trail.clear();

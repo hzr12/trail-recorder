@@ -59,18 +59,23 @@ class Toast {
     requestAnimationFrame(() => toast.classList.add('show'));
 
     const undoBtn = toast.querySelector('.toast-undo-btn');
-    undoBtn.addEventListener('click', (e) => {
+    undoBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       clearTimeout(toast._removalTimer);
       undoBtn.disabled = true;
+      undoBtn.textContent = '处理中...';
       try {
-        onUndo();
-        Toast.show(' 已撤销');
+        const result = onUndo();
+        if (result && typeof result.then === 'function') {
+          await result;
+        }
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
       } catch (_) {
         Toast.show(' 撤销失败');
+        undoBtn.disabled = false;
+        undoBtn.textContent = '撤销';
       }
-      toast.classList.remove('show');
-      setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
     });
 
     const ms = duration || 5000;
