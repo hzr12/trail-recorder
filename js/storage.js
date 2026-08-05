@@ -444,6 +444,142 @@ class Storage {
     return Storage._resolveEngine();
   }
 
+  // ===== 轨迹列表管理 =====
+
+  static _TRAIL_LIST_PREFIX = 'list_';
+
+  static _calcDistance(positions) {
+    let total = 0;
+    for (let i = 1; i < positions.length; i++) {
+      const p0 = positions[i - 1];
+      const p1 = positions[i];
+      const R = 6371000;
+      const dLat = (p1.lat - p0.lat) * Math.PI / 180;
+      const dLng = (p1.lng - p0.lng) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(p0.lat * Math.PI / 180) * Math.cos(p1.lat * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+      total += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+    return total;
+  }
+
+  static _fmtTrailName(date) {
+    const d = date instanceof Date ? date : new Date(date);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `轨迹 ${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  static saveTrailToList(positions, name) {
+    if (!positions || positions.length === 0) return Promise.resolve(null);
+    const id = Storage._TRAIL_LIST_PREFIX + Date.now();
+    const distance = Storage._calcDistance(positions);
+    const now = Date.now();
+    const trailMeta = {
+      id,
+      name: name || Storage._fmtTrailName(now),
+      createdAt: now,
+      distance,
+      pointCount: positions.length,
+      positions
+    };
+    return Storage._saveToIndexedDB(trailMeta).then(() => id).catch(err => {
+      console.warn('[Storage] 轨迹列表保存失败:', err.message);
+      return null;
+    });
+  }
+
+  static loadTrailList() {
+    return Storage._initDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readonly');
+        const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
+        const results = [];
+        const request = store.openCursor();
+        request.onsuccess = (e) => {
+          const cursor = e.target.result;
+          if (cursor) {
+            const val = cursor.value;
+            if (val && val.id && val.id.startsWith(Storage._TRAIL_LIST_PREFIX)) {
+              results.push({
+                id: val.id,
+                name: val.name,
+                createdAt: val.createdAt,
+                distance: val.distance,
+                pointCount: val.pointCount
+              });
+            }
+            cursor.continue();
+          } else {
+            results.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            resolve(results);
+          }
+        };
+        request.onerror = (e) => reject(e.target.error);
+      });
+    }).catch(err => {
+      console.warn('[Storage] 加载轨迹列表失败:', err.message);
+      return [];
+    });
+  }
+
+  static loadTrailById(id) {
+    return Storage._initDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readonly');
+        const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
+        const request = store.get(id);
+        request.onsuccess = () => {
+          const data = request.result;
+          if (data && data.positions) {
+            resolve({ positions: data.positions, name: data.name });
+          } else {
+            resolve(null);
+          }
+        };
+        request.onerror = (e) => reject(e.target.error);
+      });
+    }).catch(err => {
+      console.warn('[Storage] 加载轨迹失败:', err.message);
+      return null;
+    });
+  }
+
+  static deleteTrail(id) {
+    return Storage._initDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readwrite');
+        const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
+        store.delete(id);
+        transaction.oncomplete = () => resolve(true);
+        transaction.onerror = (e) => reject(e.target.error);
+      });
+    }).catch(err => {
+      console.warn('[Storage] 删除轨迹失败:', err.message);
+      return false;
+    });
+  }
+
+  static renameTrail(id, name) {
+    return Storage._initDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readwrite');
+        const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
+        const request = store.get(id);
+        request.onsuccess = () => {
+          const data = request.result;
+          if (data) {
+            data.name = name;
+            store.put(data);
+          }
+          transaction.oncomplete = () => resolve(true);
+        };
+        transaction.onerror = (e) => reject(e.target.error);
+      });
+    }).catch(err => {
+      console.warn('[Storage] 重命名失败:', err.message);
+      return false;
+    });
+  }
+
   // ===== 编解码工具 =====
 
   static _encodeTrail(positions) {

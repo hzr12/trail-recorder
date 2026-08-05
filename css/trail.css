@@ -1,4 +1,159 @@
-/* ---------- 速度曲线面板 ---------- */
+/* ============================================
+   Tab 切换 + 轨迹列表管理
+   ============================================ */
+
+.mode-tabs {
+  display: flex;
+  background: var(--bg-input);
+  border-radius: var(--radius-md);
+  padding: 3px;
+  margin: 0 16px 10px;
+}
+
+.mode-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 8px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.mode-tab.active {
+  background: rgba(0, 212, 170, 0.15);
+  color: var(--accent-1);
+}
+
+.mode-tab:active {
+  transform: scale(0.96);
+}
+
+/* ---------- 轨迹列表 ---------- */
+
+#tab-record, #tab-history {
+  max-height: 380px;
+  min-height: 380px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.trail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.trail-list-empty {
+  text-align: center;
+  padding: 48px 16px;
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.trail-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  transition: all 0.2s;
+}
+
+.trail-list-item:active {
+  background: var(--bg-hover);
+}
+
+.trail-item-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-1);
+  flex-shrink: 0;
+}
+
+.trail-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.trail-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s;
+}
+
+.trail-item-name:hover {
+  background: var(--bg-hover);
+}
+
+.trail-item-name.editing {
+  background: var(--bg-input-focus);
+  outline: 1px solid var(--border-active);
+}
+
+.trail-item-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.trail-item-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.trail-item-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.trail-item-btn:active {
+  transform: scale(0.9);
+  background: var(--bg-hover);
+}
+
+.trail-item-btn.load-btn {
+  color: var(--accent-1);
+  border-color: rgba(0, 212, 170, 0.3);
+}
+
+.trail-item-btn.load-btn:active {
+  background: rgba(0, 212, 170, 0.12);
+}
+
+.trail-item-btn.delete-btn {
+  color: var(--danger);
+  border-color: rgba(255, 71, 87, 0.2);
+}
+
+.trail-item-btn.delete-btn:active {
+  background: rgba(255, 71, 87, 0.12);
+}
 
 .speed-chart-section {
   margin: 6px 12px 8px;

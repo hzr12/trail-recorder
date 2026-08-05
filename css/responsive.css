@@ -2,7 +2,6 @@
 @media (max-width: 480px) {
   .bottom-panel {
     max-height: 38vh;
-    /* 默认收起：只显示把手 + 状态条 */
   }
 
   .bottom-panel.collapsed {

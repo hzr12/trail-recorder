@@ -203,6 +203,11 @@ class App {
     });
 
     document.getElementById('theme-btn').addEventListener('click', () => this._toggleTheme());
+
+    // Tab 切换
+    document.querySelectorAll('.mode-tab').forEach((btn) => {
+      btn.addEventListener('click', () => this._setTab(btn.dataset.tab));
+    });
   }
 
   _toggleGps() {
@@ -211,6 +216,18 @@ class App {
     } else {
       this._startWatching();
     }
+  }
+
+  _setTab(tab) {
+    this._currentTab = tab;
+    document.querySelectorAll('.mode-tab').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.tab === tab);
+    });
+    const recordEl = document.getElementById('tab-record');
+    const historyEl = document.getElementById('tab-history');
+    if (recordEl) recordEl.style.display = tab === 'record' ? '' : 'none';
+    if (historyEl) historyEl.style.display = tab === 'history' ? '' : 'none';
+    if (tab === 'history') this._renderTrailList();
   }
 
   async _locateMe() {
@@ -538,10 +555,12 @@ class App {
       this._trailDirty = true;
       if (pointCount === 0) {
         Storage.clearTrail();
+        Toast.show(' 未记录到轨迹数据');
       } else {
         Storage.saveTrail(this.trail);
+        this._saveCurrentTrail();
+        Toast.show(' 轨迹记录已停止');
       }
-      Toast.show(pointCount === 0 ? ' 未记录到轨迹数据' : ' 轨迹记录已停止');
     } else {
       this.trail.start();
       this.mapManager.clearTrail();
@@ -580,6 +599,133 @@ class App {
       const pref = localStorage.getItem('trailcraft_trail_smooth');
       if (pref !== null) this._trailSmoothing = pref === '1';
     } catch (e) {}
+  }
+
+  // ===== 轨迹列表管理 =====
+
+  _saveCurrentTrail() {
+    if (!this.trail.positions || this.trail.positions.length === 0) return;
+    const positions = this.trail.positions.slice();
+    const name = Storage._fmtTrailName(Date.now());
+    Storage.saveTrailToList(positions, name).then((id) => {
+      if (id) Toast.show(' 轨迹已保存');
+    });
+  }
+
+  _renderTrailList() {
+    const listEl = document.getElementById('trail-list');
+    if (!listEl) return;
+    Storage.loadTrailList().then((items) => {
+      if (!items || items.length === 0) {
+        listEl.innerHTML = '<div class="trail-list-empty">暂无历史轨迹</div>';
+        return;
+      }
+      listEl.innerHTML = items.map((item) => {
+        const d = new Date(item.createdAt);
+        const pad = (n) => String(n).padStart(2, '0');
+        const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        const distStr = item.distance >= 1000
+          ? (item.distance / 1000).toFixed(2) + ' km'
+          : Math.round(item.distance) + ' m';
+        return `<div class="trail-list-item" data-id="${item.id}">
+          <span class="trail-item-dot"></span>
+          <div class="trail-item-info">
+            <div class="trail-item-name" data-id="${item.id}">${item.name}</div>
+            <div class="trail-item-meta">${dateStr} · ${distStr}</div>
+          </div>
+          <div class="trail-item-actions">
+            <button class="trail-item-btn load-btn" data-id="${item.id}" title="加载到地图">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+            </button>
+            <button class="trail-item-btn delete-btn" data-id="${item.id}" title="删除">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </button>
+          </div>
+        </div>`;
+      }).join('');
+
+      listEl.querySelectorAll('.trail-item-btn.load-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this._loadTrailFromList(btn.dataset.id);
+        });
+      });
+
+      listEl.querySelectorAll('.trail-item-btn.delete-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this._deleteTrailFromList(btn.dataset.id);
+        });
+      });
+
+      listEl.querySelectorAll('.trail-item-name').forEach((el) => {
+        el.addEventListener('click', () => this._renameTrail(el.dataset.id, el));
+      });
+    });
+  }
+
+  _loadTrailFromList(id) {
+    Storage.loadTrailById(id).then((data) => {
+      if (!data || !data.positions || data.positions.length < 2) {
+        Toast.show(' 轨迹数据不足');
+        return;
+      }
+      this.trail.clear();
+      this.trail.positions = data.positions;
+      this.trail.lastPos = data.positions[data.positions.length - 1];
+      this.mapManager.setTrail(this._getTrailPositions());
+      this._updateTrailUI();
+      this._setTab('record');
+      Toast.show(` 已加载「${data.name}」（${data.positions.length} 点）`);
+    });
+  }
+
+  _deleteTrailFromList(id) {
+    const item = document.querySelector(`.trail-list-item[data-id="${id}"]`);
+    const name = item ? (item.querySelector('.trail-item-name')?.textContent || '') : '';
+    Storage.deleteTrail(id).then((ok) => {
+      if (ok) {
+        Toast.showUndo(`已删除「${name}」`, () => {
+          Storage.loadTrailById(id).then((data) => {
+            if (data && data.positions) {
+              Storage.saveTrailToList(data.positions, name);
+              this._renderTrailList();
+            }
+          });
+        });
+        this._renderTrailList();
+      }
+    });
+  }
+
+  _renameTrail(id, el) {
+    if (el.contentEditable === 'true') return;
+    const oldName = el.textContent;
+    el.contentEditable = 'true';
+    el.classList.add('editing');
+    el.focus();
+
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    const commit = () => {
+      el.contentEditable = 'false';
+      el.classList.remove('editing');
+      const newName = el.textContent.trim() || oldName;
+      el.textContent = newName;
+      if (newName !== oldName) {
+        Storage.renameTrail(id, newName);
+      }
+    };
+
+    el.onblur = commit;
+    el.onkeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+      if (e.key === 'Escape') { el.textContent = oldName; el.blur(); }
+    };
   }
 
   _togglePowerSaving() {

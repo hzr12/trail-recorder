@@ -50,7 +50,7 @@ const CONFIG = {
   // ----- 轨迹 -----
   TRAIL_SAMPLE_MIN_DIST: 5,
   TRAIL_JITTER_FACTOR: 1.5,
-  TRAIL_MAX_POINTS: 150000,
+  TRAIL_MAX_POINTS: 200000,
 
   // ----- GPS 节流（百度式速度自适应）-----
   GPS_ADAPTIVE_K: 8000,
@@ -64,7 +64,7 @@ const CONFIG = {
   DB_NAME: 'trailcraft_db',
   DB_VERSION: 1,
   DB_STORE_TRAIL: 'trail',
-  DB_MAX_SIZE: 25 * 1024 * 1024,
+  DB_MAX_SIZE: 200 * 1024 * 1024,
 
   LS_MAX_SIZE: 5 * 1024 * 1024,
 

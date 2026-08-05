@@ -31,7 +31,7 @@
   --radius-md: 12px;
   --radius-lg: 20px;
   --radius-full: 999px;
-  --font-sans: 'HarmonyOS Sans SC', 'HarmonyOS Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC', 'Helvetica Neue', sans-serif;
+  --font-sans: 'HarmonyOS Sans SC', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC', 'Helvetica Neue', sans-serif;
   --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }

@@ -56,7 +56,28 @@
       </button>
     </div>
 
+    <!-- Tab 切换 -->
+    <div class="mode-tabs">
+      <button class="mode-tab active" data-tab="record" id="tab-record-btn">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 20c2-5 5-7 7-13"/>
+          <circle cx="4" cy="20" r="1.5"/>
+          <circle cx="17" cy="7" r="1.5"/>
+        </svg>
+        记录
+      </button>
+      <button class="mode-tab" data-tab="history" id="tab-history-btn">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 8v4l3 3"/>
+          <circle cx="12" cy="12" r="10"/>
+        </svg>
+        历史
+      </button>
+    </div>
+
     <div class="panel-body">
+      <!-- 记录 Tab -->
+      <div id="tab-record">
       <!-- 轨迹记录 -->
       <div class="trail-section">
         <div class="trail-header">
@@ -112,6 +133,14 @@
 
       <!-- GNSS 卫星数据 bar -->
       <div id="gnss-bar" class="gnss-bar"></div>
+      </div><!-- /tab-record -->
+
+      <!-- 历史 Tab -->
+      <div id="tab-history" style="display:none">
+        <div class="trail-list" id="trail-list">
+          <div class="trail-list-empty">暂无历史轨迹</div>
+        </div>
+      </div>
     </div>
   </div>
 
