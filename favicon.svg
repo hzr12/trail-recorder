@@ -1,37 +1,31 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <defs>
-    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#00D4AA"/>
-      <stop offset="100%" stop-color="#00A3FF"/>
+    <!-- 渐变色：科技蓝到活力青 -->
+    <linearGradient id="grad1" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2563EB"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
     </linearGradient>
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="5" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
+    <!-- 阴影滤镜 -->
+    <filter id="shadow1" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="20" stdDeviation="30" flood-color="#2563EB" flood-opacity="0.3"/>
     </filter>
   </defs>
-
-  <!-- 圆形背景 -->
-  <circle cx="256" cy="256" r="240" fill="#0a1225"/>
-
-  <!-- 地图定位针 -->
-  <path d="M256 60 
-           C340 60 400 130 400 200 
-           C400 300 256 460 256 460 
-           C256 460 112 300 112 200 
-           C112 130 172 60 256 60 Z"
-        fill="url(#accent)" filter="url(#glow)"/>
-
-  <!-- 针内空心 -->
-  <circle cx="256" cy="195" r="55" fill="#0a1225"/>
-
-  <!-- 中心定位点 -->
-  <circle cx="256" cy="195" r="22" fill="url(#accent)"/>
-  <circle cx="256" cy="195" r="9" fill="#FFFFFF"/>
-
-  <!-- 脉冲环 -->
-  <circle cx="256" cy="195" r="72" fill="none" stroke="url(#accent)" stroke-width="2" opacity="0.28"/>
-  <circle cx="256" cy="195" r="90" fill="none" stroke="url(#accent)" stroke-width="1" opacity="0.10"/>
+  
+  <g filter="url(#shadow1)">
+    <!-- 起点节点 -->
+    <circle cx="256" cy="768" r="40" fill="#2563EB"/>
+    <!-- 过程节点 -->
+    <circle cx="480" cy="544" r="24" fill="#06B6D4"/>
+    
+    <!-- 核心轨迹线 (平滑曲线) -->
+    <path d="M 256 768 C 380 768, 380 544, 480 544 S 680 200, 768 256" 
+          fill="none" 
+          stroke="url(#grad1)" 
+          stroke-width="48" 
+          stroke-linecap="round"/>
+          
+    <!-- 终点节点 (大且醒目，代表当前记录位置) -->
+    <circle cx="768" cy="256" r="70" fill="url(#grad1)"/>
+    <circle cx="768" cy="256" r="30" fill="#FFFFFF"/>
+  </g>
 </svg>

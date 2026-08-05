@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>途刻 TraceCraft</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/fonts.css?t=20260805v1">
+  <link rel="stylesheet" href="css/theme.css?t=20260805v1">
+  <link rel="stylesheet" href="css/base.css?t=20260805v1">
+  <link rel="stylesheet" href="css/map.css?t=20260805v1">
+  <link rel="stylesheet" href="css/panel.css?t=20260805v1">
+  <link rel="stylesheet" href="css/gps.css?t=20260805v1">
+  <link rel="stylesheet" href="css/trail.css?t=20260805v1">
+  <link rel="stylesheet" href="css/toast-modal.css?t=20260805v1">
+  <link rel="stylesheet" href="css/responsive.css?t=20260805v1">
+</head>
+<body>
+  <div id="map">
+    <canvas id="circle-canvas"></canvas>
+    <canvas id="overlay-canvas"></canvas>
+  </div>
+
+  <!-- 浮动控制按钮组 -->
+  <div class="floating-buttons">
+    <button id="gps-btn" class="fab-btn" title="定位到我的位置" aria-label="定位">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="10" r="3"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+      </svg>
+      <span class="pulse-ring"></span>
+    </button>
+  </div>
+
+  <!-- 底部控制面板 -->
+  <div class="bottom-panel" id="bottomPanel">
+    <div class="panel-handle">
+      <div class="handle-bar"></div>
+    </div>
+
+    <!-- GPS 状态条 -->
+    <div class="gps-status" id="gps-status">
+      <span class="gps-dot"></span>
+      <span class="gps-offline">⊙ 未定位，点击 GPS 按钮定位</span>
+    </div>
+
+    <div class="panel-header">
+      <h1 class="panel-title">途刻 TraceCraft</h1>
+      <button id="theme-btn" class="theme-toggle" title="切换浅色主题">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="5"/>
+          <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="panel-body">
+      <!-- 轨迹记录 -->
+      <div class="trail-section">
+        <div class="trail-header">
+          <span class="field-label">轨迹记录</span>
+          <span class="trail-distance" id="trail-distance">0m</span>
+        </div>
+        <div class="trail-controls">
+          <button id="trail-record-btn" class="btn btn-trail">
+            <span class="trail-dot"></span> 开始记录
+          </button>
+          <button id="trail-pause-btn" class="btn btn-secondary btn-sm" disabled>暂停</button>
+          <button id="trail-clear-btn" class="btn btn-secondary btn-sm" disabled>清除</button>
+        </div>
+        <div class="trail-actions">
+          <button id="trail-stats-btn" class="btn-sm" disabled> 统计</button>
+          <button id="trail-smooth-btn" class="btn-sm active"> 平滑</button>
+          <button id="export-report-btn" class="btn-sm" title="导出活动报告图片（含轨迹、速度曲线、统计）"> 报告</button>
+        </div>
+        <!-- 后台+省电模块 -->
+        <div class="power-section" id="power-section">
+          <span class="power-status" id="power-status">定位间隔: 2s</span>
+          <button id="power-saving-btn" class="btn-sm" title="省电模式">省电</button>
+        </div>
+        <!-- 速度色阶图例 -->
+        <div class="speed-legend">
+          <div class="speed-legend-row">
+            <span class="speed-legend-item"><i class="legend-walk"></i>0-10 km/h</span>
+            <span class="speed-legend-item"><i class="legend-bike"></i>10-20 km/h</span>
+            <span class="speed-legend-item"><i class="legend-bus"></i>20-60 km/h</span>
+            <span class="speed-legend-item"><i class="legend-car"></i>60-120 km/h</span>
+          </div>
+          <div class="speed-legend-row">
+            <span class="speed-legend-item"><i class="legend-train"></i>120-200 km/h</span>
+            <span class="speed-legend-item"><i class="legend-hsr"></i>200-350 km/h</span>
+            <span class="speed-legend-item"><i class="legend-sct"></i>&gt;350 km/h</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 速度曲线面板 -->
+      <div id="speed-chart-section" class="speed-chart-section hidden">
+        <div class="speed-chart-header">
+          <span class="speed-chart-title">速度曲线</span>
+          <span class="speed-chart-info" id="speed-chart-info"></span>
+          <button id="speed-chart-toggle" class="speed-chart-toggle" title="展开/收起">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </div>
+        <div class="speed-chart-body" id="speed-chart-body">
+          <canvas id="speed-chart-canvas"></canvas>
+        </div>
+      </div>
+
+      <!-- GNSS 卫星数据 bar -->
+      <div id="gnss-bar" class="gnss-bar"></div>
+    </div>
+  </div>
+
+  <!-- Tencent Map API -->
+  <script charset="utf-8" src="https://map.qq.com/api/js?v=2.exp&key=OB4BZ-D4W3U-B7VVO-4PJWW-6TKDJ-WPB77&libraries=geometry,convertor"></script>
+
+  <!-- Chart.js（速度曲线） -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+
+  <!-- 应用脚本 -->
+  <script src="js/config.js?t=20260805v1"></script>
+  <script src="js/toast.js?t=20260805v1"></script>
+  <script src="js/storage.js?t=20260805v1"></script>
+  <script src="js/trail.js?t=20260805v1"></script>
+  <script src="js/map.js?t=20260805v1"></script>
+  <script src="js/gps.js?t=20260805v1"></script>
+  <script src="js/app-core.js?t=20260805v1"></script>
+  <script src="js/app-gps-ui.js?t=20260805v1"></script>
+</body>
+</html>

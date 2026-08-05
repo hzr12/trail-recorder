@@ -1,0 +1,22 @@
+{
+  "name": "circlemap-native",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build:plugin": "cd gnss-plugin && npx tsc",
+    "sync": "npx cap sync",
+    "build:apk": "cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/cli": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/share": "^8.0.1",
+    "@capgo/background-geolocation": "^8.3.0",
+    "gnss-data-plugin": "file:./gnss-plugin"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

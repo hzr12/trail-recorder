@@ -1,0 +1,109 @@
+/* ---------- 地图 ---------- */
+#map {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
+
+/* Canvas 同心圆叠加层 */
+#circle-canvas,
+#overlay-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+#circle-canvas { z-index: 10; }
+#overlay-canvas { z-index: 11; }
+
+/* 地图控件调整（适配深色背景�?*/
+.qq-map .map-controls {
+  filter: invert(0.85) hue-rotate(180deg);
+}
+
+/* ---------- 浮动定位按钮 ---------- */
+.floating-buttons {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  bottom: auto;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.fab-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--bg-panel);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-fab);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+
+.fab-btn:active {
+  transform: scale(0.92);
+}
+
+.fab-btn.loading {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.fab-btn.loading svg {
+  animation: spin 1s linear infinite;
+}
+
+.fab-btn.located svg {
+  color: var(--accent-1);
+}
+
+/* 持续追踪中按钮样�?*/
+.fab-btn.watching {
+  background: rgba(0, 212, 170, 0.2);
+  border-color: rgba(0, 212, 170, 0.5);
+  animation: watchPulse 2s ease-in-out infinite;
+}
+
+.fab-btn.watching svg {
+  color: var(--accent-1);
+}
+
+@keyframes watchPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 212, 170, 0.3); }
+  50% { box-shadow: 0 0 0 8px rgba(0, 212, 170, 0); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.pulse-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid var(--accent-1);
+  opacity: 0;
+}
+
+.fab-btn.located .pulse-ring {
+  animation: pulse 2s ease-out infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.5); opacity: 0; }
+}

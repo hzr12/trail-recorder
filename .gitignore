@@ -1,0 +1,28 @@
+# OS
+Thumbs.db
+.DS_Store
+*.swp
+*.swo
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# Python http server
+__pycache__/
+*.pyc
+
+# changelog — tracked in repo now
+.omo/
+
+.bak_dev_*/
+
+# 本地字体源仅保留 css/fonts/*，原始资源目录不上传
+HarmonyOS Sans/
+
+docs/*
+
+test/*
+tests.*
+tests/*

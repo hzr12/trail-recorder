@@ -1,0 +1,16 @@
+{
+  "appId": "com.hzr.circlemap",
+  "appName": "Circlemap-CN",
+  "webDir": "web",
+  "server": {
+    "hostname": "localhost",
+    "androidScheme": "https",
+    "androidUseLegacyBridge": true
+  },
+  "plugins": {
+    "GnssData": {},
+    "Filesystem": {},
+    "Share": {},
+    "BackgroundGeolocation": {}
+  }
+}

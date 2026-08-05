@@ -1,0 +1,13 @@
+/* ============================================
+   HarmonyOS Sans SC — 本地字体声明（仅 Medium 字重）
+   SC 版已包含全部拉丁字符，无需单独声明西文字体。
+   ============================================ */
+
+/* 简体中文（含拉丁） */
+@font-face {
+  font-family: 'HarmonyOS Sans SC';
+  font-style: normal;
+  font-weight: normal;
+  font-display: swap;
+  src: url('./fonts/HarmonyOS_Sans_SC_Medium.ttf') format('truetype');
+}
