@@ -140,7 +140,9 @@ jobs:
 
       - name: 构建调试版 APK
         working-directory: native/android
-        run: ./gradlew assembleDebug --no-daemon
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
 
       - name: 签名 APK
         run: |

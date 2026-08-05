@@ -110,10 +110,32 @@ def _draw_trail_icon(img_size, transparent_bg=False):
     return img
 
 
+def _remove_conflicts(res_dir, name, extensions=None):
+    """删除与指定资源同名但后缀不同的文件，避免 Duplicate Resources。"""
+    if extensions is None:
+        extensions = ['.png', '.webp', '.jpg', '.xml']
+    for root, dirs, files in os.walk(res_dir):
+        for f in files:
+            base, ext = os.path.splitext(f)
+            if base == name and ext in extensions:
+                path = os.path.join(root, f)
+                os.remove(path)
+                print(f"  清理冲突: {os.path.relpath(path, res_dir)}")
+
+
 def _write_adaptive_xmls(res_dir):
     """写入 adaptive icon 的 XML 配置。"""
     v26_dir = os.path.join(res_dir, 'mipmap-anydpi-v26')
     os.makedirs(v26_dir, exist_ok=True)
+
+    # drawable 目录中可能有 Capacitor 默认 PNG 与我们的 XML 冲突
+    drawable_dir = os.path.join(res_dir, 'drawable')
+    _remove_conflicts(drawable_dir, 'splash', ['.png', '.webp', '.jpg'])
+    _remove_conflicts(drawable_dir, 'ic_tracking', ['.png', '.webp', '.jpg'])
+    _remove_conflicts(drawable_dir, 'ic_launcher_background', ['.png', '.webp', '.jpg'])
+
+    drawable24_dir = os.path.join(res_dir, 'drawable-v24')
+    _remove_conflicts(drawable24_dir, 'ic_launcher_foreground', ['.png', '.webp', '.jpg'])
 
     # ic_launcher.xml
     xml_content = '''<?xml version="1.0" encoding="utf-8"?>
@@ -282,6 +304,36 @@ def main():
         sys.exit(1)
 
     print(f"目标目录: {RES_DIR}")
+    print()
+
+    # 0. 预清理：删除 Capacitor 默认资源中与我们生成的文件同名但后缀不同的文件
+    print("--- 预清理冲突资源 ---")
+    for density_dir in ['mipmap-mdpi', 'mipmap-hdpi', 'mipmap-xhdpi',
+                        'mipmap-xxhdpi', 'mipmap-xxxhdpi']:
+        d = os.path.join(RES_DIR, density_dir)
+        for name in ['ic_launcher', 'ic_launcher_round', 'ic_launcher_foreground']:
+            _remove_conflicts(d, name, ['.png', '.webp', '.jpg', '.xml'])
+
+    for name in ['splash', 'ic_tracking', 'ic_launcher_background']:
+        _remove_conflicts(os.path.join(RES_DIR, 'drawable'), name,
+                          ['.png', '.webp', '.jpg', '.xml'])
+
+    for name in ['ic_launcher_foreground']:
+        _remove_conflicts(os.path.join(RES_DIR, 'drawable-v24'), name,
+                          ['.png', '.webp', '.jpg', '.xml'])
+
+    for name in ['ic_launcher', 'ic_launcher_round']:
+        _remove_conflicts(os.path.join(RES_DIR, 'mipmap-anydpi-v26'), name,
+                          ['.png', '.webp', '.jpg'])
+
+    # 同时删除 Capacitor 默认的 web 相关 drawable 资源
+    for d in ['drawable-land-mdpi', 'drawable-land-hdpi', 'drawable-land-xhdpi',
+              'drawable-land-xxhdpi', 'drawable-land-xxxhdpi',
+              'drawable-port-mdpi', 'drawable-port-hdpi', 'drawable-port-xhdpi',
+              'drawable-port-xxhdpi', 'drawable-port-xxxhdpi']:
+        _remove_conflicts(os.path.join(RES_DIR, d), 'splash',
+                          ['.png', '.webp', '.jpg'])
+
     print()
 
     # 1. 生成 PNG 图标
