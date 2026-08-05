@@ -64,6 +64,23 @@ jobs:
         working-directory: native
         run: npx cap add android || true
 
+      - name: 生成自定义 APP 图标
+        working-directory: native
+        run: |
+          pip install Pillow
+          python ../scripts/generate_android_icons.py
+
+      - name: 验证图标资源
+        working-directory: native
+        run: |
+          RES="android/app/src/main/res"
+          echo "=== 检查图标资源 ==="
+          for d in mipmap-mdpi mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+            echo "$d: $(ls "$RES/$d/ic_launcher.png" "$RES/$d/ic_launcher_foreground.png" 2>/dev/null || echo 'MISSING')"
+          done
+          echo "adaptive: $(ls "$RES/mipmap-anydpi-v26/ic_launcher.xml" 2>/dev/null || echo 'MISSING')"
+          echo "vector fg: $(ls "$RES/drawable-v24/ic_launcher_foreground.xml" 2>/dev/null || echo 'MISSING')"
+
       - name: 复制 Web 资源到 native/web/
         run: |
           mkdir -p native/web
