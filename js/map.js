@@ -454,15 +454,19 @@ class MapManager {
         batchPath.push(new qq.maps.LatLng(p1.lat, p1.lng));
         batchKey = key;
       } else if (key === batchKey) {
-        batchPath.push(new qq.maps.LatLng(p1.lat, p1.lng));
+        const interpolated = this._subdivideSegment(p0, p1);
+        for (const pt of interpolated) {
+          batchPath.push(new qq.maps.LatLng(pt.lat, pt.lng));
+        }
       } else {
         if (batchPath.length >= 2) {
           this._flushSegment(batchPath, this._speedColorMap[batchKey]);
         }
-        batchPath = [
-          new qq.maps.LatLng(p0.lat, p0.lng),
-          new qq.maps.LatLng(p1.lat, p1.lng)
-        ];
+        const interpolated = this._subdivideSegment(p0, p1);
+        batchPath = [new qq.maps.LatLng(p0.lat, p0.lng)];
+        for (const pt of interpolated) {
+          batchPath.push(new qq.maps.LatLng(pt.lat, pt.lng));
+        }
         batchKey = key;
       }
     }
@@ -473,6 +477,22 @@ class MapManager {
     if (positions.length > 0) {
       this._lastTrailAnchor = positions[0];
     }
+  }
+
+  _subdivideSegment(p0, p1) {
+    const dist = calcDistance(p0, p1);
+    if (dist < 10) return [p1];
+
+    const steps = Math.min(10, Math.max(2, Math.round(dist / 10)));
+    const result = [];
+    for (let s = 1; s <= steps; s++) {
+      const t = s / steps;
+      result.push({
+        lat: p0.lat + (p1.lat - p0.lat) * t,
+        lng: p0.lng + (p1.lng - p0.lng) * t
+      });
+    }
+    return result;
   }
 
   _flushSegment(path, clr) {

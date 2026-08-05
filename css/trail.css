@@ -35,7 +35,7 @@
 
 /* ---------- 轨迹列表 ---------- */
 
-#tab-record, #tab-history {
+#tab-record, #tab-replay, #tab-history {
   max-height: 380px;
   min-height: 380px;
   overflow-y: auto;
@@ -455,4 +455,355 @@
 @keyframes trailPulse {
   0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 6px #FF4757; }
   50% { opacity: 0.5; transform: scale(0.75); box-shadow: 0 0 2px #FF4757; }
+}
+
+/* ---------- 轨迹回放面板 ---------- */
+
+.replay-panel {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.replay-panel.hidden {
+  display: none;
+}
+
+.replay-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.replay-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent-1);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.replay-title::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #FF9500;
+  box-shadow: 0 0 6px rgba(255, 149, 0, 0.5);
+}
+
+.replay-time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.replay-progress {
+  margin-bottom: 8px;
+}
+
+.replay-slider {
+  width: 100%;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--border-color);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.replay-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #FF9500;
+  border: 2px solid #fff;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(255, 149, 0, 0.4);
+  transition: transform 0.15s;
+}
+
+.replay-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.replay-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #FF9500;
+  border: 2px solid #fff;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(255, 149, 0, 0.4);
+}
+
+.replay-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.replay-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(255, 149, 0, 0.15);
+  border: 1px solid rgba(255, 149, 0, 0.3);
+  color: #FF9500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+
+.replay-btn:hover {
+  background: rgba(255, 149, 0, 0.25);
+}
+
+.replay-btn:active {
+  transform: scale(0.92);
+}
+
+.replay-btn.play-btn {
+  width: 36px;
+  height: 36px;
+  background: linear-gradient(135deg, rgba(255, 149, 0, 0.2), rgba(255, 94, 51, 0.15));
+  border-color: rgba(255, 149, 0, 0.5);
+  box-shadow: 0 2px 8px rgba(255, 149, 0, 0.2);
+}
+
+.replay-btn.play-btn.playing {
+  background: linear-gradient(135deg, rgba(255, 94, 51, 0.25), rgba(255, 51, 102, 0.15));
+  border-color: rgba(255, 94, 51, 0.5);
+  color: #FF5E33;
+}
+
+.replay-btn.stop-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border-color: var(--border-color);
+  color: var(--text-tertiary);
+}
+
+.replay-btn.stop-btn:hover {
+  color: var(--text-secondary);
+  border-color: var(--border-active);
+}
+
+.replay-speeds {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.speed-btn {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  min-width: 32px;
+}
+
+.speed-btn:hover {
+  color: var(--text-secondary);
+  border-color: var(--border-active);
+}
+
+.speed-btn.active {
+  background: rgba(255, 149, 0, 0.15);
+  color: #FF9500;
+  border-color: rgba(255, 149, 0, 0.4);
+}
+
+.replay-info {
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: rgba(255, 149, 0, 0.08);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  line-height: 1.6;
+}
+
+.replay-info .speed-val {
+  color: #FF9500;
+  font-weight: 500;
+}
+
+/* 回放标记动画 */
+@keyframes replayGlow {
+  0%, 100% { box-shadow: 0 0 6px rgba(255, 149, 0, 0.5); }
+  50% { box-shadow: 0 0 12px rgba(255, 149, 0, 0.8); }
+}
+
+.replay-playing .replay-title::before {
+  animation: replayGlow 1s ease-in-out infinite;
+}
+
+/* 轨迹项中的回放按钮 */
+.trail-item-btn.replay-btn {
+  color: #FF9500;
+  border-color: rgba(255, 149, 0, 0.3);
+}
+
+.trail-item-btn.replay-btn:active {
+  background: rgba(255, 149, 0, 0.12);
+}
+
+/* 回放模式下隐藏真实位置标记 */
+.replay-mode .gps-status {
+  opacity: 0.6;
+}
+
+/* 保存按钮在轨迹操作栏中的样式 */
+#trail-save-btn {
+  color: var(--accent-1);
+  border-color: rgba(0, 212, 170, 0.3);
+}
+
+#trail-save-btn:disabled {
+  opacity: 0.4;
+  color: var(--text-tertiary);
+  border-color: var(--border-color);
+  cursor: not-allowed;
+}
+
+#trail-save-btn:not(:disabled):hover {
+  background: rgba(0, 212, 170, 0.12);
+}
+
+#trail-save-btn.active {
+  background: rgba(0, 212, 170, 0.15);
+  border-color: rgba(0, 212, 170, 0.4);
+}
+
+/* 回放按钮在轨迹操作栏中的样式 */
+#trail-replay-btn {
+  color: #FF9500;
+  border-color: rgba(255, 149, 0, 0.3);
+}
+
+#trail-replay-btn:disabled {
+  opacity: 0.4;
+  color: var(--text-tertiary);
+  border-color: var(--border-color);
+  cursor: not-allowed;
+}
+
+#trail-replay-btn:not(:disabled):hover {
+  background: rgba(255, 149, 0, 0.12);
+}
+
+#trail-replay-btn.active {
+  background: rgba(255, 149, 0, 0.2);
+  border-color: rgba(255, 149, 0, 0.5);
+}
+
+/* ---------- 回放 Tab 空状态 ---------- */
+
+.replay-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+  text-align: center;
+}
+
+.replay-empty.hidden {
+  display: none;
+}
+
+.replay-empty-icon {
+  color: var(--text-tertiary);
+  margin-bottom: 12px;
+  opacity: 0.6;
+}
+
+.replay-empty-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.replay-empty-desc {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.6;
+}
+
+/* ---------- 回放 Tab 轨迹列表 ---------- */
+
+.replay-trails-section {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.replay-trails-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+/* 回放面板在回放 Tab 内的优化 */
+#tab-replay .replay-panel {
+  margin-top: 0;
+}
+
+/* 回放模式下 Tab 的激活样式 */
+.mode-tab[data-tab="replay"].active {
+  background: rgba(255, 149, 0, 0.15);
+  color: #FF9500;
+}
+
+.mode-tab[data-tab="replay"].active svg {
+  color: #FF9500;
+}
+
+/* 回放中指示器 */
+.replay-playing-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: #FF9500;
+  background: rgba(255, 149, 0, 0.12);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+}
+
+.replay-playing-indicator::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #FF9500;
+  animation: replayGlow 1s ease-in-out infinite;
 }

@@ -7,15 +7,15 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>途刻 TraceCraft</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="css/fonts.css?t=20260805v1">
-  <link rel="stylesheet" href="css/theme.css?t=20260805v1">
-  <link rel="stylesheet" href="css/base.css?t=20260805v1">
-  <link rel="stylesheet" href="css/map.css?t=20260805v1">
-  <link rel="stylesheet" href="css/panel.css?t=20260805v1">
-  <link rel="stylesheet" href="css/gps.css?t=20260805v1">
-  <link rel="stylesheet" href="css/trail.css?t=20260805v1">
-  <link rel="stylesheet" href="css/toast-modal.css?t=20260805v1">
-  <link rel="stylesheet" href="css/responsive.css?t=20260805v1">
+  <link rel="stylesheet" href="css/fonts.css?t=20260805v5">
+  <link rel="stylesheet" href="css/theme.css?t=20260805v5">
+  <link rel="stylesheet" href="css/base.css?t=20260805v5">
+  <link rel="stylesheet" href="css/map.css?t=20260805v5">
+  <link rel="stylesheet" href="css/panel.css?t=20260805v5">
+  <link rel="stylesheet" href="css/gps.css?t=20260805v5">
+  <link rel="stylesheet" href="css/trail.css?t=20260805v5">
+  <link rel="stylesheet" href="css/toast-modal.css?t=20260805v5">
+  <link rel="stylesheet" href="css/responsive.css?t=20260805v5">
 </head>
 <body>
   <div id="map">
@@ -66,6 +66,13 @@
         </svg>
         记录
       </button>
+      <button class="mode-tab" data-tab="replay" id="tab-replay-btn">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="5,3 19,12 5,21" fill="currentColor" stroke="none"/>
+          <line x1="19" y1="4" x2="19" y2="20"/>
+        </svg>
+        回放
+      </button>
       <button class="mode-tab" data-tab="history" id="tab-history-btn">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 8v4l3 3"/>
@@ -92,10 +99,12 @@
           <button id="trail-clear-btn" class="btn btn-secondary btn-sm" disabled>清除</button>
         </div>
         <div class="trail-actions">
+          <button id="trail-save-btn" class="btn-sm" disabled title="保存当前轨迹到历史"> 保存</button>
           <button id="trail-stats-btn" class="btn-sm" disabled> 统计</button>
           <button id="trail-smooth-btn" class="btn-sm active"> 平滑</button>
           <button id="export-report-btn" class="btn-sm" title="导出活动报告图片（含轨迹、速度曲线、统计）"> 报告</button>
         </div>
+
         <!-- 后台+省电模块 -->
         <div class="power-section" id="power-section">
           <span class="power-status" id="power-status">定位间隔: 2s</span>
@@ -135,6 +144,60 @@
       <div id="gnss-bar" class="gnss-bar"></div>
       </div><!-- /tab-record -->
 
+      <!-- 回放 Tab -->
+      <div id="tab-replay" style="display:none">
+        <div class="replay-empty" id="replay-empty">
+          <div class="replay-empty-icon">
+            <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5,3 19,12 5,21" fill="currentColor" opacity="0.3"/>
+              <line x1="19" y1="4" x2="19" y2="20"/>
+            </svg>
+          </div>
+          <div class="replay-empty-title">选择轨迹开始回放</div>
+          <div class="replay-empty-desc">点击下方历史轨迹中的播放按钮，<br>或在记录 Tab 中点击回放按钮</div>
+        </div>
+
+        <!-- 回放控制面板（加载轨迹后显示） -->
+        <div id="replay-panel" class="replay-panel hidden">
+          <div class="replay-header">
+            <span class="replay-title" id="replay-title">轨迹回放</span>
+            <span class="replay-time" id="replay-time">00:00 / 00:00</span>
+          </div>
+          <div class="replay-progress">
+            <input type="range" id="replay-slider" class="replay-slider" min="0" max="1000" value="0" step="1">
+          </div>
+          <div class="replay-controls">
+            <button id="replay-play-btn" class="replay-btn play-btn" title="播放/暂停">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <polygon points="6,4 20,12 6,20" id="replay-play-icon"/>
+              </svg>
+            </button>
+            <button id="replay-stop-btn" class="replay-btn stop-btn" title="停止">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                <rect x="5" y="5" width="14" height="14" rx="2"/>
+              </svg>
+            </button>
+            <div class="replay-speeds">
+              <button class="speed-btn" data-speed="1">1x</button>
+              <button class="speed-btn" data-speed="1.5">1.5x</button>
+              <button class="speed-btn" data-speed="2">2x</button>
+              <button class="speed-btn" data-speed="4">4x</button>
+            </div>
+          </div>
+          <div class="replay-info" id="replay-info"></div>
+        </div>
+
+        <!-- 可回放轨迹列表 -->
+        <div class="replay-trails-section">
+          <div class="replay-trails-header">
+            <span>可回放轨迹</span>
+          </div>
+          <div class="trail-list" id="replay-trail-list">
+            <div class="trail-list-empty">暂无历史轨迹</div>
+          </div>
+        </div>
+      </div>
+
       <!-- 历史 Tab -->
       <div id="tab-history" style="display:none">
         <div class="trail-list" id="trail-list">
@@ -151,13 +214,14 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 
   <!-- 应用脚本 -->
-  <script src="js/config.js?t=20260805v1"></script>
-  <script src="js/toast.js?t=20260805v1"></script>
-  <script src="js/storage.js?t=20260805v1"></script>
-  <script src="js/trail.js?t=20260805v1"></script>
-  <script src="js/map.js?t=20260805v1"></script>
-  <script src="js/gps.js?t=20260805v1"></script>
-  <script src="js/app-core.js?t=20260805v1"></script>
-  <script src="js/app-gps-ui.js?t=20260805v1"></script>
+  <script src="js/config.js?t=20260805v6"></script>
+  <script src="js/toast.js?t=20260805v6"></script>
+  <script src="js/storage.js?t=20260805v6"></script>
+  <script src="js/trail.js?t=20260805v6"></script>
+  <script src="js/map.js?t=20260805v6"></script>
+  <script src="js/gps.js?t=20260805v6"></script>
+  <script src="js/replay.js?t=20260805v6"></script>
+  <script src="js/app-core.js?t=20260805v6"></script>
+  <script src="js/app-gps-ui.js?t=20260805v6"></script>
 </body>
 </html>

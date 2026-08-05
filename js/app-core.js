@@ -88,6 +88,10 @@ class App {
     this._trailSmoothing = true;
     this._processQueue = Promise.resolve();
     this._queuePending = 0;
+    this._replayPlayer = null;
+    this._isReplaying = false;
+    this._replaySpeed = 1;
+    this._replayFollowMode = true;
   }
 
   init() {
@@ -171,10 +175,45 @@ class App {
     document.getElementById('trail-record-btn').addEventListener('click', () => this._toggleTrailRecording());
     document.getElementById('trail-pause-btn').addEventListener('click', () => this._toggleTrailPause());
     document.getElementById('trail-clear-btn').addEventListener('click', () => this._clearTrail());
+    document.getElementById('trail-save-btn').addEventListener('click', () => this._saveCurrentTrailToList());
     document.getElementById('trail-stats-btn').addEventListener('click', () => this._showTrailStats());
     document.getElementById('trail-smooth-btn').addEventListener('click', () => this._toggleTrailSmoothing());
     document.getElementById('export-report-btn').addEventListener('click', () => this._exportReport());
     document.getElementById('power-saving-btn').addEventListener('click', () => this._togglePowerSaving());
+
+    // 回放控制面板
+    const replaySlider = document.getElementById('replay-slider');
+    if (replaySlider) {
+      replaySlider.addEventListener('input', (e) => {
+        if (this._replayPlayer && !this._replayPlayer.isPlaying) {
+          const progress = parseInt(e.target.value, 10) / 1000;
+          this._replayPlayer.seekToProgress(progress);
+        }
+      });
+      replaySlider.addEventListener('change', (e) => {
+        if (this._replayPlayer) {
+          const progress = parseInt(e.target.value, 10) / 1000;
+          this._replayPlayer.seekToProgress(progress);
+        }
+      });
+    }
+
+    const replayPlayBtn = document.getElementById('replay-play-btn');
+    if (replayPlayBtn) {
+      replayPlayBtn.addEventListener('click', () => this._toggleReplayPlay());
+    }
+
+    const replayStopBtn = document.getElementById('replay-stop-btn');
+    if (replayStopBtn) {
+      replayStopBtn.addEventListener('click', () => this._stopReplay());
+    }
+
+    document.querySelectorAll('.speed-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const speed = parseFloat(btn.dataset.speed);
+        this._setReplaySpeed(speed);
+      });
+    });
 
     this._statusEl = document.getElementById('gps-status');
     this._gnssBarEl = document.getElementById('gnss-bar');
@@ -224,10 +263,13 @@ class App {
       btn.classList.toggle('active', btn.dataset.tab === tab);
     });
     const recordEl = document.getElementById('tab-record');
+    const replayEl = document.getElementById('tab-replay');
     const historyEl = document.getElementById('tab-history');
     if (recordEl) recordEl.style.display = tab === 'record' ? '' : 'none';
+    if (replayEl) replayEl.style.display = tab === 'replay' ? '' : 'none';
     if (historyEl) historyEl.style.display = tab === 'history' ? '' : 'none';
     if (tab === 'history') this._renderTrailList();
+    if (tab === 'replay') this._renderReplayTrailList();
   }
 
   async _locateMe() {
@@ -524,6 +566,10 @@ class App {
   }
 
   _clearTrail() {
+    if (this._isReplaying) {
+      this._stopReplay();
+    }
+
     const savedPositions = this.trail.positions.slice();
     const savedLastPos = this.trail.lastPos;
     const savedRecording = this.trail.isRecording;
@@ -594,6 +640,185 @@ class App {
     Toast.show(this._trailSmoothing ? ' 轨迹平滑已开启' : ' 轨迹平滑已关闭');
   }
 
+  // ===== 轨迹回放功能 =====
+
+  _toggleReplay() {
+    if (this._isReplaying) {
+      this._stopReplay();
+      Toast.show(' 回放已停止');
+      return;
+    }
+
+    if (this.trail.isRecording) {
+      Toast.show(' 记录中无法回放，请先停止记录');
+      return;
+    }
+
+    const positions = this._getTrailPositions();
+    if (!positions || positions.length < 2) {
+      Toast.show(' 轨迹点数不足，无法回放');
+      return;
+    }
+
+    this._setTab('replay');
+    this._startReplay(positions);
+  }
+
+  _startReplay(positions, trailName) {
+    this._isReplaying = true;
+    document.body.classList.add('replay-mode');
+
+    if (this._replayPlayer) {
+      this._replayPlayer.destroy();
+      this._replayPlayer = null;
+    }
+
+    this._replayPlayer = new TrailPlayer(positions, this.mapManager, {
+      onProgress: (progress) => this._onReplayProgress(progress),
+      onComplete: () => this._onReplayComplete(),
+      onFrame: (point, index) => this._onReplayFrame(point, index)
+    });
+
+    this._replayPlayer.setSpeed(this._replaySpeed);
+
+    // 显示回放面板，隐藏空状态
+    const replayPanel = document.getElementById('replay-panel');
+    if (replayPanel) {
+      replayPanel.classList.remove('hidden');
+    }
+    const replayEmpty = document.getElementById('replay-empty');
+    if (replayEmpty) {
+      replayEmpty.classList.add('hidden');
+    }
+    const replayTitle = document.getElementById('replay-title');
+    if (replayTitle) {
+      replayTitle.textContent = trailName ? `回放: ${trailName}` : '轨迹回放';
+    }
+
+    this._updateReplayUI();
+
+    Toast.show(' 开始轨迹回放');
+  }
+
+  _stopReplay() {
+    this._isReplaying = false;
+    document.body.classList.remove('replay-mode');
+
+    if (this._replayPlayer) {
+      this._replayPlayer.destroy();
+      this._replayPlayer = null;
+    }
+
+    const replayPanel = document.getElementById('replay-panel');
+    if (replayPanel) {
+      replayPanel.classList.add('hidden');
+    }
+    const replayEmpty = document.getElementById('replay-empty');
+    if (replayEmpty) {
+      replayEmpty.classList.remove('hidden');
+    }
+
+    // 恢复真实位置标记
+    if (this.myPosition) {
+      this.mapManager.setLocation(
+        { lat: this.myPosition.lat, lng: this.myPosition.lng },
+        this._lastAccuracy || 0,
+        this._lastHeading
+      );
+    }
+  }
+
+  _toggleReplayPlay() {
+    if (!this._replayPlayer) return;
+
+    if (this._replayPlayer.isPlaying) {
+      this._replayPlayer.pause();
+    } else {
+      this._replayPlayer.play();
+    }
+
+    this._updateReplayUI();
+  }
+
+  _setReplaySpeed(speed) {
+    this._replaySpeed = speed;
+    if (this._replayPlayer) {
+      this._replayPlayer.setSpeed(speed);
+    }
+    this._updateReplayUI();
+  }
+
+  _onReplayProgress(progress) {
+    const slider = document.getElementById('replay-slider');
+    if (slider && document.activeElement !== slider) {
+      slider.value = Math.round(progress * 1000);
+    }
+
+    const timeEl = document.getElementById('replay-time');
+    if (timeEl && this._replayPlayer) {
+      const info = this._replayPlayer.getCurrentInfo();
+      const elapsed = TrailPlayer.formatDuration(info.elapsedMs);
+      const total = TrailPlayer.formatDuration(info.elapsedMs + info.remainingMs);
+      timeEl.textContent = `${elapsed} / ${total}`;
+    }
+
+    this._updateReplayInfo();
+  }
+
+  _onReplayFrame(point, index) {
+    if (this._replayFollowMode && this.mapManager.map) {
+      this.mapManager.map.panTo(new qq.maps.LatLng(point.lat, point.lng));
+    }
+  }
+
+  _onReplayComplete() {
+    this._updateReplayUI();
+    Toast.show(' 回放完成');
+  }
+
+  _updateReplayUI() {
+    if (!this._replayPlayer) return;
+
+    const playBtn = document.getElementById('replay-play-btn');
+    if (playBtn) {
+      const isPlaying = this._replayPlayer.isPlaying;
+      playBtn.classList.toggle('playing', isPlaying);
+      const icon = document.getElementById('replay-play-icon');
+      if (icon) {
+        if (isPlaying) {
+          icon.setAttribute('points', '6,4 10,4 10,20 6,20');
+          icon.setAttribute('points', '6,4 10,4 10,20 6,20');
+          // Use a pause icon instead
+          playBtn.querySelector('svg').innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+        } else {
+          playBtn.querySelector('svg').innerHTML = '<polygon points="6,4 20,12 6,20"/>';
+        }
+      }
+    }
+
+    document.querySelectorAll('.speed-btn').forEach((btn) => {
+      btn.classList.toggle('active', parseFloat(btn.dataset.speed) === this._replaySpeed);
+    });
+
+    this._updateReplayInfo();
+  }
+
+  _updateReplayInfo() {
+    const infoEl = document.getElementById('replay-info');
+    if (!infoEl || !this._replayPlayer) return;
+
+    const info = this._replayPlayer.getCurrentInfo();
+    const speedKmh = (info.currentSpeed || 0) * 3.6;
+    const direction = bearingToDir(info.currentHeading || 0);
+    const elapsed = TrailPlayer.formatDuration(info.elapsedMs);
+    const remaining = TrailPlayer.formatDuration(info.remainingMs);
+
+    infoEl.innerHTML = `
+      进度: ${elapsed} | 剩余: ${remaining}<br>
+      速度: <span class="speed-val">${speedKmh.toFixed(1)} km/h</span> | 方向: ${direction} | 距离: ${formatDistance(info.distance)}
+    `;
+  }
+
   _restoreTrailSmoothing() {
     try {
       const pref = localStorage.getItem('trailcraft_trail_smooth');
@@ -602,6 +827,50 @@ class App {
   }
 
   // ===== 轨迹列表管理 =====
+
+  _saveCurrentTrailToList() {
+    if (!this.trail.positions || this.trail.positions.length < 2) {
+      Toast.show(' 轨迹点数不足，无法保存');
+      return;
+    }
+
+    const positions = this.trail.positions.slice();
+    const distance = this.trail.getDistance();
+    const duration = this.trail.getDuration ? this.trail.getDuration() : 0;
+    const maxSpeed = this.trail.getMaxSpeed ? this.trail.getMaxSpeed() : 0;
+    const avgSpeed = distance / Math.max(1, duration / 1000);
+    const name = Storage._fmtTrailName(Date.now());
+
+    Toast.show(' 正在保存...', true);
+
+    Storage.saveTrailToList(positions, name).then((id) => {
+      if (id) {
+        // 显示保存成功，然后清空当前轨迹并切换到历史 Tab
+        const itemCount = positions.length;
+        const distStr = distance >= 1000
+          ? (distance / 1000).toFixed(2) + ' km'
+          : Math.round(distance) + ' m';
+
+        Toast.showUndo(' 轨迹已保存到历史', () => {
+          // 撤销保存：删除刚保存的轨迹
+          Storage.deleteTrail(id);
+        });
+
+        // 清空当前轨迹
+        this.trail.clear();
+        this.mapManager.clearTrail();
+        Storage.clearTrail();
+        this._trailDirty = false;
+        this._updateTrailUI();
+
+        // 切换到历史 Tab 查看
+        this._setTab('history');
+        this._renderTrailList();
+      } else {
+        Toast.show(' 保存失败，请重试');
+      }
+    });
+  }
 
   _saveCurrentTrail() {
     if (!this.trail.positions || this.trail.positions.length === 0) return;
@@ -660,6 +929,87 @@ class App {
 
       listEl.querySelectorAll('.trail-item-name').forEach((el) => {
         el.addEventListener('click', () => this._renameTrail(el.dataset.id, el));
+      });
+    });
+  }
+
+  _replayTrailFromList(id) {
+    Storage.loadTrailById(id).then((data) => {
+      if (!data || !data.positions || data.positions.length < 2) {
+        Toast.show(' 轨迹数据不足');
+        return;
+      }
+
+      // 停止当前回放
+      if (this._isReplaying) {
+        this._stopReplay();
+      }
+
+      // 切换到回放 Tab
+      this._setTab('replay');
+
+      // 加载轨迹到地图
+      this.trail.clear();
+      this.trail.positions = data.positions;
+      this.trail.lastPos = data.positions[data.positions.length - 1];
+      this.mapManager.setTrail(this._getTrailPositions());
+      this._updateTrailUI();
+
+      Toast.show(` 已加载「${data.name}」（${data.positions.length} 点）`);
+
+      // 自动开始回放
+      setTimeout(() => {
+        this._startReplay(this._getTrailPositions(), data.name);
+      }, 300);
+    });
+  }
+
+  _renderReplayTrailList() {
+    const listEl = document.getElementById('replay-trail-list');
+    if (!listEl) return;
+    Storage.loadTrailList().then((items) => {
+      if (!items || items.length === 0) {
+        listEl.innerHTML = '<div class="trail-list-empty">暂无历史轨迹</div>';
+        return;
+      }
+      listEl.innerHTML = items.map((item) => {
+        const d = new Date(item.createdAt);
+        const pad = (n) => String(n).padStart(2, '0');
+        const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        const distStr = item.distance >= 1000
+          ? (item.distance / 1000).toFixed(2) + ' km'
+          : Math.round(item.distance) + ' m';
+        return `<div class="trail-list-item" data-id="${item.id}">
+          <span class="trail-item-dot" style="background:#FF9500"></span>
+          <div class="trail-item-info">
+            <div class="trail-item-name">${item.name}</div>
+            <div class="trail-item-meta">${dateStr} · ${distStr} · ${item.pointCount || 0} 点</div>
+          </div>
+          <div class="trail-item-actions">
+            <button class="trail-item-btn replay-btn" data-id="${item.id}" title="回放">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                <polygon points="6,4 20,12 6,20"/>
+              </svg>
+            </button>
+            <button class="trail-item-btn load-btn" data-id="${item.id}" title="加载">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+            </button>
+          </div>
+        </div>`;
+      }).join('');
+
+      listEl.querySelectorAll('.trail-item-btn.replay-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this._replayTrailFromList(btn.dataset.id);
+        });
+      });
+
+      listEl.querySelectorAll('.trail-item-btn.load-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this._loadTrailFromList(btn.dataset.id);
+        });
       });
     });
   }
@@ -1100,6 +1450,7 @@ class App {
     const btn = this._trailRecordBtn || (this._trailRecordBtn = document.getElementById('trail-record-btn'));
     const pauseBtn = this._trailPauseBtn || (this._trailPauseBtn = document.getElementById('trail-pause-btn'));
     const clearBtn = this._trailClearBtn || (this._trailClearBtn = document.getElementById('trail-clear-btn'));
+    const saveBtn = this._trailSaveBtn || (this._trailSaveBtn = document.getElementById('trail-save-btn'));
     const statsBtn = this._trailStatsBtn || (this._trailStatsBtn = document.getElementById('trail-stats-btn'));
     const exportBtn = this._trailExportBtn || (this._trailExportBtn = document.getElementById('export-report-btn'));
     const smoothBtn = this._trailSmoothBtn || (this._trailSmoothBtn = document.getElementById('trail-smooth-btn'));
@@ -1124,6 +1475,11 @@ class App {
 
     const hasPoints = this.trail.positions.length > 0;
     if (clearBtn) clearBtn.disabled = !hasPoints;
+    if (saveBtn) {
+      const canSave = this.trail.positions.length >= 2 && !this.trail.isRecording;
+      saveBtn.disabled = !canSave;
+      saveBtn.classList.toggle('active', canSave);
+    }
     if (statsBtn) statsBtn.disabled = this.trail.positions.length < 2;
     if (exportBtn) exportBtn.disabled = this.trail.positions.length < 2;
 
@@ -1517,6 +1873,11 @@ class App {
 
   destroy() {
     this._stopWatching();
+
+    if (this._isReplaying) {
+      this._stopReplay();
+    }
+
     if (this._intervalId) {
       clearInterval(this._intervalId);
       this._intervalId = null;
