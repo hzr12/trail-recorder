@@ -2,7 +2,7 @@ name: 构建 Android APK（途刻 TraceCraft）
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     tags:
       - 'v*'
     paths:
