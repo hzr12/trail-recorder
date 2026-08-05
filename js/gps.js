@@ -542,7 +542,7 @@ class GPSManager {
         const msg = `[${code}] ${startErr?.message || '未知'}`;
         console.warn('[GPS] startGnssListening 拒绝:', msg);
         if (code === 'PERMISSION_DENIED') {
-          Toast.show(` ACCESS_FINE_LOCATION 权限被拒 — 请到系统设置→应用→CircleMap→位置，开启"始终允许"`, 6000);
+          Toast.show(` ACCESS_FINE_LOCATION 权限被拒 — 请到系统设置→应用→途刻→位置，开启"始终允许"`, 6000);
         }
         throw startErr;
       }

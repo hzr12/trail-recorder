@@ -1,4 +1,4 @@
-package com.hzr.circlemap.plugins.gnss;
+package com.hzr.tujie.plugins.gnss;
 
 import android.Manifest;
 import android.content.Context;

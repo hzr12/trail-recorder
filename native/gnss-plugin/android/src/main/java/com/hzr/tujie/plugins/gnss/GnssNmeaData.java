@@ -1,4 +1,4 @@
-package com.hzr.circlemap.plugins.gnss;
+package com.hzr.tujie.plugins.gnss;
 
 import com.getcapacitor.JSObject;
 

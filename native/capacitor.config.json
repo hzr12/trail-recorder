@@ -1,6 +1,6 @@
 {
-  "appId": "com.hzr.circlemap",
-  "appName": "Circlemap-CN",
+  "appId": "com.hzr.tujie",
+  "appName": "途刻 TraceCraft",
   "webDir": "web",
   "server": {
     "hostname": "localhost",

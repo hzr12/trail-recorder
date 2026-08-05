@@ -1,7 +1,7 @@
 apply plugin: 'com.android.library'
 
 android {
-    namespace 'com.hzr.circlemap.plugins.gnss'
+    namespace 'com.hzr.tujie.plugins.gnss'
     compileSdk 36
 
     defaultConfig {

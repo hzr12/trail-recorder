@@ -84,7 +84,7 @@ jobs:
 
       - name: 覆盖 User-Agent（桌面版 UA 测试瓦片差异）
         run: |
-          ANDROID_MAIN_DIR="native/android/app/src/main/java/com/hzr/circlemap"
+          ANDROID_MAIN_DIR="native/android/app/src/main/java/com/hzr/tujie"
           if [ ! -d "$ANDROID_MAIN_DIR" ]; then
             echo "创建目录: $ANDROID_MAIN_DIR"
             mkdir -p "$ANDROID_MAIN_DIR"
@@ -127,7 +127,7 @@ jobs:
 
       - name: 签名 APK
         run: |
-          KEYSTORE="native/circlemap.keystore"
+          KEYSTORE="native/tujie.keystore"
           APK="native/android/app/build/outputs/apk/debug/app-debug.apk"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
@@ -144,9 +144,9 @@ jobs:
           "${ANDROID_HOME}/build-tools/${BT_DIR}/zipalign" -p -f 4 "$APK" "$APK_SIGNED"
           "${ANDROID_HOME}/build-tools/${BT_DIR}/apksigner" sign \
             --ks "$KEYSTORE" \
-            --ks-key-alias circlemap \
-            --ks-pass pass:circlemap123 \
-            --key-pass pass:circlemap123 \
+            --ks-key-alias tujie \
+            --ks-pass pass:tujie123 \
+            --key-pass pass:tujie123 \
             "$APK_SIGNED"
           echo "签名完成: $APK_SIGNED"
 

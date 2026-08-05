@@ -1,1 +1,1 @@
--keep class com.hzr.circlemap.plugins.gnss.** { *; }
+-keep class com.hzr.tujie.plugins.gnss.** { *; }

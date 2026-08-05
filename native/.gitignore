@@ -5,7 +5,7 @@ dist/
 *.apk
 *.aab
 *.keystore
-!circlemap.keystore
+!tujie.keystore
 *.jks
 local.properties
 .idea/
