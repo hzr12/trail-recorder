@@ -22,6 +22,10 @@
   transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+.bottom-panel.collapsed {
+  max-height: 48px;
+}
+
 /* 面板顶部渐变光晕 */
 .bottom-panel::before {
   content: '';
@@ -33,10 +37,6 @@
   background: linear-gradient(90deg, transparent, rgba(0, 212, 170, 0.35), rgba(0, 163, 255, 0.35), transparent);
   z-index: 1;
   pointer-events: none;
-}
-
-.bottom-panel.collapsed {
-  transform: translateY(calc(100% - 48px));
 }
 
 .panel-handle {
