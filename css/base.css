@@ -82,20 +82,20 @@ input[type="number"] {
 }
 
 /* ---------- 滚动条美化 ---------- */
-.panel-body::-webkit-scrollbar {
+.bottom-panel::-webkit-scrollbar {
   width: 3px;
 }
 
-.panel-body::-webkit-scrollbar-track {
+.bottom-panel::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.panel-body::-webkit-scrollbar-thumb {
+.bottom-panel::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 3px;
 }
 
-.panel-body::-webkit-scrollbar-thumb:hover {
+.bottom-panel::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.2);
 }
 
@@ -105,7 +105,7 @@ input[type="number"] {
 }
 
 /* 防止内容溢出导致的穿透滚动 */
-.panel-body {
+.bottom-panel {
   overscroll-behavior-y: contain;
   touch-action: pan-y;
 }
