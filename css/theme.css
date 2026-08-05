@@ -1,6 +1,6 @@
 /* ============================================
-   圆圈地图 - 样式�?
-   设计方向：深�?· 沉浸 · 玻璃质感 · 移动优先
+   途刻 TraceCraft - 样式
+   设计方向：深色 · 沉浸 · 玻璃质感 · 移动优先
    ============================================ */
 
 /* ---------- CSS 变量 ---------- */
@@ -37,13 +37,13 @@
 }
 
 /* ---------- 主色彩色方案 ---------- */
-/* 默认�?Cyan */
+/* 默认 途刻蓝青 */
 :root, [data-accent="cyan"] {
-  --accent-1: #00D4AA;
-  --accent-2: #00A3FF;
-  --accent-gradient: linear-gradient(135deg, #00D4AA, #00A3FF);
-  --border-active: rgba(0, 212, 170, 0.5);
-  --bg-accent-subtle: rgba(0, 212, 170, 0.12);
+  --accent-1: #06B6D4;
+  --accent-2: #3B82F6;
+  --accent-gradient: linear-gradient(135deg, #3B82F6, #06B6D4);
+  --border-active: rgba(6, 182, 212, 0.5);
+  --bg-accent-subtle: rgba(6, 182, 212, 0.12);
 }
 [data-accent="green"] {
   --accent-1: #34D399;

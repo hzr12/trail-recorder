@@ -1,31 +1,57 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
-    <!-- 渐变色：科技蓝到活力青 -->
-    <linearGradient id="grad1" x1="0%" y1="100%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#2563EB"/>
-      <stop offset="100%" stop-color="#06B6D4"/>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e3a5f"/>
     </linearGradient>
-    <!-- 阴影滤镜 -->
-    <filter id="shadow1" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="20" stdDeviation="30" flood-color="#2563EB" flood-opacity="0.3"/>
+    <linearGradient id="trailGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="50%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#10b981"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
     </filter>
   </defs>
-  
-  <g filter="url(#shadow1)">
-    <!-- 起点节点 -->
-    <circle cx="256" cy="768" r="40" fill="#2563EB"/>
-    <!-- 过程节点 -->
-    <circle cx="480" cy="544" r="24" fill="#06B6D4"/>
-    
-    <!-- 核心轨迹线 (平滑曲线) -->
-    <path d="M 256 768 C 380 768, 380 544, 480 544 S 680 200, 768 256" 
-          fill="none" 
-          stroke="url(#grad1)" 
-          stroke-width="48" 
-          stroke-linecap="round"/>
-          
-    <!-- 终点节点 (大且醒目，代表当前记录位置) -->
-    <circle cx="768" cy="256" r="70" fill="url(#grad1)"/>
-    <circle cx="768" cy="256" r="30" fill="#FFFFFF"/>
+
+  <!-- 背景 -->
+  <rect width="512" height="512" rx="96" fill="url(#bgGrad)"/>
+
+  <!-- 装饰圆环 -->
+  <circle cx="256" cy="256" r="180" fill="none" stroke="rgba(59,130,246,0.12)" stroke-width="1"/>
+  <circle cx="256" cy="256" r="140" fill="none" stroke="rgba(6,182,212,0.08)" stroke-width="1"/>
+
+  <!-- 起点 (左下) -->
+  <circle cx="128" cy="380" r="14" fill="#3b82f6" opacity="0.6"/>
+  <circle cx="128" cy="380" r="24" fill="none" stroke="#3b82f6" stroke-width="2" opacity="0.3"/>
+
+  <!-- 终点标记 (右上) -->
+  <g filter="url(#glow)">
+    <circle cx="384" cy="132" r="28" fill="url(#trailGrad)"/>
+    <circle cx="384" cy="132" r="14" fill="#ffffff"/>
   </g>
+
+  <!-- 轨迹曲线 -->
+  <path d="M 128 380 C 180 380, 180 280, 240 260 S 340 160, 384 132" 
+        fill="none" 
+        stroke="url(#trailGrad)" 
+        stroke-width="18" 
+        stroke-linecap="round"
+        opacity="0.9"/>
+
+  <!-- 轨迹中间节点 -->
+  <circle cx="240" cy="260" r="10" fill="#06b6d4"/>
+  <circle cx="240" cy="260" r="18" fill="none" stroke="#06b6d4" stroke-width="1.5" opacity="0.4"/>
+
+  <!-- 速度粒子效果 -->
+  <circle cx="200" cy="320" r="4" fill="#3b82f6" opacity="0.7"/>
+  <circle cx="280" cy="220" r="5" fill="#10b981" opacity="0.7"/>
+  <circle cx="340" cy="170" r="3" fill="#06b6d4" opacity="0.8"/>
+
+  <!-- TC 文字标识 -->
+  <text x="256" y="460" text-anchor="middle" font-family="'Segoe UI', sans-serif" font-size="28" font-weight="700" fill="rgba(255,255,255,0.6)" letter-spacing="6">TRACECRAFT</text>
 </svg>
