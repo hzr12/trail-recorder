@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>地图雷达</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/fonts.css?t=20260710v1">
+  <link rel="stylesheet" href="css/theme.css?t=20260710v2">
+  <link rel="stylesheet" href="css/base.css?t=20260710v1">
+  <link rel="stylesheet" href="css/map.css?t=20260710v2">
+  <link rel="stylesheet" href="css/panel.css?t=20260710v7">
+  <link rel="stylesheet" href="css/gps.css?t=20260710v2">
+  <link rel="stylesheet" href="css/circles.css?t=20260710v4">
+  <link rel="stylesheet" href="css/trail.css?t=20260804v2">
+  <link rel="stylesheet" href="css/toast-modal.css?t=20260710v1">
+  <link rel="stylesheet" href="css/onboarding.css?t=20260710v1">
+  <link rel="stylesheet" href="css/responsive.css?t=20260710v1">
+  <link rel="stylesheet" href="css/room.css?t=20260801v6">
+</head>
+<body>
+  <div id="map">
+    <canvas id="circle-canvas"></canvas>
+    <canvas id="overlay-canvas"></canvas>
+  </div>
+
+  <!-- 浮动控制按钮组 -->
+  <div class="floating-buttons">
+    <button id="gps-btn" class="fab-btn" title="定位到我的位置" aria-label="定位">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="10" r="3"/>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+      </svg>
+      <span class="pulse-ring"></span>
+    </button>
+  </div>
+
+  <!-- 底部控制面板 -->
+  <div class="bottom-panel" id="bottomPanel">
+    <div class="panel-handle">
+      <div class="handle-bar"></div>
+    </div>
+
+    <!-- GPS 状态条 -->
+    <div class="gps-status" id="gps-status">
+      <span class="gps-dot"></span>
+      <span class="gps-offline">⊙ 未定位，点击 GPS 按钮定位</span>
+    </div>
+
+    <div class="panel-header">
+      <h1 class="panel-title">地图雷达</h1>
+      <button id="theme-btn" class="theme-toggle" title="切换浅色主题">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="5"/>
+          <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+        </svg>
+      </button>
+    </div>
+    <div class="accent-row">
+      <span class="accent-label">主题</span>
+      <button class="accent-dot active" data-accent="cyan" style="--c:#00D4AA" title="青"></button>
+      <button class="accent-dot" data-accent="green" style="--c:#34D399" title="绿"></button>
+      <button class="accent-dot" data-accent="blue" style="--c:#60A5FA" title="蓝"></button>
+      <button class="accent-dot" data-accent="purple" style="--c:#A78BFA" title="紫"></button>
+      <button class="accent-dot" data-accent="orange" style="--c:#FB923C" title="橙"></button>
+    </div>
+
+    <div class="panel-body">
+      <!-- 模式切换 -->
+      <div class="mode-tabs">
+        <button class="mode-tab active" data-mode="click" id="mode-click">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+            <circle cx="12" cy="10" r="3"/>
+          </svg>
+          点击选点
+        </button>
+        <button class="mode-tab" data-mode="input" id="mode-input">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="4" width="20" height="16" rx="2"/>
+            <path d="M12 8v8M8 12h8"/>
+          </svg>
+          输入坐标
+        </button>
+        <button class="mode-tab" data-mode="room" id="mode-room">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+          多人
+        </button>
+        <button class="mode-tab" data-mode="trail" id="mode-trail">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 20c2-5 5-7 7-13"/>
+            <circle cx="4" cy="20" r="1.5"/>
+            <circle cx="17" cy="7" r="1.5"/>
+          </svg>
+          轨迹
+        </button>
+      </div>
+
+      <!-- 轨迹常驻记录条（非轨迹 tab 显示，可随时开始/停止录音） -->
+      <div class="trail-record-bar" id="trail-record-bar">
+        <span class="trail-dot" id="trail-bar-dot"></span>
+        <span class="trail-bar-state" id="trail-bar-state">未记录</span>
+        <button class="trail-bar-btn" id="trail-bar-btn">开始记录</button>
+        <span class="trail-bar-dist" id="trail-bar-dist">0m</span>
+      </div>
+
+      <!-- 坐标输入区 -->
+      <div class="input-section input-group" id="inputGroup">
+        <div class="coord-row">
+          <div class="coord-field">
+            <label for="lat" class="field-label">纬度</label>
+            <div class="input-wrap">
+              <input type="number" id="lat" class="coord-input" step="any" placeholder="39.916527" inputmode="decimal">
+            </div>
+          </div>
+          <div class="coord-field">
+            <label for="lng" class="field-label">经度</label>
+            <div class="input-wrap">
+              <input type="number" id="lng" class="coord-input" step="any" placeholder="116.397128" inputmode="decimal">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 点击提示 -->
+      <div class="click-hint" id="clickHint">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2a7 7 0 0 1 7 7c0 5-7 13-7 13s-7-8-7-13a7 7 0 0 1 14 0Z"/>
+          <circle cx="12" cy="9" r="2.5"/>
+        </svg>
+        点击地图上的任意位置选择中心点
+      </div>
+
+      <!-- 多人房间 -->
+      <div class="room-section" id="room-section">
+        <!-- 创建房间表单 -->
+        <div class="room-form" id="room-form-create">
+          <div class="room-form-row">
+            <input type="text" id="room-nick-input" class="room-input" placeholder="输入昵称（可选）" maxlength="12" enterkeyhint="done">
+            <button class="room-btn primary" id="room-create-btn">创建房间</button>
+          </div>
+          <div class="room-form-row" style="margin-top:4px">
+            <label class="room-spectator-check">
+              <input type="checkbox" id="room-spectator-check">  观战模式（不共享位置）
+            </label>
+          </div>
+        </div>
+
+        <!-- 加入房间表单 -->
+        <div class="room-form" id="room-form-join">
+          <div class="room-form-row">
+            <input type="text" id="room-code-input" class="room-input room-code-input" placeholder="输入房间码" maxlength="8" autocomplete="off" enterkeyhint="done">
+            <button class="room-btn primary" id="room-join-btn">加入</button>
+          </div>
+          <div style="font-size:11px;color:var(--text-tertiary);text-align:center">由其他玩家创建，输入 6 位房间码加入</div>
+        </div>
+
+        <!-- 房间码展示（创建/加入成功后显示） -->
+        <div class="room-code-display hidden" id="room-code-display">
+          <span class="room-code-label">房间码</span>
+          <div class="room-code-value" id="room-code-value">------</div>
+          <span class="room-code-hint">点击复制房间码，分享给队友</span>
+        </div>
+
+        <!-- 房间状态 -->
+        <div class="room-status hidden" id="room-status-bar">
+          <div class="room-status-row">
+            <span class="room-conn-status">
+              <span class="room-conn-dot" id="room-conn-dot"></span>
+              <span>已连接</span>
+            </span>
+            <span>在线：<span id="room-player-count">0</span> 人</span>
+          </div>
+          <div class="room-status-row">
+            <button class="room-btn sharing-btn" id="room-sharing-btn"> 共享定位</button>
+            <button class="room-btn danger" id="room-leave-btn">离开</button>
+          </div>
+        </div>
+
+        <!-- 统一开始 + 结束时间 -->
+        <div class="room-section-block hidden" id="room-timer-section">
+          <div class="room-form" id="room-timer-set">
+            <div class="room-form-row" id="room-schedule-row">
+              <label class="room-schedule-field">
+                <span class="field-label">统一开始</span>
+                <input type="time" id="room-timer-input" class="room-timer-input">
+              </label>
+              <label class="room-schedule-field">
+                <span class="field-label">结束时间</span>
+                <input type="time" id="room-burst-end-input" class="room-timer-input">
+              </label>
+              <div class="room-schedule-btns">
+                <button class="room-btn mini primary" id="room-schedule-set-btn">设定</button>
+                <button class="room-btn mini danger hidden" id="room-schedule-abort-btn">取消</button>
+              </div>
+            </div>
+          </div>
+          <div class="room-burst-phase hidden" id="room-timer-countdown">
+            <span style="font-size:12px;color:var(--accent-1)"> 距统一开始 <span id="room-timer-value">--:--</span></span>
+          </div>
+          <div class="room-burst-phase hidden" id="room-end-countdown">
+            <span style="font-size:12px;color:var(--accent-1)"> 距结束 <span id="room-end-value">--:--</span></span>
+          </div>
+        </div>
+
+        <!-- 位置共享配置 -->
+        <div class="room-section-block hidden" id="room-burst-section">
+          <div class="room-form">
+            <div class="room-burst-config-row" id="room-burst-config">
+              <span class="field-label" style="font-size:11px">静默</span>
+              <input type="number" id="room-burst-silent" class="room-burst-input" value="25" min="1" max="240">
+              <span style="font-size:11px;color:var(--text-tertiary)">分</span>
+              <span class="field-label" style="font-size:11px">共享</span>
+              <input type="number" id="room-burst-share" class="room-burst-input" value="5" min="1" max="60">
+              <span style="font-size:11px;color:var(--text-tertiary)">分</span>
+            </div>
+            <div class="room-burst-phase" id="room-burst-phase">未激活</div>
+          </div>
+        </div>
+
+        <!-- 地图预测 -->
+        <div class="room-section-block hidden" id="room-prediction-section">
+          <div class="room-form">
+            <div class="room-form-row">
+              <span class="field-label"> 路径预测</span>
+              <label class="room-burst-toggle">
+                <input type="checkbox" id="room-prediction-enable">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- 队伍区域 -->
+        <div class="room-teams hidden" id="room-teams-section">
+          <div class="room-teams-header">
+            <span> 队伍</span>
+            <button class="room-btn mini" id="room-team-create-btn">+ 创建队伍</button>
+          </div>
+          <!-- 创建队伍表单 -->
+          <div class="room-team-create-form hidden" id="room-team-create-form">
+            <div class="room-team-create-row">
+              <input type="text" id="room-team-name-input" class="room-input" placeholder="队伍名称" maxlength="12">
+              <div class="room-team-presets" id="room-team-presets">
+                <button type="button" class="room-team-preset" style="--c:#FF6B6B" data-color="#FF6B6B" title="红"></button>
+                <button type="button" class="room-team-preset" style="--c:#FFD93D" data-color="#FFD93D" title="黄"></button>
+                <button type="button" class="room-team-preset" style="--c:#6BCB77" data-color="#6BCB77" title="绿"></button>
+                <button type="button" class="room-team-preset" style="--c:#4ECDC4" data-color="#4ECDC4" title="青"></button>
+                <button type="button" class="room-team-preset" style="--c:#45B7D1" data-color="#45B7D1" title="蓝"></button>
+                <button type="button" class="room-team-preset" style="--c:#9D7BF4" data-color="#9D7BF4" title="紫"></button>
+                <button type="button" class="room-team-preset" style="--c:#FF8C94" data-color="#FF8C94" title="粉"></button>
+                <button type="button" class="room-team-preset" style="--c:#DDA0DD" data-color="#DDA0DD" title="淡紫"></button>
+              </div>
+                <label class="room-team-npc-opt">
+                  <input type="checkbox" id="room-team-npc-checkbox">  NPC 队（持续共享）
+                </label>
+                <button class="room-btn primary mini" id="room-team-create-confirm">确定</button>
+            </div>
+          </div>
+          <!-- 队伍列表 -->
+          <div class="room-team-list" id="room-team-list"></div>
+        </div>
+
+        <!-- 参与者列表 -->
+        <div class="room-player-list" id="room-player-list">
+          <div class="room-empty">尚未加入房间</div>
+        </div>
+      </div>
+
+      <!-- 智能坐标解析 + 位置标记 -->
+      <div class="parse-section">
+        <div class="parse-row">
+          <div class="parse-input-wrap">
+            <input type="text" id="parse-input" class="parse-input" placeholder="粘贴坐标，如 23.1291, 113.2644 或 23°7′44.76″N 113°15′51.84″E" enterkeyhint="done">
+          </div>
+        </div>
+        <div class="parse-actions">
+          <button id="center-to-me-btn" class="btn-setpos" title="将选点中心设为我的位置">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
+            选点至我的位置
+          </button>
+          <button id="set-mypos-btn" class="btn-setpos">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="10" r="3"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+            设为我的位置
+          </button>
+          <button id="copy-mypos-btn" class="btn-setpos btn-copy" title="复制选点经纬度">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            复制坐标
+          </button>
+          <button id="target-set-btn" class="btn-setpos btn-target">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+            标记对方
+          </button>
+          <button id="target-clear-btn" class="btn-setpos btn-target-clear" disabled>清除</button>
+        </div>
+        <div class="target-range-row hidden" id="target-range-row">
+          <label class="field-label">精度范围</label>
+          <input type="range" id="target-range" class="target-range" min="0" max="5000" value="0" step="10">
+          <input type="number" id="target-range-input" class="target-range-input" value="0" min="0" max="5000" step="10" inputmode="numeric">
+          <span class="target-range-unit">米</span>
+        </div>
+        <div class="target-info" id="target-info"></div>
+      </div>
+
+      <!-- 半径设置 -->
+      <div class="radius-section">
+        <div class="radius-header">
+          <label class="field-label">半径</label>
+          <div class="radius-value-wrap">
+            <input type="number" id="radius-input" class="radius-input" value="5000" min="1" max="25000" inputmode="numeric">
+            <span class="radius-unit">米</span>
+          </div>
+        </div>
+        <div class="slider-wrap">
+          <input type="range" id="radius-slider" class="radius-slider" min="1" max="25000" value="5000" step="1">
+          <div class="slider-labels">
+            <span style="left:0%">1m</span>
+            <span style="left:22.7%">10m</span>
+            <span style="left:45.5%">100m</span>
+            <span style="left:68.2%">1km</span>
+            <span style="left:100%">25km</span>
+          </div>
+        </div>
+        <div class="radius-presets">
+          <button class="preset-btn" data-radius="100">100m</button>
+          <button class="preset-btn" data-radius="500">500m</button>
+          <button class="preset-btn" data-radius="1000">1km</button>
+          <button class="preset-btn" data-radius="3000">3km</button>
+          <button class="preset-btn" data-radius="5000">5km</button>
+          <button class="preset-btn" data-radius="10000">10km</button>
+        </div>
+      </div>
+
+      <!-- 操作按钮 -->
+      <div class="action-row">
+        <button id="draw-btn" class="btn btn-primary">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <circle cx="12" cy="12" r="6"/>
+            <circle cx="12" cy="12" r="2"/>
+          </svg>
+          绘制圆形
+        </button>
+        <button id="clear-btn" class="btn btn-secondary">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+          清除
+        </button>
+      </div>
+
+      <!-- 圆列表 -->
+      <div class="circle-list-section">
+        <div class="circle-list-header">
+          <span class="field-label">已绘制 (<span id="circle-count">0</span>)</span>
+        </div>
+        <div class="circle-list" id="circle-list">
+          <div class="empty-state">暂无同心圆，点击「绘制圆形」添加</div>
+        </div>
+      </div>
+
+      <!-- 最近定位 -->
+      <div class="fix-list-section">
+        <div class="fix-list-header">
+          <span class="field-label">最近定位 (<span id="fix-count">0</span>)</span>
+        </div>
+        <div class="fix-list" id="fix-list">
+          <div class="empty-state">暂无定位数据</div>
+        </div>
+      </div>
+
+      <!-- 信息展示区 -->
+      <div class="info-area hidden" id="infoArea">
+        <div class="info-divider"></div>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="info-label">圆心坐标</span>
+              <span class="info-value" id="info-center" style="cursor:pointer" title="点击复制坐标">--</span>
+            </div>
+          <div class="info-item">
+            <span class="info-label">半径</span>
+            <span class="info-value" id="info-radius">--</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">面积</span>
+            <span class="info-value accent" id="info-area">--</span>
+          </div>
+          <div class="info-item info-item-dist">
+            <span class="info-label">距我位置</span>
+            <span class="info-value" id="info-distance">--</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 轨迹记录 -->
+      <div class="trail-section">
+        <div class="trail-header">
+          <span class="field-label">轨迹记录</span>
+          <span class="trail-distance" id="trail-distance">0m</span>
+        </div>
+        <div class="trail-controls">
+          <button id="trail-record-btn" class="btn btn-trail">
+            <span class="trail-dot"></span> 开始记录
+          </button>
+          <button id="trail-pause-btn" class="btn btn-secondary btn-sm" disabled>暂停</button>
+          <button id="trail-clear-btn" class="btn btn-secondary btn-sm" disabled>清除</button>
+        </div>
+        <div class="trail-actions">
+          <button id="trail-stats-btn" class="btn-sm" disabled> 统计</button>
+          <button id="trail-smooth-btn" class="btn-sm active"> 平滑</button>
+          <button id="export-report-btn" class="btn-sm" title="导出活动报告图片（含轨迹、速度曲线、统计）"> 报告</button>
+        </div>
+        <!-- 后台+省电模块 -->
+        <div class="power-section" id="power-section">
+          <span class="power-status" id="power-status">定位间隔: 2s</span>
+          <button id="power-saving-btn" class="btn-sm" title="省电模式">省电</button>
+        </div>
+        <!-- 速度色阶图例 -->
+        <div class="speed-legend">
+          <div class="speed-legend-row">
+            <span class="speed-legend-item"><i class="legend-walk"></i>0-10 km/h</span>
+            <span class="speed-legend-item"><i class="legend-bike"></i>10-20 km/h</span>
+            <span class="speed-legend-item"><i class="legend-bus"></i>20-60 km/h</span>
+            <span class="speed-legend-item"><i class="legend-car"></i>60-120 km/h</span>
+          </div>
+          <div class="speed-legend-row">
+            <span class="speed-legend-item"><i class="legend-train"></i>120-200 km/h</span>
+            <span class="speed-legend-item"><i class="legend-hsr"></i>200-350 km/h</span>
+            <span class="speed-legend-item"><i class="legend-sct"></i>&gt;350 km/h</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 速度曲线面板 -->
+      <div id="speed-chart-section" class="speed-chart-section hidden">
+        <div class="speed-chart-header">
+          <span class="speed-chart-title">速度曲线</span>
+          <span class="speed-chart-info" id="speed-chart-info"></span>
+          <button id="speed-chart-toggle" class="speed-chart-toggle" title="展开/收起">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </div>
+        <div class="speed-chart-body" id="speed-chart-body">
+          <canvas id="speed-chart-canvas"></canvas>
+        </div>
+      </div>
+
+      <!-- GNSS 卫星数据 bar：永远显示在面板最底部 -->
+      <div id="gnss-bar" class="gnss-bar"></div>
+    </div>
+  </div>
+
+  <!-- Tencent Map API -->
+  <script charset="utf-8" src="https://map.qq.com/api/js?v=2.exp&key=OB4BZ-D4W3U-B7VVO-4PJWW-6TKDJ-WPB77&libraries=geometry,convertor"></script>
+
+  <!-- Chart.js（速度曲线） -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+
+  <!-- 应用脚本 -->
+  <script src="js/config.js?t=20260803v11"></script>
+  <script src="js/toast.js?t=20260804v2"></script>
+  <script src="js/storage.js?t=20260804v2"></script>
+  <script src="js/trail.js?t=20260803v4"></script>
+  <script src="js/map.js?t=20260804v7"></script>
+  <script src="js/gps.js?t=20260804v2"></script>
+
+  <!-- MQTT（多人位置共享） -->
+  <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
+  <script src="js/room.js?t=20260804v1"></script>
+
+  <script src="js/app-core.js?t=20260804v7"></script>
+  <script src="js/app-gps-ui.js?t=20260803v6"></script>
+  <script src="js/app-circle-ui.js?t=20260803v9"></script>
+  <script src="js/app-room-ui.js?t=20260804v1"></script>
+
+<!-- 功能提示浮层（逐个显示在对应功能旁） -->
+<div id="hint-tooltip" class="hint-tooltip" style="display:none">
+  <div class="hint-arrow" id="hint-arrow"></div>
+  <div class="hint-body">
+    <div class="hint-header">
+      <span class="hint-step" id="hint-step"></span>
+      <button class="hint-close" id="hint-close">✕</button>
+    </div>
+    <p class="hint-text" id="hint-text"></p>
+    <div class="hint-footer">
+      <button class="hint-skip" id="hint-skip">全部跳过</button>
+      <button class="hint-next" id="hint-next">知道了</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>
