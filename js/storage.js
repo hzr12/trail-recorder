@@ -179,8 +179,7 @@ class Storage {
         pointCount: workingPositions.length,
         sizeBytes: estimatedSize,
         isRecording: trail.isRecording || false,
-        isPaused: trail.isPaused || false,
-        manualSegments: Array.isArray(trail.manualSegments) ? trail.manualSegments : []
+        isPaused: trail.isPaused || false
       };
 
       Storage._saveToIndexedDB(trailData).catch(err => {
@@ -211,8 +210,7 @@ class Storage {
             updatedAt: data.updatedAt,
             pointCount: data.pointCount || (data.positions ? data.positions.length : 0),
             isRecording: data.isRecording || false,
-            isPaused: data.isPaused || false,
-            manualSegments: Array.isArray(data.manualSegments) ? data.manualSegments : []
+            isPaused: data.isPaused || false
           };
         })
         .catch(err => {
@@ -261,8 +259,7 @@ class Storage {
         const meta = JSON.stringify({
           isRecording: trail.isRecording || false,
           isPaused: trail.isPaused || false,
-          updatedAt: Date.now(),
-          manualSegments: Array.isArray(trail.manualSegments) ? trail.manualSegments : []
+          updatedAt: Date.now()
         });
         localStorage.setItem(Storage.TRAIL_META_KEY, meta);
       } catch (_) {}
@@ -341,8 +338,7 @@ class Storage {
             metaResult = {
               isRecording: meta.isRecording || false,
               isPaused: meta.isPaused || false,
-              updatedAt: meta.updatedAt || null,
-              manualSegments: Array.isArray(meta.manualSegments) ? meta.manualSegments : []
+              updatedAt: meta.updatedAt || null
             };
           }
         } catch (_) {}
@@ -352,11 +348,9 @@ class Storage {
             result.isRecording = metaResult.isRecording;
             result.isPaused = metaResult.isPaused;
             result.updatedAt = metaResult.updatedAt;
-            result.manualSegments = metaResult.manualSegments || [];
           } else {
             result.isRecording = false;
             result.isPaused = false;
-            result.manualSegments = [];
           }
           return result;
         }
@@ -484,7 +478,7 @@ class Storage {
     return 0;
   }
 
-  static saveTrailToList(positions, name, favorite, meta) {
+  static saveTrailToList(positions, name, favorite) {
     if (!positions || positions.length === 0) return Promise.resolve(null);
     const id = Storage._TRAIL_LIST_PREFIX + Date.now();
     const distance = Storage._calcDistance(positions);
@@ -500,9 +494,6 @@ class Storage {
       favorite: !!favorite,
       positions
     };
-    if (meta && Array.isArray(meta.manualSegments)) {
-      trailMeta.manualSegments = meta.manualSegments;
-    }
     return Storage._saveToIndexedDB(trailMeta).then(() => id).catch(err => {
       console.warn('[Storage] 轨迹列表保存失败:', err.message);
       return null;
@@ -618,33 +609,6 @@ class Storage {
       });
     }).catch(err => {
       console.warn('[Storage] 删除轨迹失败:', err.message);
-      return false;
-    });
-  }
-
-  /**
-   * 更新轨迹的手动分段列表
-   * @param {string} id
-   * @param {Array} manualSegments [{id,label,lat,lng,time,ratio}]
-   */
-  static updateTrailManualSegments(id, manualSegments) {
-    return Storage._initDB().then(db => {
-      return new Promise((resolve, reject) => {
-        const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readwrite');
-        const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
-        const request = store.get(id);
-        request.onsuccess = () => {
-          const data = request.result;
-          if (data) {
-            data.manualSegments = Array.isArray(manualSegments) ? manualSegments : [];
-            store.put(data);
-          }
-          transaction.oncomplete = () => resolve(true);
-        };
-        request.onerror = (e) => reject(e.target.error);
-      });
-    }).catch(err => {
-      console.warn('[Storage] 更新手动分段失败:', err.message);
       return false;
     });
   }

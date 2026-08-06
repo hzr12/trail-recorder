@@ -240,19 +240,6 @@ class App {
     document.getElementById('trail-clear-btn').addEventListener('click', () => this._clearTrail());
     document.getElementById('trail-stats-btn').addEventListener('click', () => this._showTrailStats());
     document.getElementById('trail-smooth-btn').addEventListener('click', () => this._toggleTrailSmoothing());
-    document.getElementById('trail-segment-btn').addEventListener('click', () => this._toggleTrailSegmentForm());
-    document.getElementById('trail-segment-confirm').addEventListener('click', () => this._addCurrentManualSegment());
-    document.getElementById('trail-segment-cancel').addEventListener('click', () => this._toggleTrailSegmentForm(false));
-    const waypointBtn = document.getElementById('trail-waypoint-btn');
-    if (waypointBtn) waypointBtn.addEventListener('click', () => this._addCurrentWaypoint());
-    document.getElementById('trail-segment-ratio').addEventListener('input', (e) => {
-      const val = document.getElementById('trail-segment-ratio-val');
-      if (val) val.textContent = e.target.value + '%';
-    });
-    document.getElementById('trail-segment-list').addEventListener('click', (e) => {
-      const btn = e.target.closest('.segment-remove-btn');
-      if (btn) this._removeCurrentManualSegment(btn.dataset.id);
-    });
     document.getElementById('export-report-btn').addEventListener('click', () => this._exportReport());
     document.getElementById('power-saving-btn').addEventListener('click', () => this._togglePowerSaving());
 
@@ -744,7 +731,6 @@ class App {
 
     const savedPositions = this.trail.positions.slice();
     const savedLastPos = this.trail.lastPos;
-    const savedManualSegments = (this.trail.manualSegments || []).slice();
     const savedRecording = this.trail.isRecording;
     const savedPaused = this.trail.isPaused;
 
@@ -756,17 +742,12 @@ class App {
     Storage.clearTrail();
 
     Toast.showUndo('轨迹已清除', () => {
-      this.trail.restore(savedPositions, savedLastPos, savedManualSegments);
+      this.trail.restore(savedPositions, savedLastPos);
       this.trail.isRecording = savedRecording;
       this.trail.isPaused = savedPaused;
       if (savedPositions.length >= 2) {
         this.mapManager.setTrail(this._getTrailPositions());
-        if (savedManualSegments.length > 0) {
-          this.mapManager.setTrailMarkers(
-            TrailAnalysis.analyzeKeyPoints(savedPositions),
-            savedManualSegments
-          );
-        }
+        this.mapManager.setTrailMarkers(TrailAnalysis.analyzeKeyPoints(savedPositions));
       }
       this._updateTrailUI();
       this._trailDirty = false;
@@ -802,12 +783,9 @@ class App {
     } else {
       Storage.saveTrail(this.trail);
       this._saveCurrentTrail();
-      // 停止记录：实时关键点层转成固定标记（关键点 + 分段 + 打点）
+      // 停止记录：实时关键点层转成固定标记
       this.mapManager.clearRealtimeKeyPoints();
-      this.mapManager.setTrailMarkers(
-        TrailAnalysis.analyzeKeyPoints(this.trail.positions),
-        this.trail.manualSegments || []
-      );
+      this.mapManager.setTrailMarkers(TrailAnalysis.analyzeKeyPoints(this.trail.positions));
       Toast.show(' 轨迹记录已停止');
     }
   }
@@ -835,152 +813,6 @@ class App {
     }
     this._updateTrailUI();
     Toast.show(this._trailSmoothing ? ' 轨迹平滑已开启' : ' 轨迹平滑已关闭');
-  }
-
-  // ===== 当前轨迹手动分段 =====
-
-  _toggleTrailSegmentForm(forceShow) {
-    const form = document.getElementById('trail-segment-form');
-    if (!form) return;
-    if (forceShow === false) {
-      form.classList.add('hidden');
-      return;
-    }
-    const willOpen = forceShow === true || form.classList.contains('hidden');
-    form.classList.toggle('hidden', !willOpen);
-    if (willOpen) {
-      this._renderCurrentManualSegments();
-      const label = document.getElementById('trail-segment-label');
-      if (label) label.focus();
-    }
-  }
-
-  _addCurrentManualSegment() {
-    if (this.trail.positions.length < 2) {
-      Toast.show(' 轨迹点数不足，无法分段');
-      return;
-    }
-    const labelEl = document.getElementById('trail-segment-label');
-    const ratioEl = document.getElementById('trail-segment-ratio');
-    const valEl = document.getElementById('trail-segment-ratio-val');
-    const label = (labelEl && labelEl.value.trim()) || '';
-    if (!label) { Toast.show('请输入分段标签'); return; }
-    const ratio = parseInt(ratioEl.value, 10) / 100;
-    const positions = this.trail.positions;
-    const idx = TrailAnalysis.ratioToIndex(positions, ratio);
-    const pt = positions[idx] || positions[0];
-    const ms = {
-      id: 'ms_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
-      label,
-      lat: pt.lat,
-      lng: pt.lng,
-      time: pt.time || 0,
-      ratio
-    };
-    this.trail.manualSegments = (this.trail.manualSegments || []).concat([ms]);
-    this._persistTrailManualSegments();
-    this._refreshCurrentTrailMarkers();
-    this._renderCurrentManualSegments();
-    if (labelEl) labelEl.value = '';
-    if (ratioEl) ratioEl.value = 50;
-    if (valEl) valEl.textContent = '50%';
-    Toast.show(' 已添加手动分段');
-  }
-
-  _removeCurrentManualSegment(id) {
-    if (!id) return;
-    this.trail.manualSegments = (this.trail.manualSegments || []).filter((s) => s.id !== id);
-    this._persistTrailManualSegments();
-    this._refreshCurrentTrailMarkers();
-    this._renderCurrentManualSegments();
-    Toast.show(' 已删除');
-  }
-
-  /**
-   * 在当前 GPS 位置打点（waypoint）。
-   * 记录中直接落默认名"打点 N"，与手动分段共用 manualSegments 集合（kind:'waypoint'），
-   * 随轨迹持久化并在地图上以绿色图钉实时显示。
-   */
-  _addCurrentWaypoint() {
-    if (!this.trail.isRecording || this.trail.isPaused) {
-      Toast.show(' 打点仅在记录进行中可用');
-      return;
-    }
-    if (!this.myPosition) {
-      Toast.show(' 尚未定位，无法打点');
-      return;
-    }
-    const wpCount = (this.trail.manualSegments || []).filter((s) => s.kind === 'waypoint').length;
-    const wp = {
-      id: 'wp_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
-      label: '打点 ' + (wpCount + 1),
-      lat: this.myPosition.lat,
-      lng: this.myPosition.lng,
-      time: Date.now(),
-      ratio: -1,
-      kind: 'waypoint'
-    };
-    this.trail.manualSegments = (this.trail.manualSegments || []).concat([wp]);
-    this._persistTrailManualSegments();
-    this._refreshCurrentTrailMarkers();
-    this._renderCurrentManualSegments();
-    Toast.show(` 已打点「${wp.label}」`);
-  }
-
-  _persistTrailManualSegments() {
-    this._trailDirty = true;
-    Storage.saveTrail(this.trail);
-  }
-
-  _renderCurrentManualSegments() {
-    const listEl = document.getElementById('trail-segment-list');
-    if (!listEl) return;
-    const manualSegments = this.trail.manualSegments || [];
-    if (manualSegments.length === 0) {
-      listEl.innerHTML = '<div class="trail-segment-empty">暂无分段或打点</div>';
-      return;
-    }
-    listEl.innerHTML = manualSegments.map((ms) => {
-      const isWp = ms.kind === 'waypoint';
-      const fmtTime = (ts) => {
-        if (!ts) return '';
-        const d = new Date(ts);
-        const pad = (n) => String(n).padStart(2, '0');
-        return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-      };
-      const meta = isWp
-        ? `打点 · ${fmtTime(ms.time)}`
-        : `手动 · ${Math.round((ms.ratio || 0) * 100)}%`;
-      return `
-      <div class="trail-segment-item ${isWp ? 'waypoint' : 'manual'}">
-        <span class="segment-dot ${isWp ? 'waypoint-dot' : 'manual-dot'}"></span>
-        <div class="segment-item-main">
-          <span class="segment-item-label">${this._escapeHtml(ms.label || (isWp ? '打点' : '分段'))}</span>
-          <span class="segment-item-meta">${meta}</span>
-        </div>
-        <button class="segment-remove-btn" data-id="${ms.id}" title="${isWp ? '删除此打点' : '删除此分段'}">✕</button>
-      </div>`;
-    }).join('');
-  }
-
-  _refreshCurrentTrailMarkers() {
-    const positions = this.trail.positions;
-    const manualSegments = this.trail.manualSegments || [];
-    if (this.trail.isRecording) {
-      // 记录中：保留实时关键点层（起/终/速），只重绘分段/打点标记，避免关键点重复
-      if (positions && positions.length >= 2) {
-        this.mapManager.setTrailMarkers({}, manualSegments);
-        this.mapManager.setRealtimeKeyPoints(TrailAnalysis.analyzeKeyPoints(positions));
-      } else if (manualSegments.length > 0) {
-        this.mapManager.setTrailMarkers({}, manualSegments);
-      }
-      return;
-    }
-    if (!positions || positions.length < 2) return;
-    this.mapManager.setTrailMarkers(
-      TrailAnalysis.analyzeKeyPoints(positions),
-      manualSegments
-    );
   }
 
   // ===== 轨迹回放功能 =====
@@ -1223,8 +1055,7 @@ class App {
     if (!this.trail.positions || this.trail.positions.length === 0) return;
     const positions = this.trail.positions.slice();
     const name = Storage._fmtTrailName(Date.now());
-    const manualSegments = (this.trail.manualSegments || []).slice();
-    Storage.saveTrailToList(positions, name, false, { manualSegments }).then((id) => {
+    Storage.saveTrailToList(positions, name, false).then((id) => {
       if (id) {
         this._invalidateTrailCache();
         Toast.show(' 轨迹已保存');
@@ -1332,10 +1163,7 @@ class App {
       this.trail.positions = data.positions;
       this.trail.lastPos = data.positions[data.positions.length - 1];
       this.mapManager.setTrail(this._getTrailPositions());
-      this.mapManager.setTrailMarkers(
-        TrailAnalysis.analyzeKeyPoints(data.positions),
-        data.manualSegments || []
-      );
+      this.mapManager.setTrailMarkers(TrailAnalysis.analyzeKeyPoints(data.positions));
       this._updateTrailUI();
       this._setTab('record');
       Toast.show(` 已加载「${data.name}」（${data.positions.length} 点）`);
@@ -1470,7 +1298,6 @@ class App {
       });
       const firstTime = pos[0].time;
       const lastTime = pos[pos.length - 1].time;
-      const manualSegments = Array.isArray(data.manualSegments) ? data.manualSegments : [];
 
       const overlay = document.createElement('div');
       overlay.className = 'modal-overlay show';
@@ -1490,25 +1317,6 @@ class App {
             <div class="stat-card"><span class="stat-label">最高速度</span><span class="stat-value warning">${hasSpeed ? (maxSpeed * 3.6).toFixed(1) + ' km/h' : '--'}</span></div>
             <div class="stat-card"><span class="stat-label">轨迹点数</span><span class="stat-value accent2">${pos.length}</span></div>
             <div class="stat-card"><span class="stat-label">是否收藏</span><span class="stat-value">${data.favorite ? '已收藏' : '未收藏'}</span></div>
-          </div>
-          <div class="trail-detail-segments">
-            <div class="trail-segments-header">
-              <span class="trail-segments-title">轨迹分段</span>
-              <button class="trail-segments-add-btn" title="添加手动分段">+ 手动</button>
-            </div>
-            <div class="trail-segment-add-form hidden">
-              <input type="text" class="trail-segment-add-label" placeholder="分段标签，如：晨跑" maxlength="20"/>
-              <div class="trail-segment-add-pos">
-                <span class="trail-segment-add-pos-label">位置</span>
-                <input type="range" class="trail-segment-add-ratio" min="0" max="100" value="50"/>
-                <span class="trail-segment-add-pos-val">50%</span>
-              </div>
-              <div class="trail-segment-add-actions">
-                <button class="btn-sm trail-segment-add-cancel">取消</button>
-                <button class="btn-sm trail-segment-add-confirm">添加</button>
-              </div>
-            </div>
-            <div class="trail-segment-list"></div>
           </div>
           <div class="confirm-actions">
             <button class="btn-sm trail-detail-load">加载到地图</button>
@@ -1532,168 +1340,7 @@ class App {
           this._loadTrailFromList(id);
         });
       }
-
-      // ---- 分段区块 ----
-      const segList = overlay.querySelector('.trail-segment-list');
-      const addForm = overlay.querySelector('.trail-segment-add-form');
-      const addLabel = overlay.querySelector('.trail-segment-add-label');
-      const addRatio = overlay.querySelector('.trail-segment-add-ratio');
-      const addPosVal = overlay.querySelector('.trail-segment-add-pos-val');
-
-      const refreshSegments = () => {
-        this._renderTrailDetailSegments(segList, pos, manualSegments);
-      };
-
-      overlay.querySelector('.trail-segments-add-btn').addEventListener('click', () => {
-        addForm.classList.remove('hidden');
-        addLabel.focus();
-      });
-      overlay.querySelector('.trail-segment-add-cancel').addEventListener('click', () => {
-        addForm.classList.add('hidden');
-      });
-      addRatio.addEventListener('input', () => {
-        addPosVal.textContent = addRatio.value + '%';
-      });
-      overlay.querySelector('.trail-segment-add-confirm').addEventListener('click', () => {
-        const label = addLabel.value.trim();
-        if (!label) { Toast.show('请输入分段标签'); return; }
-        const ratio = parseInt(addRatio.value, 10) / 100;
-        const idx = TrailAnalysis.ratioToIndex(pos, ratio);
-        const pt = pos[idx] || pos[0];
-        const ms = {
-          id: 'ms_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
-          label,
-          lat: pt.lat,
-          lng: pt.lng,
-          time: pt.time || 0,
-          ratio
-        };
-        const next = manualSegments.concat([ms]);
-        Storage.updateTrailManualSegments(id, next).then((ok) => {
-          if (!ok) { Toast.show('保存失败，请重试'); return; }
-          manualSegments.length = 0;
-          manualSegments.push(...next);
-          this._invalidateTrailCache();
-          addForm.classList.add('hidden');
-          addLabel.value = '';
-          addRatio.value = 50;
-          addPosVal.textContent = '50%';
-          Toast.show('已添加手动分段');
-          refreshSegments();
-        });
-      });
-      segList.addEventListener('click', (e) => {
-        const btn = e.target.closest('.segment-remove-btn');
-        if (!btn) return;
-        const msId = btn.dataset.id;
-        const next = manualSegments.filter((s) => s.id !== msId);
-        Storage.updateTrailManualSegments(id, next).then((ok) => {
-          if (!ok) { Toast.show('删除失败，请重试'); return; }
-          manualSegments.length = 0;
-          manualSegments.push(...next);
-          this._invalidateTrailCache();
-          Toast.show('已删除分段');
-          refreshSegments();
-        });
-      });
-
-      refreshSegments();
     });
-  }
-
-  /**
-   * 计算轨迹每个索引对应的累计距离比例（0~1）
-   */
-  _calcCumulativeRatios(positions) {
-    const n = positions.length;
-    if (n < 2) return new Array(n).fill(0);
-    const cum = new Array(n).fill(0);
-    let total = 0;
-    for (let i = 1; i < n; i++) {
-      total += calcDistance(positions[i - 1], positions[i]);
-      cum[i] = total;
-    }
-    if (total <= 0) {
-      return cum.map((_, i) => (n > 1 ? i / (n - 1) : 0));
-    }
-    return cum.map((c) => c / total);
-  }
-
-  /**
-   * 渲染详情弹窗的分段列表（自动段 + 手动段按轨迹位置混排）
-   */
-  _renderTrailDetailSegments(listEl, positions, manualSegments) {
-    if (!listEl) return;
-    const items = [];
-
-    const ratios = this._calcCumulativeRatios(positions);
-    const autoSegments = TrailAnalysis.analyzeSegments(positions);
-    for (const seg of autoSegments) {
-      const r = seg.endIdx < ratios.length ? ratios[seg.endIdx] : 0;
-      items.push({
-        kind: 'auto',
-        ratio: r,
-        mode: seg.mode,
-        label: seg.label,
-        meta: `自动 · ${Math.round(r * 100)}%`
-      });
-    }
-
-    for (const ms of manualSegments) {
-      const isWp = ms.kind === 'waypoint';
-      items.push({
-        kind: isWp ? 'waypoint' : 'manual',
-        ratio: isWp ? 0 : (ms.ratio || 0),
-        id: ms.id,
-        time: ms.time,
-        label: ms.label || (isWp ? '打点' : '分段'),
-        meta: isWp ? '打点' : `手动 · ${Math.round((ms.ratio || 0) * 100)}%`
-      });
-    }
-
-    items.sort((a, b) => a.ratio - b.ratio);
-
-    if (items.length === 0) {
-      listEl.innerHTML = '<div class="trail-segment-empty">暂无分段（速度变化时自动生成）</div>';
-      return;
-    }
-
-    const fmtWpTime = (ts) => {
-      if (!ts) return '';
-      const d = new Date(ts);
-      const pad = (n) => String(n).padStart(2, '0');
-      return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    };
-
-    listEl.innerHTML = items.map((it) => {
-      if (it.kind === 'waypoint') {
-        return `<div class="trail-segment-item waypoint">
-          <span class="segment-dot waypoint-dot"></span>
-          <div class="segment-item-main">
-            <span class="segment-item-label">${this._escapeHtml(it.label)}</span>
-            <span class="segment-item-meta">打点 · ${fmtWpTime(it.time)}</span>
-          </div>
-          <button class="segment-remove-btn" data-id="${it.id}" title="删除此打点">✕</button>
-        </div>`;
-      }
-      if (it.kind === 'manual') {
-        return `<div class="trail-segment-item manual">
-          <span class="segment-dot manual-dot"></span>
-          <div class="segment-item-main">
-            <span class="segment-item-label">${this._escapeHtml(it.label)}</span>
-            <span class="segment-item-meta">${it.meta}</span>
-          </div>
-          <button class="segment-remove-btn" data-id="${it.id}" title="删除此分段">✕</button>
-        </div>`;
-      }
-      return `<div class="trail-segment-item auto">
-        <span class="segment-dot" style="background:${TrailAnalysis.modeColor(it.mode)}"></span>
-        <div class="segment-item-main">
-          <span class="segment-item-label">${this._escapeHtml(it.label)}</span>
-          <span class="segment-item-meta">${it.meta}</span>
-        </div>
-      </div>`;
-    }).join('');
   }
 
   _trailItemHTML(item, isReplay) {
@@ -2215,9 +1862,6 @@ class App {
       const mapW = W - 48 * S;
       const mapX = 24 * S;
 
-      ctx.fillStyle = isDark ? '#0f3460' : '#dce5f0';
-      ctx.fillRect(mapX, mapY, mapW, mapH);
-
       let minLat = Infinity, maxLat = -Infinity;
       let minLng = Infinity, maxLng = -Infinity;
       for (const p of pos) {
@@ -2249,6 +1893,78 @@ class App {
 
       const toX = (lng) => originX + (lng - minLng) * cosLat * scale;
       const toY = (lat) => originY + (maxLat - lat) * scale;
+
+      // ── 地图底图：高德瓦片（普通道路图 style=8，GCJ-02 与腾讯同坐标系） ──
+      // Web Mercator 投影（0~1 世界坐标）
+      const mercX = (lng) => (lng + 180) / 360;
+      const mercY = (lat) => {
+        const r = lat * Math.PI / 180;
+        return (1 - Math.log(Math.tan(Math.PI / 4 + r / 2)) / Math.PI) / 2;
+      };
+      const invMercY = (v) => Math.atan(Math.sinh(Math.PI * (1 - 2 * v))) * 180 / Math.PI;
+      // 地图区四角经纬度（用于瓦片范围计算，确保瓦片覆盖整个地图区）
+      const mapLeftLng = (mapX - originX) / (cosLat * scale) + minLng;
+      const mapRightLng = (mapX + mapW - originX) / (cosLat * scale) + minLng;
+      const mapTopLat = maxLat - (mapY - originY) / scale;
+      const mapBotLat = maxLat - (mapY + mapH - originY) / scale;
+      // 瓦片层级：按目标每像素米数反算（cos 纬度修正），clamp 3~18
+      const targetMpp = 111320 / scale;
+      let z = Math.round(Math.log2(156543.03392 * Math.cos(midLat * Math.PI / 180) / targetMpp));
+      z = Math.min(18, Math.max(3, z));
+      // 瓦片数量上限 100：超出则降档
+      let tileRange = null;
+      for (; z >= 3; z--) {
+        const x0 = Math.floor(mercX(mapLeftLng) * (1 << z));
+        const x1 = Math.floor(mercX(mapRightLng) * (1 << z));
+        const y0 = Math.floor(mercY(mapTopLat) * (1 << z));
+        const y1 = Math.floor(mercY(mapBotLat) * (1 << z));
+        tileRange = { x0, x1, y0, y1, count: (x1 - x0 + 1) * (y1 - y0 + 1) };
+        if (tileRange.count <= 100) break;
+      }
+      // 异步加载全部瓦片：任一张失败 → 降级纯色底图（不阻塞导出）
+      let tileImages = [];
+      if (tileRange) {
+        const results = await Promise.allSettled(
+          (() => {
+            const jobs = [];
+            for (let tx = tileRange.x0; tx <= tileRange.x1; tx++) {
+              for (let ty = tileRange.y0; ty <= tileRange.y1; ty++) {
+                jobs.push(this._loadMapTile(z, tx, ty));
+              }
+            }
+            return jobs;
+          })()
+        );
+        if (results.every(r => r.status === 'fulfilled')) {
+          tileImages = results.map(r => r.value);
+        } else if (CONFIG.DEBUG) {
+          console.log('[Report] 瓦片加载失败，降级纯色背景');
+        }
+      }
+      if (tileRange && tileImages.length === tileRange.count) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(mapX, mapY, mapW, mapH);
+        ctx.clip();
+        const tileWpx = (360 / (1 << z)) * cosLat * scale;
+        let i = 0;
+        for (let tx = tileRange.x0; tx <= tileRange.x1; tx++) {
+          for (let ty = tileRange.y0; ty <= tileRange.y1; ty++) {
+            const tileLng = tx / (1 << z) * 360 - 180;
+            const latTop = invMercY(ty / (1 << z));
+            const latBot = invMercY((ty + 1) / (1 << z));
+            const px = toX(tileLng);
+            const py = toY(latTop);
+            const ph = toY(latBot) - toY(latTop);
+            ctx.drawImage(tileImages[i++], px - 0.5, py - 0.5, tileWpx + 1, ph + 1);
+          }
+        }
+        ctx.restore();
+      } else {
+        // 降级：纯色底图（主题色跟随）
+        ctx.fillStyle = isDark ? '#0f3460' : '#dce5f0';
+        ctx.fillRect(mapX, mapY, mapW, mapH);
+      }
 
       const trailPoints = this._getTrailPositions();
       if (trailPoints.length >= 2) {
@@ -2396,6 +2112,41 @@ class App {
     }
   }
 
+  /**
+   * 加载高德地图瓦片（普通道路图 style=8，GCJ-02 与腾讯地图同坐标系）
+   * scale=2（512px retina）失败时回退 scale=1（256px）
+   * fetch + blob 加载避免 canvas 污染（PNG 可正常导出）
+   * @param {number} z 瓦片层级
+   * @param {number} x 瓦片列号
+   * @param {number} y 瓦片行号
+   * @returns {Promise<HTMLImageElement>}
+   */
+  async _loadMapTile(z, x, y) {
+    const base = 'https://webrd01.is.autonavi.com/appmaptile';
+    for (const scale of [2, 1]) {
+      // 每个瓦片带超时（AbortController），避免离线/慢网时导出无限挂起
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      try {
+        const url = `${base}?lang=zh_cn&size=1&scale=${scale}&style=8&x=${x}&y=${y}&z=${z}`;
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) continue;
+        const blob = await res.blob();
+        const image = await new Promise((resolve, reject) => {
+          const img = new Image();
+          const objectUrl = URL.createObjectURL(blob);
+          img.onload = () => { URL.revokeObjectURL(objectUrl); resolve(img); };
+          img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('tile decode failed')); };
+          img.src = objectUrl;
+        });
+        return image;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    throw new Error('tile fetch failed');
+  }
+
   _updateTrailUI() {
     const btn = this._trailRecordBtn || (this._trailRecordBtn = document.getElementById('trail-record-btn'));
     const pauseBtn = this._trailPauseBtn || (this._trailPauseBtn = document.getElementById('trail-pause-btn'));
@@ -2403,7 +2154,6 @@ class App {
     const statsBtn = this._trailStatsBtn || (this._trailStatsBtn = document.getElementById('trail-stats-btn'));
     const exportBtn = this._trailExportBtn || (this._trailExportBtn = document.getElementById('export-report-btn'));
     const smoothBtn = this._trailSmoothBtn || (this._trailSmoothBtn = document.getElementById('trail-smooth-btn'));
-    const segBtn = this._trailSegBtn || (this._trailSegBtn = document.getElementById('trail-segment-btn'));
     const distEl = this._trailDistEl || (this._trailDistEl = document.getElementById('trail-distance'));
 
     if (btn) {
@@ -2430,15 +2180,6 @@ class App {
 
     if (smoothBtn) {
       smoothBtn.classList.toggle('active', this._trailSmoothing);
-    }
-
-    if (segBtn) segBtn.disabled = this.trail.positions.length < 2;
-
-    const wpBtn = this._trailWaypointBtn || (this._trailWaypointBtn = document.getElementById('trail-waypoint-btn'));
-    if (wpBtn) {
-      const canWp = this.trail.isRecording && !this.trail.isPaused && !!this.myPosition;
-      wpBtn.disabled = !canWp;
-      wpBtn.classList.toggle('active', canWp);
     }
   }
 
@@ -2806,19 +2547,12 @@ class App {
 
       const hasPositions = trailData.positions && trailData.positions.length > 0;
 
-      this.trail.manualSegments = Array.isArray(trailData.manualSegments) ? trailData.manualSegments : [];
-
       if (hasPositions) {
         this.trail.positions = trailData.positions;
         this.trail.lastPos = trailData.positions[trailData.positions.length - 1];
         if (trailData.positions.length >= 2) {
           this.mapManager.setTrail(this._getTrailPositions());
-          if (this.trail.manualSegments.length > 0) {
-            this.mapManager.setTrailMarkers(
-              TrailAnalysis.analyzeKeyPoints(this._getTrailPositions()),
-              this.trail.manualSegments
-            );
-          }
+          this.mapManager.setTrailMarkers(TrailAnalysis.analyzeKeyPoints(this._getTrailPositions()));
         }
       }
 

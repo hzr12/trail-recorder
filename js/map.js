@@ -43,9 +43,9 @@ class MapManager {
     this.trailPolylines = [];
     this._lastTrailCount = 0;
     this._lastTrailAnchor = null;
+    this._lastTrailInput = null;
 
     this.trailMarkers = [];
-    this._trailInfoWindow = null;
 
     this.onCenterChange = null;
     this._theme = 'dark';
@@ -423,7 +423,14 @@ class MapManager {
       return;
     }
 
-    if (positions.length < (this._lastTrailCount || 0)) {
+    // 传入数组引用变化（平滑重算 / 数据加载 / 轨迹切换）时，增量渲染的锚点已失效：
+    // 平滑数组每次由 getSmoothedPositions() 新建且所有点坐标随窗口平均变化，
+    // 若只追加新段，新旧 polyline 会在锚点处产生断点缝隙。
+    // 此时应全量重绘（clearTrail 会重置 _lastTrailCount，from 从 1 开始完整绘制）。
+    if (positions !== this._lastTrailInput) {
+      this._lastTrailInput = positions;
+      this.clearTrail();
+    } else if (positions.length < (this._lastTrailCount || 0)) {
       this.clearTrail();
     }
 
@@ -520,97 +527,42 @@ class MapManager {
   }
 
   /* ================================================================
-   *  轨迹关键点 / 分段标记
+   *  轨迹关键点标记
    * ================================================================ */
 
   /**
-   * 关键点图标（SVG dataURI）
-   * start: 绿色圆「起」 / end: 红色圆「终」 / maxSpeed: 橙色圆「速」
+   * 关键点图标（SVG dataURI）—— 弱化显示：纯色小圆点，无滤镜/文字
+   * start: 绿色 / end: 红色 / maxSpeed: 橙色
    */
   _createKeyPointIcon(type) {
-    const cfg = {
-      start: { color: '#34C759', text: '起' },
-      end: { color: '#FF453A', text: '终' },
-      maxSpeed: { color: '#FF9500', text: '速' },
-    }[type] || { color: '#00A3FF', text: '!' };
+    const color = {
+      start: '#34C759',
+      end: '#FF453A',
+      maxSpeed: '#FF9500',
+    }[type] || '#00A3FF';
     const svg = [
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36">',
-      '  <defs>',
-      '    <filter id="kp-glow" x="-40%" y="-40%" width="180%" height="180%">',
-      '      <feDropShadow dx="0" dy="1" stdDeviation="2.5" flood-opacity="0.5"/>',
-      '    </filter>',
-      '  </defs>',
-      `  <circle cx="18" cy="18" r="14" fill="${cfg.color}" stroke="#fff" stroke-width="2.5" filter="url(#kp-glow)"/>`,
-      `  <text x="18" y="22.5" text-anchor="middle" font-size="13" font-weight="700" fill="#fff" font-family="sans-serif">${cfg.text}</text>`,
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">',
+      `  <circle cx="8" cy="8" r="6" fill="${color}" stroke="#fff" stroke-width="1.5"/>`,
       '</svg>'
     ].join('\n');
-    // SVG 含中文（起/终/速），必须用 UTF-8 编码而非 btoa（btoa 只支持 Latin1）
     const dataUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
     return new qq.maps.MarkerImage(
       dataUri,
-      new qq.maps.Size(36, 36),
+      new qq.maps.Size(16, 16),
       new qq.maps.Point(0, 0),
-      new qq.maps.Point(18, 18),
-      new qq.maps.Size(36, 36)
+      new qq.maps.Point(8, 8),
+      new qq.maps.Size(16, 16)
     );
   }
 
   /**
    * 手动分段标记图标（紫色旗帜）
    */
-  _createSegmentMarkerIcon() {
-    const svg = [
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 40">',
-      '  <defs>',
-      '    <filter id="ms-glow" x="-40%" y="-40%" width="180%" height="180%">',
-      '      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.45"/>',
-      '    </filter>',
-      '  </defs>',
-      '  <path d="M6 38 L6 4 Q6 1 9 1 L24 9 L9 15 Z" fill="#BF40FF" stroke="#fff" stroke-width="2" filter="url(#ms-glow)"/>',
-      '  <circle cx="10" cy="6.5" r="1.8" fill="#fff" opacity="0.9"/>',
-      '</svg>'
-    ].join('\n');
-    const dataUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-    return new qq.maps.MarkerImage(
-      dataUri,
-      new qq.maps.Size(32, 40),
-      new qq.maps.Point(0, 0),
-      new qq.maps.Point(9, 38),
-      new qq.maps.Size(32, 40)
-    );
-  }
-
   /**
-   * 用户打点（waypoint）标记图标（绿色图钉，带备注文字气泡可经 InfoWindow 查看）
-   */
-  _createWaypointIcon() {
-    const svg = [
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 40">',
-      '  <defs>',
-      '    <filter id="wp-glow" x="-40%" y="-40%" width="180%" height="180%">',
-      '      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.5"/>',
-      '    </filter>',
-      '  </defs>',
-      '  <path d="M16 39 C16 39 5 27 5 15 A11 11 0 0 1 27 15 C27 27 16 39 16 39 Z" fill="#34C759" stroke="#fff" stroke-width="2" filter="url(#wp-glow)"/>',
-      '  <circle cx="16" cy="14" r="5" fill="#fff" opacity="0.92"/>',
-      '</svg>'
-    ].join('\n');
-    const dataUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-    return new qq.maps.MarkerImage(
-      dataUri,
-      new qq.maps.Size(32, 40),
-      new qq.maps.Point(0, 0),
-      new qq.maps.Point(16, 38),
-      new qq.maps.Size(32, 40)
-    );
-  }
-
-  /**
-   * 在地图上标出关键点 + 手动分段（segment 紫旗 / waypoint 绿钉）
+   * 在地图上标出关键点（起点/终点/最高速）—— 弱化显示，仅小圆点，无弹窗
    * @param {Object} keyPoints analyzeKeyPoints 的输出 {start,end,maxSpeed}
-   * @param {Array} [manualSegments] [{lat,lng,label,kind?}]
    */
-  setTrailMarkers(keyPoints, manualSegments) {
+  setTrailMarkers(keyPoints) {
     this.clearTrailMarkers();
     if (!this.map || !keyPoints) return;
 
@@ -627,43 +579,9 @@ class MapManager {
         icon: this._createKeyPointIcon(kp.type),
         title: kp.label,
         zIndex: 20,
-        clickable: true
+        clickable: false
       });
-      qq.maps.event.addListener(marker, 'click', () => this._showMarkerInfo(marker, kp.label));
       this.trailMarkers.push(marker);
-    }
-
-    if (Array.isArray(manualSegments)) {
-      for (const ms of manualSegments) {
-        if (!ms || !Number.isFinite(ms.lat) || !Number.isFinite(ms.lng)) continue;
-        const isWaypoint = ms.kind === 'waypoint';
-        const label = ms.label || (isWaypoint ? '打点' : '分段');
-        const marker = new qq.maps.Marker({
-          position: new qq.maps.LatLng(ms.lat, ms.lng),
-          map: this.map,
-          icon: isWaypoint ? this._createWaypointIcon() : this._createSegmentMarkerIcon(),
-          title: label,
-          zIndex: isWaypoint ? 22 : 21,
-          clickable: true
-        });
-        qq.maps.event.addListener(marker, 'click', () => this._showMarkerInfo(marker, label));
-        this.trailMarkers.push(marker);
-      }
-    }
-  }
-
-  _showMarkerInfo(marker, text) {
-    if (!this.map) return;
-    if (this._trailInfoWindow) this._trailInfoWindow.close();
-    try {
-      this._trailInfoWindow = new qq.maps.InfoWindow({
-        map: this.map,
-        position: marker.getPosition(),
-        content: `<div class="trail-keypoint-info">${String(text).replace(/</g, '&lt;')}</div>`
-      });
-      this._trailInfoWindow.open();
-    } catch (e) {
-      console.warn('[MapManager] InfoWindow 打开失败:', e.message);
     }
   }
 
@@ -673,10 +591,6 @@ class MapManager {
     }
     this.trailMarkers = [];
     this.clearRealtimeKeyPoints();
-    if (this._trailInfoWindow) {
-      try { this._trailInfoWindow.close(); } catch (_) {}
-      this._trailInfoWindow = null;
-    }
   }
 
   /* ================================================================
@@ -712,10 +626,8 @@ class MapManager {
           icon: this._createKeyPointIcon(kp.type),
           title: kp.label || '',
           zIndex: 25,
-          clickable: true
+          clickable: false
         });
-        m._kpLabel = kp.label || '';
-        qq.maps.event.addListener(m, 'click', () => this._showMarkerInfo(m, m._kpLabel || ''));
         this._kpMarkers[type] = m;
         continue;
       }
@@ -725,17 +637,8 @@ class MapManager {
         marker.setPosition(new qq.maps.LatLng(kp.lat, kp.lng));
       }
       const label = kp.label || '';
-      if (marker._kpLabel !== label) {
-        marker._kpLabel = label;
+      if (marker.getTitle && marker.getTitle() !== label) {
         try { marker.setTitle(label); } catch (_) {}
-        if (this._trailInfoWindow && this._trailInfoWindow.getPosition &&
-            this._trailInfoWindow.getPosition().equals(marker.getPosition())) {
-          try {
-            this._trailInfoWindow.setContent(
-              `<div class="trail-keypoint-info">${String(label).replace(/</g, '&lt;')}</div>`
-            );
-          } catch (_) {}
-        }
       }
     }
   }

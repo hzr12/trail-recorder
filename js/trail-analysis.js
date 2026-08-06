@@ -4,11 +4,7 @@
  * 纯函数，无 DOM 依赖：
  *  - analyzeKeyPoints: 关键点（起点 / 终点 / 最高速点）
  *  - analyzeSegments: 自动分段（按速度等级，带防抖）
- *  - analyze: 综合输出（关键点 + 自动分段 + 手动分段）
- *
- * 手动分段数据模型（存于轨迹记录的 manualSegments 字段）：
- *  [{ id, label, lat, lng, time, ratio }]
- *  - ratio: 0~1，表示沿轨迹累计距离的比例
+ *  - analyze: 综合输出（关键点 + 自动分段）
  */
 
 const TrailAnalysis = {
@@ -227,14 +223,12 @@ const TrailAnalysis = {
   /**
    * 综合输出
    * @param {Array} positions
-   * @param {Array} [manualSegments]
-   * @returns {{keyPoints:Object, segments:Array, manualSegments:Array}}
+   * @returns {{keyPoints:Object, segments:Array}}
    */
-  analyze(positions, manualSegments) {
+  analyze(positions) {
     return {
       keyPoints: this.analyzeKeyPoints(positions),
-      segments: this.analyzeSegments(positions),
-      manualSegments: Array.isArray(manualSegments) ? manualSegments : []
+      segments: this.analyzeSegments(positions)
     };
   },
 
@@ -247,36 +241,5 @@ const TrailAnalysis = {
       if (index >= seg.startIdx && index <= seg.endIdx) return seg;
     }
     return segments[segments.length - 1];
-  },
-
-  /**
-   * 沿轨迹累计距离比例(0~1) → 轨迹点索引
-   */
-  ratioToIndex(positions, ratio) {
-    if (!Array.isArray(positions) || positions.length === 0) return 0;
-    if (positions.length < 2) return 0;
-    const r = Math.max(0, Math.min(1, ratio));
-    let total = 0;
-    for (let i = 1; i < positions.length; i++) {
-      total += calcDistance(positions[i - 1], positions[i]);
-    }
-    if (total <= 0) return Math.round(r * (positions.length - 1));
-    const target = r * total;
-    if (target <= 0) return 0;
-    let acc = 0;
-    for (let i = 1; i < positions.length; i++) {
-      acc += calcDistance(positions[i - 1], positions[i]);
-      if (acc >= target) return i;
-    }
-    return positions.length - 1;
-  },
-
-  /**
-   * 手动分段按 ratio 排序并标记"删除后是否可移除"（至少保留 0 个即可）
-   */
-  sortManualSegments(manualSegments) {
-    return (Array.isArray(manualSegments) ? manualSegments : [])
-      .slice()
-      .sort((a, b) => (a.ratio || 0) - (b.ratio || 0));
   }
 };

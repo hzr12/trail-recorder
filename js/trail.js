@@ -10,8 +10,6 @@ class Trail {
     this.lastPos = null;      // 上次记录的位置（用于采样）
     this.isRecording = false; // 是否正在记录
     this.isPaused = false;    // 是否暂停记录
-    this.manualSegments = []; // 手动分段与打点共用集合 [{id,label,lat,lng,time,ratio,kind?}]
-                              // kind: 'segment'（手动分段，紫旗）| 'waypoint'（用户打点，绿钉，无 ratio 概念）
   }
 
   /**
@@ -20,7 +18,6 @@ class Trail {
   start() {
     this.positions = [];
     this.lastPos = null;
-    this.manualSegments = [];
     this.isRecording = true;
     this.isPaused = false;
   }
@@ -54,19 +51,16 @@ class Trail {
   clear() {
     this.positions = [];
     this.lastPos = null;
-    this.manualSegments = [];
   }
 
   /**
    * 恢复轨迹点（用于撤销操作）
    * @param {Array} positions
    * @param {{lat:number,lng:number}|null} lastPos
-   * @param {Array} [manualSegments]
    */
-  restore(positions, lastPos, manualSegments) {
+  restore(positions, lastPos) {
     this.positions = positions;
     this.lastPos = lastPos;
-    this.manualSegments = Array.isArray(manualSegments) ? manualSegments : [];
   }
 
   /**

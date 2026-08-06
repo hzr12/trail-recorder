@@ -104,24 +104,7 @@
         <div class="trail-actions">
           <button id="trail-stats-btn" class="btn-sm" disabled> 统计</button>
           <button id="trail-smooth-btn" class="btn-sm active"> 平滑</button>
-          <button id="trail-segment-btn" class="btn-sm" disabled title="给当前轨迹添加手动分段"> 分段</button>
-          <button id="trail-waypoint-btn" class="btn-sm" disabled title="在当前位置打点标记"> 打点</button>
           <button id="export-report-btn" class="btn-sm" title="导出活动报告图片（含轨迹、速度曲线、统计）"> 报告</button>
-        </div>
-
-        <!-- 当前轨迹手动分段面板 -->
-        <div class="trail-segment-add-form hidden" id="trail-segment-form">
-          <input type="text" class="trail-segment-add-label" id="trail-segment-label" placeholder="分段标签，如：补给点" maxlength="20"/>
-          <div class="trail-segment-add-pos">
-            <span class="trail-segment-add-pos-label">位置</span>
-            <input type="range" class="trail-segment-add-ratio" id="trail-segment-ratio" min="0" max="100" value="50"/>
-            <span class="trail-segment-add-pos-val" id="trail-segment-ratio-val">50%</span>
-          </div>
-          <div class="trail-segment-add-actions">
-            <button class="btn-sm trail-segment-add-cancel" id="trail-segment-cancel">取消</button>
-            <button class="btn-sm trail-segment-add-confirm" id="trail-segment-confirm">添加</button>
-          </div>
-          <div class="trail-segment-list" id="trail-segment-list"></div>
         </div>
 
         <!-- 后台+省电模块 -->
