@@ -194,6 +194,24 @@
         <div class="replay-trails-section">
           <div class="replay-trails-header">
             <span>可回放轨迹</span>
+            <input type="text" class="trail-search-input" id="replay-search" placeholder="搜索…" />
+            <select class="trail-time-select" id="replay-time-range">
+              <option value="all">全部</option>
+              <option value="today">今天</option>
+              <option value="week">本周</option>
+              <option value="month">本月</option>
+            </select>
+            <select class="trail-sort-select" id="replay-sort" title="排序方式">
+              <option value="time">最新优先</option>
+              <option value="distance">距离</option>
+              <option value="duration">时长</option>
+              <option value="points">点数</option>
+            </select>
+            <button class="header-btn" id="batch-select-all" title="全选当前">全选当前</button>
+            <button class="fav-filter-btn" id="replay-fav-filter" title="仅看收藏">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              <span>仅看收藏</span>
+            </button>
           </div>
           <div class="trail-list" id="replay-trail-list">
             <div class="trail-list-empty">暂无历史轨迹</div>
@@ -203,8 +221,39 @@
 
       <!-- 历史 Tab -->
       <div id="tab-history" style="display:none">
+        <div class="trail-list-header">
+          <input type="text" class="trail-search-input" id="history-search" placeholder="搜索名称/日期/距离…" />
+          <select class="trail-time-select" id="history-time-range">
+            <option value="all">全部时间</option>
+            <option value="today">今天</option>
+            <option value="week">本周</option>
+            <option value="month">本月</option>
+          </select>
+          <select class="trail-sort-select" id="history-sort" title="排序方式">
+            <option value="time">最新优先</option>
+            <option value="distance">距离</option>
+            <option value="duration">时长</option>
+            <option value="points">点数</option>
+          </select>
+          <button class="header-btn" id="batch-select-all" title="全选当前">全选当前</button>
+          <button class="fav-filter-btn" id="history-fav-filter" title="仅看收藏">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <span>仅看收藏</span>
+          </button>
+        </div>
         <div class="trail-list" id="trail-list">
           <div class="trail-list-empty">暂无历史轨迹</div>
+        </div>
+      </div>
+
+      <!-- 批量操作工具栏（多选时显示） -->
+      <div class="batch-toolbar" id="batch-toolbar">
+        <span class="batch-count">未选择</span>
+        <div class="batch-actions">
+          <button class="batch-btn batch-export" id="batch-export" disabled>导出长图</button>
+          <button class="batch-btn batch-merge" id="batch-merge" disabled>合并轨迹</button>
+          <button class="batch-btn batch-invert" id="batch-invert" disabled>反选</button>
+          <button class="batch-btn batch-clear" id="batch-clear" disabled>取消选择</button>
         </div>
       </div>
     </div>

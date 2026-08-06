@@ -26,3 +26,4 @@ docs/*
 test/*
 tests.*
 tests/*
+.codebuddy/*

@@ -92,6 +92,66 @@ class App {
     this._isReplaying = false;
     this._replaySpeed = 1;
     this._replayFollowMode = true;
+    this._onlyFav = false;
+    this._replayOnlyFav = false;
+    this._searchKeyword = '';
+    this._timeRange = 'all';
+    this._replaySearchKeyword = '';
+    this._replayTimeRange = 'all';
+    this._historySelected = new Set();
+    this._replaySelected = new Set();
+    this._multiSelect = false;
+    this._trailCache = null;
+    this._sortKey = 'time';
+    this._replaySortKey = 'time';
+  }
+
+  _sortTrails(items, sortKey) {
+    if (!items) return items;
+    const key = sortKey || 'time';
+    return items.slice().sort((a, b) => {
+      const fa = a.favorite ? 1 : 0;
+      const fb = b.favorite ? 1 : 0;
+      if (fa !== fb) return fb - fa;
+      if (key === 'distance') return (b.distance || 0) - (a.distance || 0);
+      if (key === 'duration') return (b.duration || 0) - (a.duration || 0);
+      if (key === 'points') return (b.pointCount || 0) - (a.pointCount || 0);
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
+  }
+
+  _matchTimeRange(createdAt, range) {
+    if (!range || range === 'all') return true;
+    const d = new Date(createdAt);
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (range === 'today') return d >= startOfToday;
+    if (range === 'week') {
+      const day = startOfToday.getDay() || 7;
+      const monday = new Date(startOfToday);
+      monday.setDate(startOfToday.getDate() - (day - 1));
+      return d >= monday;
+    }
+    if (range === 'month') {
+      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+    }
+    return true;
+  }
+
+  _filterTrails(items, keyword, timeRange) {
+    if (!items) return items;
+    const kw = (keyword || '').trim().toLowerCase();
+    return items.filter((it) => {
+      if (kw) {
+        const d = new Date(it.createdAt || 0);
+        const pad = (n) => String(n).padStart(2, '0');
+        const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+        const distStr = formatDistance(it.distance);
+        const hay = [it.name || '', dateStr, distStr, String(it.pointCount || 0)].join(' ').toLowerCase();
+        if (!hay.includes(kw)) return false;
+      }
+      return this._matchTimeRange(it.createdAt, timeRange);
+    });
   }
 
   init() {
@@ -247,6 +307,99 @@ class App {
     document.querySelectorAll('.mode-tab').forEach((btn) => {
       btn.addEventListener('click', () => this._setTab(btn.dataset.tab));
     });
+
+    // 仅看收藏筛选
+    const historyFavFilter = document.getElementById('history-fav-filter');
+    if (historyFavFilter) {
+      historyFavFilter.addEventListener('click', () => {
+        this._onlyFav = !this._onlyFav;
+        historyFavFilter.classList.toggle('active', this._onlyFav);
+        this._renderTrailList();
+      });
+    }
+    const replayFavFilter = document.getElementById('replay-fav-filter');
+    if (replayFavFilter) {
+      replayFavFilter.addEventListener('click', () => {
+        this._replayOnlyFav = !this._replayOnlyFav;
+        replayFavFilter.classList.toggle('active', this._replayOnlyFav);
+        this._renderReplayTrailList();
+      });
+    }
+
+    // 搜索 / 时间筛选（防抖）
+    let searchTimer = null;
+    const historySearch = document.getElementById('history-search');
+    if (historySearch) {
+      historySearch.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+          this._searchKeyword = historySearch.value;
+          this._renderTrailList();
+        }, 200);
+      });
+    }
+    const historyTime = document.getElementById('history-time-range');
+    if (historyTime) {
+      historyTime.addEventListener('change', () => {
+        this._timeRange = historyTime.value;
+        this._renderTrailList();
+      });
+    }
+    const replaySearch = document.getElementById('replay-search');
+    if (replaySearch) {
+      replaySearch.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+          this._replaySearchKeyword = replaySearch.value;
+          this._renderReplayTrailList();
+        }, 200);
+      });
+    }
+    const replayTime = document.getElementById('replay-time-range');
+    if (replayTime) {
+      replayTime.addEventListener('change', () => {
+        this._replayTimeRange = replayTime.value;
+        this._renderReplayTrailList();
+      });
+    }
+
+    // 排序下拉
+    const historySort = document.getElementById('history-sort');
+    if (historySort) {
+      historySort.addEventListener('change', () => {
+        this._sortKey = historySort.value;
+        this._renderTrailList();
+      });
+    }
+    const replaySort = document.getElementById('replay-sort');
+    if (replaySort) {
+      replaySort.addEventListener('change', () => {
+        this._replaySortKey = replaySort.value;
+        this._renderReplayTrailList();
+      });
+    }
+
+    // 批量工具栏
+    document.querySelectorAll('.header-btn#batch-select-all').forEach((selectAllBtn) => {
+      selectAllBtn.addEventListener('click', () => this._selectAll(true));
+    });
+    const batchExport = document.getElementById('batch-export');
+    if (batchExport) {
+      batchExport.addEventListener('click', () => this._exportSelectedImages());
+    }
+    const batchMerge = document.getElementById('batch-merge');
+    if (batchMerge) {
+      batchMerge.addEventListener('click', () => this._mergeSelectedTrails());
+    }
+    const batchClear = document.getElementById('batch-clear');
+    if (batchClear) {
+      batchClear.addEventListener('click', () => this._toggleMultiSelect(false));
+    }
+    const batchInvert = document.getElementById('batch-invert');
+    if (batchInvert) {
+      batchInvert.addEventListener('click', () => this._invertSelection());
+    }
+    this._syncBatchToolbar();
   }
 
   _toggleGps() {
@@ -783,16 +936,10 @@ class App {
     if (playBtn) {
       const isPlaying = this._replayPlayer.isPlaying;
       playBtn.classList.toggle('playing', isPlaying);
-      const icon = document.getElementById('replay-play-icon');
-      if (icon) {
-        if (isPlaying) {
-          icon.setAttribute('points', '6,4 10,4 10,20 6,20');
-          icon.setAttribute('points', '6,4 10,4 10,20 6,20');
-          // Use a pause icon instead
-          playBtn.querySelector('svg').innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
-        } else {
-          playBtn.querySelector('svg').innerHTML = '<polygon points="6,4 20,12 6,20"/>';
-        }
+      if (isPlaying) {
+        playBtn.querySelector('svg').innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+      } else {
+        playBtn.querySelector('svg').innerHTML = '<polygon points="6,4 20,12 6,20"/>';
       }
     }
 
@@ -845,6 +992,7 @@ class App {
 
     Storage.saveTrailToList(positions, name).then((id) => {
       if (id) {
+        this._invalidateTrailCache();
         // 显示保存成功，然后清空当前轨迹并切换到历史 Tab
         const itemCount = positions.length;
         const distStr = distance >= 1000
@@ -904,59 +1052,43 @@ class App {
     const positions = this.trail.positions.slice();
     const name = Storage._fmtTrailName(Date.now());
     Storage.saveTrailToList(positions, name).then((id) => {
-      if (id) Toast.show(' 轨迹已保存');
+      if (id) {
+        this._invalidateTrailCache();
+        Toast.show(' 轨迹已保存');
+      }
     });
+  }
+
+  _loadTrailListCached() {
+    if (this._trailCache) return Promise.resolve(this._trailCache);
+    return Storage.loadTrailList().then((items) => {
+      this._trailCache = items || [];
+      return this._trailCache;
+    });
+  }
+
+  _invalidateTrailCache() {
+    this._trailCache = null;
   }
 
   _renderTrailList() {
     const listEl = document.getElementById('trail-list');
     if (!listEl) return;
-    Storage.loadTrailList().then((items) => {
+    this._loadTrailListCached().then((items) => {
       if (!items || items.length === 0) {
         listEl.innerHTML = '<div class="trail-list-empty">暂无历史轨迹</div>';
         return;
       }
-      listEl.innerHTML = items.map((item) => {
-        const d = new Date(item.createdAt);
-        const pad = (n) => String(n).padStart(2, '0');
-        const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-        const distStr = item.distance >= 1000
-          ? (item.distance / 1000).toFixed(2) + ' km'
-          : Math.round(item.distance) + ' m';
-        return `<div class="trail-list-item" data-id="${item.id}">
-          <span class="trail-item-dot"></span>
-          <div class="trail-item-info">
-            <div class="trail-item-name" data-id="${item.id}">${item.name}</div>
-            <div class="trail-item-meta">${dateStr} · ${distStr}</div>
-          </div>
-          <div class="trail-item-actions">
-            <button class="trail-item-btn load-btn" data-id="${item.id}" title="加载到地图">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-            </button>
-            <button class="trail-item-btn delete-btn" data-id="${item.id}" title="删除">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-            </button>
-          </div>
-        </div>`;
-      }).join('');
-
-      listEl.querySelectorAll('.trail-item-btn.load-btn').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this._loadTrailFromList(btn.dataset.id);
-        });
-      });
-
-      listEl.querySelectorAll('.trail-item-btn.delete-btn').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this._deleteTrailFromList(btn.dataset.id);
-        });
-      });
-
-      listEl.querySelectorAll('.trail-item-name').forEach((el) => {
-        el.addEventListener('click', () => this._renameTrail(el.dataset.id, el));
-      });
+      let list = this._onlyFav ? items.filter((i) => i.favorite) : items;
+      list = this._filterTrails(list, this._searchKeyword, this._timeRange);
+      list = this._sortTrails(list, this._sortKey);
+      if (list.length === 0) {
+        listEl.innerHTML = '<div class="trail-list-empty">没有匹配的轨迹</div>';
+        return;
+      }
+      listEl.innerHTML = list.map((item) => this._trailItemHTML(item, false)).join('');
+      this._bindTrailItemEvents(listEl, false);
+      this._syncBatchToolbar();
     });
   }
 
@@ -994,50 +1126,21 @@ class App {
   _renderReplayTrailList() {
     const listEl = document.getElementById('replay-trail-list');
     if (!listEl) return;
-    Storage.loadTrailList().then((items) => {
+    this._loadTrailListCached().then((items) => {
       if (!items || items.length === 0) {
         listEl.innerHTML = '<div class="trail-list-empty">暂无历史轨迹</div>';
         return;
       }
-      listEl.innerHTML = items.map((item) => {
-        const d = new Date(item.createdAt);
-        const pad = (n) => String(n).padStart(2, '0');
-        const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-        const distStr = item.distance >= 1000
-          ? (item.distance / 1000).toFixed(2) + ' km'
-          : Math.round(item.distance) + ' m';
-        return `<div class="trail-list-item" data-id="${item.id}">
-          <span class="trail-item-dot" style="background:#FF9500"></span>
-          <div class="trail-item-info">
-            <div class="trail-item-name">${item.name}</div>
-            <div class="trail-item-meta">${dateStr} · ${distStr} · ${item.pointCount || 0} 点</div>
-          </div>
-          <div class="trail-item-actions">
-            <button class="trail-item-btn replay-btn" data-id="${item.id}" title="回放">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                <polygon points="6,4 20,12 6,20"/>
-              </svg>
-            </button>
-            <button class="trail-item-btn load-btn" data-id="${item.id}" title="加载">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-            </button>
-          </div>
-        </div>`;
-      }).join('');
-
-      listEl.querySelectorAll('.trail-item-btn.replay-btn').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this._replayTrailFromList(btn.dataset.id);
-        });
-      });
-
-      listEl.querySelectorAll('.trail-item-btn.load-btn').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this._loadTrailFromList(btn.dataset.id);
-        });
-      });
+      let list = this._replayOnlyFav ? items.filter((i) => i.favorite) : items;
+      list = this._filterTrails(list, this._replaySearchKeyword, this._replayTimeRange);
+      list = this._sortTrails(list, this._replaySortKey);
+      if (list.length === 0) {
+        listEl.innerHTML = '<div class="trail-list-empty">没有匹配的轨迹</div>';
+        return;
+      }
+      listEl.innerHTML = list.map((item) => this._trailItemHTML(item, true)).join('');
+      this._bindTrailItemEvents(listEl, true);
+      this._syncBatchToolbar();
     });
   }
 
@@ -1062,11 +1165,14 @@ class App {
     const name = item ? (item.querySelector('.trail-item-name')?.textContent || '') : '';
     Storage.deleteTrail(id).then((ok) => {
       if (ok) {
+        this._invalidateTrailCache();
         Toast.showUndo(`已删除「${name}」`, () => {
           Storage.loadTrailById(id).then((data) => {
             if (data && data.positions) {
-              Storage.saveTrailToList(data.positions, name);
+              Storage.saveTrailToList(data.positions, name, data.favorite);
+              this._invalidateTrailCache();
               this._renderTrailList();
+              this._renderReplayTrailList();
             }
           });
         });
@@ -1094,6 +1200,7 @@ class App {
       const newName = el.textContent.trim() || oldName;
       el.textContent = newName;
       if (newName !== oldName) {
+        this._invalidateTrailCache();
         Storage.renameTrail(id, newName);
       }
     };
@@ -1103,6 +1210,419 @@ class App {
       if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
       if (e.key === 'Escape') { el.textContent = oldName; el.blur(); }
     };
+  }
+
+  _escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+
+  _showTrailDetail(id) {
+    Storage.loadTrailById(id).then((data) => {
+      if (!data || !data.positions || data.positions.length < 2) {
+        Toast.show('轨迹数据不足');
+        return;
+      }
+      const pos = data.positions;
+      const stats = this._computeTrailStats(pos);
+      const durationMs = stats.duration;
+
+      let maxSpeed = 0;
+      let hasSpeed = false;
+      for (const p of pos) {
+        if (p.speed != null && p.speed > maxSpeed) { maxSpeed = p.speed; hasSpeed = true; }
+      }
+      const avgSpeed = durationMs > 0 ? stats.distance / (durationMs / 1000) : 0;
+
+      const fmtTime = (ts) => {
+        if (!ts) return '--';
+        const d = new Date(ts);
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      };
+      const fmtDuration = (ms) => {
+        if (ms <= 0) return '--';
+        const s = Math.round(ms / 1000);
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        const sec = s % 60;
+        if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+        if (m > 0) return `${m}:${String(sec).padStart(2, '0')}`;
+        return `${sec}秒`;
+      };
+
+      const thumb = this.mapManager.renderTrailThumbnail(pos, {
+        title: data.name,
+        stats: { distance: stats.distance, duration: durationMs, points: pos.length }
+      });
+      const firstTime = pos[0].time;
+      const lastTime = pos[pos.length - 1].time;
+
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay show';
+      overlay.innerHTML = `
+        <div class="modal-box trail-detail-modal">
+          <div class="modal-header">
+            <span class="modal-title">轨迹详情</span>
+            <button class="modal-close trail-detail-close">✕</button>
+          </div>
+          ${thumb ? `<div class="trail-detail-thumb"><img src="${thumb}" alt="轨迹缩略图"/></div>` : ''}
+          <div class="trail-detail-name">${this._escapeHtml(data.name || '')}</div>
+          <div class="trail-detail-date">${fmtTime(firstTime)} → ${fmtTime(lastTime)}</div>
+          <div class="stat-grid">
+            <div class="stat-card"><span class="stat-label">总距离</span><span class="stat-value">${formatDistance(stats.distance)}</span></div>
+            <div class="stat-card"><span class="stat-label">总时长</span><span class="stat-value">${fmtDuration(durationMs)}</span></div>
+            <div class="stat-card"><span class="stat-label">平均速度</span><span class="stat-value">${avgSpeed > 0 ? (avgSpeed * 3.6).toFixed(1) + ' km/h' : '--'}</span></div>
+            <div class="stat-card"><span class="stat-label">最高速度</span><span class="stat-value warning">${hasSpeed ? (maxSpeed * 3.6).toFixed(1) + ' km/h' : '--'}</span></div>
+            <div class="stat-card"><span class="stat-label">轨迹点数</span><span class="stat-value accent2">${pos.length}</span></div>
+            <div class="stat-card"><span class="stat-label">是否收藏</span><span class="stat-value">${data.favorite ? '已收藏' : '未收藏'}</span></div>
+          </div>
+          <div class="confirm-actions">
+            <button class="btn-sm trail-detail-load">加载到地图</button>
+            <button class="btn-sm trail-detail-close">关闭</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+
+      const close = () => {
+        overlay.classList.remove('show');
+        setTimeout(() => overlay.remove(), 300);
+      };
+      overlay.querySelectorAll('.trail-detail-close').forEach((b) => b.addEventListener('click', close));
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) close();
+      });
+      const loadBtn = overlay.querySelector('.trail-detail-load');
+      if (loadBtn) {
+        loadBtn.addEventListener('click', () => {
+          close();
+          this._loadTrailFromList(id);
+        });
+      }
+    });
+  }
+
+  _trailItemHTML(item, isReplay) {
+    const d = new Date(item.createdAt);
+    const pad = (n) => String(n).padStart(2, '0');
+    const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const distStr = item.distance >= 1000
+      ? (item.distance / 1000).toFixed(2) + ' km'
+      : Math.round(item.distance) + ' m';
+    const metaExtra = isReplay ? ` · ${item.pointCount || 0} 点` : '';
+    const dotColor = isReplay ? ' style="background:#FF9500"' : '';
+    const favClass = item.favorite ? ' favorite-btn active' : ' favorite-btn';
+    const selectedSet = isReplay ? this._replaySelected : this._historySelected;
+    const checked = selectedSet.has(item.id) ? ' checked' : '';
+    const multiCls = this._multiSelect ? ' multi' : '';
+    const checkHtml = `<label class="trail-select-check${checked}" data-id="${item.id}">
+        <input type="checkbox" data-id="${item.id}"${checked ? ' checked' : ''} />
+      </label>`;
+    const infoBtn = `<button class="trail-item-btn info-btn" data-id="${item.id}" title="详情">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      </button>`;
+    const actions = isReplay
+      ? `${infoBtn}
+        <button class="trail-item-btn replay-btn" data-id="${item.id}" title="回放">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>
+        </button>
+        <button class="trail-item-btn load-btn" data-id="${item.id}" title="加载">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+        </button>`
+      : `${infoBtn}
+        <button class="trail-item-btn load-btn" data-id="${item.id}" title="加载到地图">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+        </button>
+        <button class="trail-item-btn delete-btn" data-id="${item.id}" title="删除">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>`;
+    return `<div class="trail-list-item${multiCls}" data-id="${item.id}">
+      ${checkHtml}
+      <button class="${favClass}" data-id="${item.id}" title="收藏">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="${item.favorite ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      </button>
+      <span class="trail-item-dot"${dotColor}></span>
+      <div class="trail-item-info">
+        <div class="trail-item-name" data-id="${item.id}">${item.name}</div>
+        <div class="trail-item-meta">${dateStr} · ${distStr}${metaExtra}</div>
+      </div>
+      <div class="trail-item-actions">
+        <button class="trail-item-btn rename-btn" data-id="${item.id}" title="重命名">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        </button>
+        ${actions}
+      </div>
+    </div>`;
+  }
+
+  _bindTrailItemEvents(listEl, isReplay) {
+    const selectedSet = isReplay ? this._replaySelected : this._historySelected;
+
+    listEl.querySelectorAll('.trail-select-check').forEach((label) => {
+      const input = label.querySelector('input');
+      if (!input) return;
+      input.addEventListener('click', (e) => e.stopPropagation());
+      input.addEventListener('change', () => {
+        const id = input.dataset.id;
+        if (input.checked) { selectedSet.add(id); label.classList.add('checked'); }
+        else { selectedSet.delete(id); label.classList.remove('checked'); }
+        this._syncBatchToolbar();
+      });
+    });
+
+    listEl.querySelectorAll('.favorite-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        Storage.toggleFavorite(id).then((fav) => {
+          this._invalidateTrailCache();
+          if (fav === false && (this._onlyFav || this._replayOnlyFav)) {
+            this._renderTrailList();
+            if (isReplay) this._renderReplayTrailList();
+            return;
+          }
+          btn.classList.toggle('active', fav);
+          const svg = btn.querySelector('svg');
+          if (svg) svg.setAttribute('fill', fav ? 'currentColor' : 'none');
+          const item = listEl.querySelector(`.trail-list-item[data-id="${id}"]`);
+          if (item) item.parentNode.insertBefore(item, listEl.firstChild);
+          Toast.show(fav ? '已收藏' : '已取消收藏');
+        });
+      });
+    });
+
+    listEl.querySelectorAll('.rename-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const nameEl = listEl.querySelector(`.trail-item-name[data-id="${btn.dataset.id}"]`);
+        if (nameEl) this._renameTrail(btn.dataset.id, nameEl);
+      });
+    });
+
+    listEl.querySelectorAll('.trail-item-name').forEach((el) => {
+      el.addEventListener('click', () => this._renameTrail(el.dataset.id, el));
+    });
+
+    listEl.querySelectorAll('.trail-item-btn.info-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._showTrailDetail(btn.dataset.id);
+      });
+    });
+
+    if (isReplay) {
+      listEl.querySelectorAll('.trail-item-btn.replay-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this._replayTrailFromList(btn.dataset.id);
+        });
+      });
+    }
+
+    listEl.querySelectorAll('.trail-item-btn.load-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._loadTrailFromList(btn.dataset.id);
+      });
+    });
+
+    listEl.querySelectorAll('.trail-item-btn.delete-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._deleteTrailFromList(btn.dataset.id);
+      });
+    });
+  }
+
+  _syncBatchToolbar() {
+    const bar = document.getElementById('batch-toolbar');
+    if (!bar) return;
+    const total = this._historySelected.size + this._replaySelected.size;
+    const countEl = bar.querySelector('.batch-count');
+    if (countEl) countEl.textContent = total > 0 ? `已选 ${total} 条` : '未选择';
+    bar.querySelector('.batch-export').disabled = total === 0;
+    bar.querySelector('.batch-merge').disabled = total < 2;
+    const invertBtn = bar.querySelector('.batch-invert');
+    if (invertBtn) invertBtn.disabled = total === 0;
+    bar.querySelector('.batch-clear').disabled = total === 0;
+    bar.classList.toggle('visible', total > 0 || this._multiSelect);
+  }
+
+  _selectAll(checked) {
+    // 只选择当前 Tab 可见列表（全选当前）
+    if (this._currentTab === 'replay') {
+      this._replaySelected.clear();
+      if (checked) {
+        const list = document.getElementById('replay-trail-list');
+        if (list) list.querySelectorAll('.trail-list-item').forEach((el) => this._replaySelected.add(el.dataset.id));
+      }
+    } else {
+      this._historySelected.clear();
+      if (checked) {
+        const list = document.getElementById('trail-list');
+        if (list) list.querySelectorAll('.trail-list-item').forEach((el) => this._historySelected.add(el.dataset.id));
+      }
+    }
+    this._multiSelect = true;
+    this._renderTrailList();
+    this._renderReplayTrailList();
+  }
+
+  _invertSelection() {
+    const histList = document.getElementById('trail-list');
+    const replayList = document.getElementById('replay-trail-list');
+    if (histList) {
+      histList.querySelectorAll('.trail-list-item').forEach((el) => {
+        const id = el.dataset.id;
+        if (this._historySelected.has(id)) this._historySelected.delete(id);
+        else this._historySelected.add(id);
+      });
+    }
+    if (replayList) {
+      replayList.querySelectorAll('.trail-list-item').forEach((el) => {
+        const id = el.dataset.id;
+        if (this._replaySelected.has(id)) this._replaySelected.delete(id);
+        else this._replaySelected.add(id);
+      });
+    }
+    this._multiSelect = true;
+    this._renderTrailList();
+    this._renderReplayTrailList();
+  }
+
+  _toggleMultiSelect(force) {
+    this._multiSelect = force != null ? force : !this._multiSelect;
+    if (!this._multiSelect) {
+      this._historySelected.clear();
+      this._replaySelected.clear();
+    }
+    this._renderTrailList();
+    this._renderReplayTrailList();
+  }
+
+  _computeTrailStats(positions) {
+    if (!positions || positions.length === 0) return { distance: 0, duration: 0, points: 0 };
+    const distance = Storage._calcDistance(positions);
+    let durationMs = 0;
+    const first = positions[0];
+    const last = positions[positions.length - 1];
+    if (first && last && first.time && last.time && last.time > first.time) {
+      durationMs = last.time - first.time;
+    }
+    return { distance, duration: durationMs, points: positions.length };
+  }
+
+  _exportSelectedImages() {
+    const ids = Array.from(new Set([...this._historySelected, ...this._replaySelected]));
+    if (ids.length === 0) return;
+    Toast.show('正在生成轨迹长图…');
+    Storage.loadTrailsByIds(ids).then((trails) => {
+      if (!trails || trails.length === 0) {
+        Toast.show('导出失败');
+        return;
+      }
+      const items = trails.map((t) => ({
+        positions: t.positions,
+        name: t.name,
+        stats: this._computeTrailStats(t.positions)
+      }));
+      const dataUrl = this.mapManager.renderTrailCollage(items);
+      if (!dataUrl) {
+        Toast.show('导出失败，请重试');
+        return;
+      }
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `途刻-轨迹合集-${dateStr}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      Toast.show(`已导出 ${items.length} 条轨迹合集长图`);
+      this._toggleMultiSelect(false);
+    });
+  }
+
+  _mergeSelectedTrails() {
+    const ids = Array.from(new Set([...this._historySelected, ...this._replaySelected]));
+    if (ids.length < 2) { Toast.show('至少选择 2 条轨迹才能合并'); return; }
+    this._loadTrailListCached().then((items) => {
+      const selected = items.filter((it) => ids.includes(it.id));
+      const totalDist = selected.reduce((s, it) => s + (it.distance || 0), 0);
+      const totalPts = selected.reduce((s, it) => s + (it.pointCount || 0), 0);
+      this._showMergeDialog(ids, selected.length || ids.length, totalDist, totalPts);
+    });
+  }
+
+  _showMergeDialog(ids, count, totalDist, totalPts) {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const defaultName = `合并轨迹 ${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay show';
+    overlay.innerHTML = `
+      <div class="modal-box">
+        <div class="modal-header">
+          <span class="modal-title">合并轨迹</span>
+          <button class="modal-close merge-dialog-cancel">✕</button>
+        </div>
+        <div class="confirm-body">
+          <div class="confirm-text">将拼接 ${count} 条轨迹为 1 条</div>
+          <div class="confirm-detail">合计约 ${formatDistance(totalDist)} · ${totalPts} 个点。若轨迹时间/位置不连续，合并后距离会偏大。</div>
+        </div>
+        <div class="merge-name-field">
+          <label class="merge-name-label" for="merge-name-input">新轨迹名称</label>
+          <input type="text" id="merge-name-input" class="modal-input" value="${defaultName}" maxlength="60" />
+        </div>
+        <div class="confirm-actions">
+          <button class="btn-sm merge-dialog-cancel">取消</button>
+          <button class="btn-sm btn-danger" id="merge-confirm-btn">合并</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const close = () => {
+      overlay.classList.remove('show');
+      setTimeout(() => overlay.remove(), 300);
+    };
+    const onCancel = (e) => {
+      e.stopPropagation();
+      close();
+    };
+    overlay.querySelectorAll('.merge-dialog-cancel').forEach((b) => b.addEventListener('click', onCancel));
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close();
+    });
+
+    const input = overlay.querySelector('#merge-name-input');
+    input.focus();
+    input.select();
+
+    const doMerge = () => {
+      const name = input.value.trim() || defaultName;
+      const btn = overlay.querySelector('#merge-confirm-btn');
+      btn.disabled = true;
+      btn.textContent = '合并中…';
+      Storage.mergeTrails(ids, name).then((newId) => {
+        close();
+        if (newId) {
+          this._invalidateTrailCache();
+          Toast.show(`已合并为「${name}」`);
+          this._toggleMultiSelect(false);
+          this._renderTrailList();
+          this._renderReplayTrailList();
+        } else {
+          Toast.show('合并失败，请重试');
+        }
+      });
+    };
+    overlay.querySelector('#merge-confirm-btn').addEventListener('click', doMerge);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); doMerge(); }
+      if (e.key === 'Escape') close();
+    });
   }
 
   _togglePowerSaving() {

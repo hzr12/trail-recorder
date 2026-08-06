@@ -50,7 +50,7 @@ const CONFIG = {
   // ----- 轨迹 -----
   TRAIL_SAMPLE_MIN_DIST: 5,
   TRAIL_JITTER_FACTOR: 1.5,
-  TRAIL_MAX_POINTS: 200000,
+  TRAIL_MAX_POINTS: 300000,
 
   // ----- GPS 节流（百度式速度自适应）-----
   GPS_ADAPTIVE_K: 8000,

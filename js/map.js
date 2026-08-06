@@ -27,6 +27,20 @@ if (typeof CanvasRenderingContext2D !== 'undefined' &&
   };
 }
 
+/**
+ * 格式化时长（短格式，用于缩略图统计条）
+ */
+function _fmtDurationShort(ms) {
+  if (!ms || ms <= 0) return '--';
+  const totalSec = Math.round(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}时${m}分`;
+  if (m > 0) return `${m}分${s}秒`;
+  return `${s}秒`;
+}
+
 class MapManager {
   constructor() {
     this.map = null;
@@ -653,6 +667,213 @@ class MapManager {
     q.done = true;
     this._themeRefreshRaf = null;
     this._themeRefreshQueue = null;
+  }
+
+  /**
+   * 在 canvas 上绘制轨迹缩略图（不依赖地图瓦片，避免跨域污染）
+   * @param {HTMLCanvasElement} canvas
+   * @param {Array} positions 轨迹点 [{lat,lng,speed?}]
+   * @param {Object} opts {width,height,title,stats,background}
+   * @returns {HTMLCanvasElement}
+   */
+  _drawTrailThumbnail(canvas, positions, opts) {
+    if (!positions || positions.length < 2) return canvas;
+    const o = opts || {};
+    const W = canvas.width;
+    const H = canvas.height;
+    const ctx = canvas.getContext('2d');
+
+    const hasStats = o.stats && (o.stats.distance != null || o.stats.duration != null || o.stats.points != null);
+    const statsH = hasStats ? 44 : 0;
+    const padX = 40;
+    const padTop = o.title ? 56 : 30;
+    const padBottom = 30 + statsH;
+    const padY = Math.max(padTop, padBottom);
+
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    const bg = o.background || (isLight ? '#f7f9fb' : '#0f1419');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    // 世界坐标（zoom 0）
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const worldPts = positions.map((p) => {
+      const wp = { x: p.lng / 360 + 0.5, y: 0.5 - Math.log(Math.tan(Math.PI / 4 + (p.lat * Math.PI / 180) / 2)) / (2 * Math.PI) };
+      if (wp.x < minX) minX = wp.x;
+      if (wp.y < minY) minY = wp.y;
+      if (wp.x > maxX) maxX = wp.x;
+      if (wp.y > maxY) maxY = wp.y;
+      return wp;
+    });
+
+    const worldW = Math.max(1e-9, maxX - minX);
+    const worldH = Math.max(1e-9, maxY - minY);
+    const scaleX = (W - 2 * padX) / worldW;
+    const scaleY = (H - 2 * padY) / worldH;
+    const scale = Math.min(scaleX, scaleY);
+
+    const drawW = worldW * scale;
+    const drawH = worldH * scale;
+    const offX = (W - drawW) / 2 - minX * scale;
+    const offY = (H - drawH) / 2 - minY * scale;
+
+    const toXY = (wp) => ({ x: wp.x * scale + offX, y: wp.y * scale + offY });
+
+    // 速度着色折线
+    const colorMap = this._speedColorMap;
+    ctx.lineWidth = 3;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    for (let i = 1; i < worldPts.length; i++) {
+      const p0 = worldPts[i - 1];
+      const p1 = worldPts[i];
+      const speed = this._segmentSpeed(positions[i - 1], positions[i]);
+      const c = colorMap[this._speedColorKey(speed)] || { r: 0, g: 200, b: 160, a: 0.8 };
+      const a = toXY(p0);
+      const b = toXY(p1);
+      ctx.strokeStyle = `rgba(${c.r},${c.g},${c.b},${c.a})`;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+
+    // 起点/终点标记
+    const start = toXY(worldPts[0]);
+    const end = toXY(worldPts[worldPts.length - 1]);
+    ctx.fillStyle = '#34C759';
+    ctx.beginPath();
+    ctx.arc(start.x, start.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FF453A';
+    ctx.beginPath();
+    ctx.arc(end.x, end.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 标题
+    if (o.title) {
+      ctx.fillStyle = isLight ? '#1c1c1e' : '#e6e6e6';
+      ctx.font = '600 20px -apple-system, "PingFang SC", sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(o.title, padX, padTop / 2 + 6);
+    }
+
+    // 统计信息底部条（距离 / 时长 / 点数）
+    if (hasStats) {
+      const statsY = H - statsH;
+      ctx.strokeStyle = isLight ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(24, statsY);
+      ctx.lineTo(W - 24, statsY);
+      ctx.stroke();
+      ctx.fillStyle = isLight ? 'rgba(0,0,0,0.65)' : 'rgba(255,255,255,0.65)';
+      ctx.font = '12px -apple-system, "PingFang SC", sans-serif';
+      ctx.textBaseline = 'middle';
+      const parts = [];
+      if (o.stats.distance != null) parts.push(`距离 ${formatDistance(o.stats.distance)}`);
+      if (o.stats.duration != null && o.stats.duration > 0) parts.push(`时长 ${_fmtDurationShort(o.stats.duration)}`);
+      if (o.stats.points != null) parts.push(`${o.stats.points} 点`);
+      if (parts.length) ctx.fillText(parts.join('  ·  '), 40, statsY + statsH / 2);
+    }
+
+    return canvas;
+  }
+
+  /**
+   * 离线生成轨迹缩略图
+   * @param {Array} positions 轨迹点 [{lat,lng,speed?}]
+   * @param {Object} opts {width,height,title,stats,background}
+   * @returns {string|null} PNG dataURL，失败返回 null
+   */
+  renderTrailThumbnail(positions, opts) {
+    if (!positions || positions.length < 2) return null;
+    const o = opts || {};
+    const W = o.width || 800;
+    const H = o.height || 500;
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    this._drawTrailThumbnail(canvas, positions, o);
+    try {
+      return canvas.toDataURL('image/png');
+    } catch (e) {
+      console.warn('[MapManager] 缩略图导出失败:', e.message);
+      return null;
+    }
+  }
+
+  /**
+   * 将多条轨迹渲染成一张纵向长图（解决批量导出被浏览器拦截多文件下载的问题）
+   * @param {Array} items [{positions, name, stats}]
+   * @param {Object} opts {width,thumbHeight}
+   * @returns {string|null} PNG dataURL，失败返回 null
+   */
+  renderTrailCollage(items, opts) {
+    if (!items || items.length === 0) return null;
+    const o = opts || {};
+    const W = o.width || 800;
+    const gap = 34;
+    const titleH = 72;
+    const padBottom = 40;
+    // 轨迹较多时自适应缩小缩略图高度，避免超出浏览器 canvas 尺寸上限
+    let thumbH = o.thumbHeight || 500;
+    const estTotal = titleH + items.length * (thumbH + gap) + padBottom;
+    if (estTotal > 15000) {
+      thumbH = Math.max(260, Math.floor((15000 - titleH - padBottom) / items.length) - gap);
+    }
+    const totalH = titleH + items.length * (thumbH + gap) + padBottom;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = totalH;
+    const ctx = canvas.getContext('2d');
+
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    ctx.fillStyle = isLight ? '#eef1f5' : '#0b0e14';
+    ctx.fillRect(0, 0, W, totalH);
+
+    // 合集标题
+    ctx.fillStyle = isLight ? '#111418' : '#eceff3';
+    ctx.font = '600 22px -apple-system, "PingFang SC", sans-serif';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(`途刻 轨迹合集（${items.length} 条）`, 26, 38);
+    ctx.fillStyle = isLight ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.5)';
+    ctx.font = '12px -apple-system, "PingFang SC", sans-serif';
+    ctx.fillText(`生成时间 ${new Date().toLocaleString('zh-CN')}`, 26, 60);
+
+    let y = titleH;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const panel = document.createElement('canvas');
+      panel.width = W;
+      panel.height = thumbH;
+      this._drawTrailThumbnail(panel, it.positions, {
+        title: it.name || `轨迹 ${i + 1}`,
+        stats: it.stats
+      });
+      ctx.drawImage(panel, 0, y, W, thumbH);
+      y += thumbH + gap;
+      if (i < items.length - 1) {
+        ctx.strokeStyle = isLight ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(26, y - 6);
+        ctx.lineTo(W - 26, y - 6);
+        ctx.stroke();
+        ctx.fillStyle = isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.28)';
+        ctx.font = '12px -apple-system, "PingFang SC", sans-serif';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`${i + 1}. ${it.name || ''}`, 26, y - 16);
+      }
+    }
+
+    try {
+      return canvas.toDataURL('image/png');
+    } catch (e) {
+      console.warn('[MapManager] 轨迹合集导出失败:', e.message);
+      return null;
+    }
   }
 
   /**

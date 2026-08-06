@@ -157,6 +157,299 @@
   background: rgba(255, 71, 87, 0.12);
 }
 
+/* ---------- 收藏 / 重命名按钮 ---------- */
+
+.trail-item-name.editing {
+  cursor: text;
+  border-color: var(--border-active);
+}
+
+.favorite-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-tertiary);
+  border: 1px solid transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: all 0.15s ease;
+}
+
+.favorite-btn:hover {
+  background: var(--bg-hover);
+  color: #FFB800;
+}
+
+.favorite-btn.active {
+  color: #FFB800;
+  transform: scale(1.08);
+}
+
+.favorite-btn.active:hover {
+  background: rgba(255, 184, 0, 0.12);
+}
+
+.trail-item-btn.rename-btn {
+  color: var(--text-secondary);
+  border-color: var(--border-color);
+}
+
+.trail-item-btn.rename-btn:hover {
+  color: var(--accent-1);
+  border-color: rgba(0, 212, 170, 0.4);
+  background: rgba(0, 212, 170, 0.1);
+}
+
+.trail-item-btn.rename-btn:active {
+  background: rgba(0, 212, 170, 0.18);
+}
+
+/* ---------- 仅看收藏筛选 ---------- */
+
+.trail-list-header {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 2px 8px;
+}
+
+.fav-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.fav-filter-btn:hover {
+  border-color: var(--border-active);
+  color: var(--text-primary);
+}
+
+.fav-filter-btn.active {
+  color: #FFB800;
+  background: rgba(255, 184, 0, 0.12);
+  border-color: rgba(255, 184, 0, 0.4);
+}
+
+.replay-trails-header .fav-filter-btn {
+  margin-left: auto;
+}
+
+/* ---------- 搜索 / 时间筛选 / 全选 ---------- */
+
+.trail-list-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 4px 8px;
+  flex-wrap: wrap;
+}
+
+.replay-trails-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 2px;
+}
+
+.trail-search-input {
+  flex: 1 1 120px;
+  min-width: 0;
+  height: 30px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.trail-search-input:focus {
+  border-color: var(--border-active);
+}
+
+.trail-search-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.trail-time-select,
+.trail-sort-select {
+  height: 30px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  outline: none;
+  cursor: pointer;
+}
+
+.trail-sort-select:focus,
+.trail-time-select:focus {
+  border-color: var(--border-active);
+}
+
+.header-btn {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.header-btn:hover {
+  border-color: var(--border-active);
+  color: var(--text-primary);
+}
+
+/* ---------- 多选勾选框 ---------- */
+
+.trail-select-check {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-color);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.trail-list-item.multi .trail-select-check {
+  display: flex;
+}
+
+.trail-select-check.checked {
+  border-color: var(--accent-1);
+  background: var(--accent-1);
+}
+
+.trail-select-check input {
+  display: none;
+}
+
+.trail-select-check.checked::after {
+  content: '';
+  width: 6px;
+  height: 10px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+
+.trail-list-item.multi {
+  background: var(--bg-input);
+}
+
+/* ---------- 批量操作工具栏 ---------- */
+
+.batch-toolbar {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 4px 4px;
+  padding: 8px 12px;
+  background: var(--bg-elevated, var(--bg-input));
+  border: 1px solid var(--border-active);
+  border-radius: var(--radius-md);
+}
+
+.batch-toolbar.visible {
+  display: flex;
+}
+
+.batch-count {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.batch-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.batch-btn {
+  height: 30px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.batch-btn:hover:not(:disabled) {
+  border-color: var(--border-active);
+}
+
+.batch-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.batch-merge {
+  color: #fff;
+  background: var(--accent-1);
+  border-color: var(--accent-1);
+}
+
+.batch-merge:hover:not(:disabled) {
+  background: var(--accent-1-hover, var(--accent-1));
+}
+
+.batch-invert {
+  color: var(--accent-2);
+  border-color: rgba(0, 163, 255, 0.35);
+}
+
+.batch-invert:hover:not(:disabled) {
+  background: rgba(0, 163, 255, 0.1);
+  border-color: rgba(0, 163, 255, 0.5);
+}
+
+/* ---------- 轨迹详情按钮 ---------- */
+
+.trail-item-btn.info-btn {
+  color: var(--text-secondary);
+  border-color: var(--border-color);
+}
+
+.trail-item-btn.info-btn:hover {
+  color: var(--accent-2);
+  border-color: rgba(0, 163, 255, 0.4);
+  background: rgba(0, 163, 255, 0.08);
+}
+
+.trail-item-btn.info-btn:active {
+  background: rgba(0, 163, 255, 0.16);
+}
+
 .speed-chart-section {
   margin: 6px 12px 8px;
   border: 1px solid var(--border-color);
@@ -808,4 +1101,75 @@
   border-radius: 50%;
   background: #FF9500;
   animation: replayGlow 1s ease-in-out infinite;
+}
+
+/* ---------- 轨迹详情弹窗 ---------- */
+
+.trail-detail-modal {
+  width: min(380px, calc(100vw - 32px));
+}
+
+.trail-detail-thumb img {
+  display: block;
+  width: 100%;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+}
+
+.trail-detail-name {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-top: 12px;
+  word-break: break-all;
+}
+
+.trail-detail-date {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin: 4px 0 12px;
+}
+
+.trail-detail-modal .stat-grid {
+  margin-top: 4px;
+}
+
+.trail-detail-modal .confirm-actions {
+  margin-top: 14px;
+}
+
+.trail-detail-load {
+  color: var(--accent-1);
+  border-color: rgba(0, 212, 170, 0.4);
+}
+
+/* ---------- 合并命名弹窗 ---------- */
+
+.merge-name-field {
+  margin: 4px 0 12px;
+}
+
+.merge-name-label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+
+.modal-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 38px;
+  padding: 8px 12px;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.modal-input:focus {
+  border-color: var(--border-active);
 }

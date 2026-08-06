@@ -468,17 +468,30 @@ class Storage {
     return `轨迹 ${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
-  static saveTrailToList(positions, name) {
+  static _calcDuration(positions) {
+    if (!positions || positions.length < 2) return 0;
+    const first = positions[0];
+    const last = positions[positions.length - 1];
+    if (first && last && first.time && last.time && last.time > first.time) {
+      return last.time - first.time;
+    }
+    return 0;
+  }
+
+  static saveTrailToList(positions, name, favorite) {
     if (!positions || positions.length === 0) return Promise.resolve(null);
     const id = Storage._TRAIL_LIST_PREFIX + Date.now();
     const distance = Storage._calcDistance(positions);
+    const duration = Storage._calcDuration(positions);
     const now = Date.now();
     const trailMeta = {
       id,
       name: name || Storage._fmtTrailName(now),
       createdAt: now,
       distance,
+      duration,
       pointCount: positions.length,
+      favorite: !!favorite,
       positions
     };
     return Storage._saveToIndexedDB(trailMeta).then(() => id).catch(err => {
@@ -504,7 +517,9 @@ class Storage {
                 name: val.name,
                 createdAt: val.createdAt,
                 distance: val.distance,
-                pointCount: val.pointCount
+                duration: val.duration || 0,
+                pointCount: val.pointCount,
+                favorite: !!val.favorite
               });
             }
             cursor.continue();
@@ -530,7 +545,15 @@ class Storage {
         request.onsuccess = () => {
           const data = request.result;
           if (data && data.positions) {
-            resolve({ positions: data.positions, name: data.name });
+            resolve({
+              positions: data.positions,
+              name: data.name,
+              favorite: !!data.favorite,
+              createdAt: data.createdAt,
+              distance: data.distance,
+              pointCount: data.pointCount,
+              duration: data.duration || 0
+            });
           } else {
             resolve(null);
           }
@@ -540,6 +563,38 @@ class Storage {
     }).catch(err => {
       console.warn('[Storage] 加载轨迹失败:', err.message);
       return null;
+    });
+  }
+
+  static loadTrailsByIds(ids) {
+    if (!ids || ids.length === 0) return Promise.resolve([]);
+    return Promise.all(ids.map((id) => Storage.loadTrailById(id))).then((list) => {
+      return list.filter((d) => d && d.positions && d.positions.length > 0);
+    });
+  }
+
+  static mergeTrails(ids, name) {
+    if (!ids || ids.length < 2) return Promise.resolve(null);
+    return Storage.loadTrailsByIds(ids).then((trails) => {
+      if (trails.length < 2) return null;
+      const merged = [];
+      trails.forEach((t) => {
+        const pts = t.positions;
+        if (merged.length === 0) {
+          merged.push(...pts);
+        } else {
+          const last = merged[merged.length - 1];
+          const first = pts[0];
+          const samePoint = first && last &&
+            Math.abs(first.lat - last.lat) < 1e-7 &&
+            Math.abs(first.lng - last.lng) < 1e-7;
+          merged.push(...(samePoint ? pts.slice(1) : pts));
+        }
+      });
+      if (merged.length < 2) return null;
+      const now = Date.now();
+      const mergeName = name || `合并轨迹 ${Storage._fmtTrailName(now)}`;
+      return Storage.saveTrailToList(merged, mergeName, false);
     });
   }
 
@@ -576,6 +631,27 @@ class Storage {
       });
     }).catch(err => {
       console.warn('[Storage] 重命名失败:', err.message);
+      return false;
+    });
+  }
+
+  static toggleFavorite(id) {
+    return Storage._initDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readwrite');
+        const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
+        const request = store.get(id);
+        request.onsuccess = () => {
+          const data = request.result;
+          if (!data) { resolve(false); return; }
+          data.favorite = !data.favorite;
+          store.put(data);
+          transaction.oncomplete = () => resolve(data.favorite);
+        };
+        request.onerror = (e) => reject(e.target.error);
+      });
+    }).catch(err => {
+      console.warn('[Storage] 切换收藏失败:', err.message);
       return false;
     });
   }
