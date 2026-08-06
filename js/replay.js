@@ -35,6 +35,7 @@ class TrailPlayer {
     this._markerDisplayPos = null;
     this._markerTargetPos = null;
     this._markerAnimating = false;
+    this._markerHeading = null;
 
     this._hasTimestamps = this._checkTimestamps();
     this._totalDuration = this._calcTotalDuration();
@@ -75,6 +76,12 @@ class TrailPlayer {
   _setupMapMarkers() {
     if (!this.mapManager.map) return;
 
+    // 初始箭头指向第二个点（若无则朝北）
+    const initHeading = this.positions.length >= 2
+      ? calcBearing(this.positions[0], this.positions[1])
+      : 0;
+    this._markerHeading = initHeading;
+
     this._replayMarker = new qq.maps.Marker({
       position: new qq.maps.LatLng(
         this.positions[0].lat,
@@ -82,7 +89,7 @@ class TrailPlayer {
       ),
       map: this.mapManager.map,
       draggable: false,
-      icon: this._createReplayIcon()
+      icon: this._createReplayIcon(initHeading)
     });
 
     this._markerDisplayPos = { lat: this.positions[0].lat, lng: this.positions[0].lng };
@@ -104,7 +111,10 @@ class TrailPlayer {
     this._updatePlayedPath();
   }
 
-  _createReplayIcon() {
+  _createReplayIcon(heading) {
+    const deg = (heading != null && !isNaN(heading)) ? Number(heading) : 0;
+    // 箭头初始朝北（12 点方向），按方位角 deg（正北顺时针）旋转
+    const arrow = `<polygon points="20,3 26,15 14,15" fill="#fff" opacity="0.95" transform="rotate(${deg}, 20, 20)"/>`;
     const svg = [
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">',
       '  <defs>',
@@ -114,9 +124,8 @@ class TrailPlayer {
       '  </defs>',
       '  <circle cx="20" cy="20" r="18" fill="none" stroke="#FF9500" stroke-width="1.5" opacity="0.2"/>',
       '  <circle cx="20" cy="20" r="14" fill="none" stroke="#FF9500" stroke-width="1.5" opacity="0.4"/>',
-      '  <circle cx="20" cy="20" r="8" fill="#FF9500" stroke="#fff" stroke-width="2" filter="url(#replay-glow)"/>',
-      '  <circle cx="20" cy="20" r="3" fill="#fff" opacity="0.9"/>',
-      '  <polygon points="24,16 28,20 24,24" fill="#fff" opacity="0.9"/>',
+      '  <circle cx="20" cy="20" r="9" fill="#FF9500" stroke="#fff" stroke-width="2" filter="url(#replay-glow)"/>',
+      arrow,
       '</svg>'
     ].join('\n');
 
@@ -349,6 +358,18 @@ class TrailPlayer {
 
   _updateMarker(point) {
     if (!this._replayMarker || !this.mapManager.map) return;
+
+    // 箭头指向下一个轨迹点：当前显示点 → 下一原始点
+    const nextIdx = this._currentIndex + 1;
+    const nextPos = this.positions[Math.min(nextIdx, this.positions.length - 1)];
+    if (nextPos && (Math.abs(nextPos.lat - point.lat) > 1e-8 || Math.abs(nextPos.lng - point.lng) > 1e-8)) {
+      const heading = calcBearing(point, nextPos);
+      // 仅当方向变化超过阈值时才重建图标，避免每帧生成 SVG 的开销
+      if (this._markerHeading == null || Math.abs(heading - this._markerHeading) >= 5) {
+        this._markerHeading = heading;
+        this._replayMarker.setIcon(this._createReplayIcon(heading));
+      }
+    }
 
     const target = { lat: point.lat, lng: point.lng };
     this._markerTargetPos = target;

@@ -842,6 +842,7 @@ class App {
   _startReplay(positions, trailName) {
     this._isReplaying = true;
     document.body.classList.add('replay-mode');
+    this._replayFollowMode = true;
     this._replayLastPanPoint = null;
 
     if (this._replayPlayer) {
@@ -917,7 +918,12 @@ class App {
 
     if (this._replayPlayer.isPlaying) {
       this._replayPlayer.pause();
+      // 暂停即解锁追踪模式：地图不再跟随回放点，用户可自由拖动浏览
+      this._replayFollowMode = false;
+      this._replayLastPanPoint = null;
     } else {
+      // 继续播放时恢复地图跟随
+      this._replayFollowMode = true;
       this._replayPlayer.play();
     }
 
@@ -992,10 +998,11 @@ class App {
   }
 
   _onReplayComplete() {
+    // 回放自然结束：同步解锁追踪模式，地图恢复自由浏览
+    this._replayFollowMode = false;
+    this._replayLastPanPoint = null;
     this._updateReplayUI();
     Toast.show(' 回放完成');
-    // 自然播放结束：清除跟随对齐残留，避免地图继续惯性移动
-    this._replayLastPanPoint = null;
   }
 
   _updateReplayUI() {
