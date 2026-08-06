@@ -57,6 +57,17 @@ const CONFIG = {
   TRAIL_SEGMENT_MIN_DIST: 60,    // 段最短距离（米），过短并入相邻段
   TRAIL_SEGMENT_MIN_MS: 10000,   // 段最短时长（毫秒），过短并入相邻段
 
+  // 速度等级表（单一来源：map.js 着色、trail-analysis.js 分段共用）
+  TRAIL_SPEED_LEVELS: [
+    { mode: 'walk',  max: 2.78,    label: '步行', color: '#00E5CC' },
+    { mode: 'bike',  max: 5.56,    label: '骑行', color: '#FFD700' },
+    { mode: 'bus',   max: 16.67,   label: '公交', color: '#FF8C00' },
+    { mode: 'car',   max: 33.33,   label: '驾车', color: '#FF5E33' },
+    { mode: 'train', max: 55.56,   label: '火车', color: '#FF3366' },
+    { mode: 'hsr',   max: 97.22,   label: '高铁', color: '#BF40FF' },
+    { mode: 'sct',   max: Infinity, label: '超高速', color: '#5E5CE6' },
+  ],
+
   // ----- GPS 节流（百度式速度自适应）-----
   GPS_ADAPTIVE_K: 8000,
   GPS_MIN_INTERVAL: 500,
@@ -142,6 +153,20 @@ function formatDistance(meters) {
   if (val < 1000) return `${val}m`;
   if (val < 10000) return `${(val / 1000).toFixed(2)}km`;
   return `${(val / 1000).toFixed(1)}km`;
+}
+
+/**
+ * 格式化时长文字（单一来源：缩略图统计条、分段标签共用）
+ */
+function formatDurationShort(ms) {
+  if (!ms || ms <= 0) return '--';
+  const totalSec = Math.round(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}小时${m}分`;
+  if (m > 0) return `${m}分${s}秒`;
+  return `${s}秒`;
 }
 
 /**

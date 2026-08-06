@@ -179,7 +179,8 @@ class Storage {
         pointCount: workingPositions.length,
         sizeBytes: estimatedSize,
         isRecording: trail.isRecording || false,
-        isPaused: trail.isPaused || false
+        isPaused: trail.isPaused || false,
+        manualSegments: Array.isArray(trail.manualSegments) ? trail.manualSegments : []
       };
 
       Storage._saveToIndexedDB(trailData).catch(err => {
@@ -210,7 +211,8 @@ class Storage {
             updatedAt: data.updatedAt,
             pointCount: data.pointCount || (data.positions ? data.positions.length : 0),
             isRecording: data.isRecording || false,
-            isPaused: data.isPaused || false
+            isPaused: data.isPaused || false,
+            manualSegments: Array.isArray(data.manualSegments) ? data.manualSegments : []
           };
         })
         .catch(err => {
@@ -259,7 +261,8 @@ class Storage {
         const meta = JSON.stringify({
           isRecording: trail.isRecording || false,
           isPaused: trail.isPaused || false,
-          updatedAt: Date.now()
+          updatedAt: Date.now(),
+          manualSegments: Array.isArray(trail.manualSegments) ? trail.manualSegments : []
         });
         localStorage.setItem(Storage.TRAIL_META_KEY, meta);
       } catch (_) {}
@@ -338,7 +341,8 @@ class Storage {
             metaResult = {
               isRecording: meta.isRecording || false,
               isPaused: meta.isPaused || false,
-              updatedAt: meta.updatedAt || null
+              updatedAt: meta.updatedAt || null,
+              manualSegments: Array.isArray(meta.manualSegments) ? meta.manualSegments : []
             };
           }
         } catch (_) {}
@@ -348,9 +352,11 @@ class Storage {
             result.isRecording = metaResult.isRecording;
             result.isPaused = metaResult.isPaused;
             result.updatedAt = metaResult.updatedAt;
+            result.manualSegments = metaResult.manualSegments || [];
           } else {
             result.isRecording = false;
             result.isPaused = false;
+            result.manualSegments = [];
           }
           return result;
         }

@@ -94,6 +94,7 @@ class App {
     this._replaySegments = [];
     this._replayCurrentIndex = 0;
     this._replayFollowMode = true;
+    this._replayLastPanPoint = null;
     this._onlyFav = false;
     this._replayOnlyFav = false;
     this._searchKeyword = '';
@@ -237,9 +238,21 @@ class App {
     document.getElementById('trail-record-btn').addEventListener('click', () => this._toggleTrailRecording());
     document.getElementById('trail-pause-btn').addEventListener('click', () => this._toggleTrailPause());
     document.getElementById('trail-clear-btn').addEventListener('click', () => this._clearTrail());
-    document.getElementById('trail-save-btn').addEventListener('click', () => this._saveCurrentTrailToList());
     document.getElementById('trail-stats-btn').addEventListener('click', () => this._showTrailStats());
     document.getElementById('trail-smooth-btn').addEventListener('click', () => this._toggleTrailSmoothing());
+    document.getElementById('trail-segment-btn').addEventListener('click', () => this._toggleTrailSegmentForm());
+    document.getElementById('trail-segment-confirm').addEventListener('click', () => this._addCurrentManualSegment());
+    document.getElementById('trail-segment-cancel').addEventListener('click', () => this._toggleTrailSegmentForm(false));
+    const waypointBtn = document.getElementById('trail-waypoint-btn');
+    if (waypointBtn) waypointBtn.addEventListener('click', () => this._addCurrentWaypoint());
+    document.getElementById('trail-segment-ratio').addEventListener('input', (e) => {
+      const val = document.getElementById('trail-segment-ratio-val');
+      if (val) val.textContent = e.target.value + '%';
+    });
+    document.getElementById('trail-segment-list').addEventListener('click', (e) => {
+      const btn = e.target.closest('.segment-remove-btn');
+      if (btn) this._removeCurrentManualSegment(btn.dataset.id);
+    });
     document.getElementById('export-report-btn').addEventListener('click', () => this._exportReport());
     document.getElementById('power-saving-btn').addEventListener('click', () => this._togglePowerSaving());
 
@@ -279,6 +292,9 @@ class App {
 
     this._statusEl = document.getElementById('gps-status');
     this._gnssBarEl = document.getElementById('gnss-bar');
+
+    // GPS 状态条点击切换跟随模式
+    this._statusEl.addEventListener('click', () => this._toggleFollowMode());
 
     let pressTimer = null;
     let isLongPress = false;
@@ -672,7 +688,7 @@ class App {
 
       this._recordFix(pos, convPos, false, true);
 
-      if (this.trail.isRecording && !this.trail.isPaused && !this._trailLoading) {
+      if (this.trail.isRecording && !this.trail.isPaused && !this._trailLoading && !this._isReplaying) {
         const added = this.trail.addPoint({
           lat: convPos.lat,
           lng: convPos.lng,
@@ -684,6 +700,7 @@ class App {
         if (added) {
           this._trailDirty = true;
           this.mapManager.setTrail(this._getTrailPositions());
+          this.mapManager.setRealtimeKeyPoints(TrailAnalysis.analyzeKeyPoints(this.trail.positions));
         }
       }
 
@@ -727,6 +744,7 @@ class App {
 
     const savedPositions = this.trail.positions.slice();
     const savedLastPos = this.trail.lastPos;
+    const savedManualSegments = (this.trail.manualSegments || []).slice();
     const savedRecording = this.trail.isRecording;
     const savedPaused = this.trail.isPaused;
 
@@ -738,11 +756,17 @@ class App {
     Storage.clearTrail();
 
     Toast.showUndo('轨迹已清除', () => {
-      this.trail.restore(savedPositions, savedLastPos);
+      this.trail.restore(savedPositions, savedLastPos, savedManualSegments);
       this.trail.isRecording = savedRecording;
       this.trail.isPaused = savedPaused;
       if (savedPositions.length >= 2) {
         this.mapManager.setTrail(this._getTrailPositions());
+        if (savedManualSegments.length > 0) {
+          this.mapManager.setTrailMarkers(
+            TrailAnalysis.analyzeKeyPoints(savedPositions),
+            savedManualSegments
+          );
+        }
       }
       this._updateTrailUI();
       this._trailDirty = false;
@@ -751,25 +775,41 @@ class App {
   }
 
   _toggleTrailRecording() {
+    if (this._isReplaying) {
+      Toast.show(' 回放中无法记录，请先停止回放');
+      return;
+    }
     if (this.trail.isRecording) {
-      const pointCount = this.trail.positions.length;
-      this.trail.stop();
-      this._trailDirty = true;
-      if (pointCount === 0) {
-        Storage.clearTrail();
-        Toast.show(' 未记录到轨迹数据');
-      } else {
-        Storage.saveTrail(this.trail);
-        this._saveCurrentTrail();
-        Toast.show(' 轨迹记录已停止');
-      }
+      this._stopTrailRecording();
     } else {
       this.trail.start();
       this.mapManager.clearTrail();
       this.mapManager.clearTrailMarkers();
+      this.mapManager.clearRealtimeKeyPoints();
       Toast.show(' 轨迹记录已开始');
     }
     this._updateTrailUI();
+  }
+
+  _stopTrailRecording() {
+    if (!this.trail.isRecording) return;
+    const pointCount = this.trail.positions.length;
+    this.trail.stop();
+    this._trailDirty = true;
+    if (pointCount === 0) {
+      Storage.clearTrail();
+      Toast.show(' 未记录到轨迹数据');
+    } else {
+      Storage.saveTrail(this.trail);
+      this._saveCurrentTrail();
+      // 停止记录：实时关键点层转成固定标记（关键点 + 分段 + 打点）
+      this.mapManager.clearRealtimeKeyPoints();
+      this.mapManager.setTrailMarkers(
+        TrailAnalysis.analyzeKeyPoints(this.trail.positions),
+        this.trail.manualSegments || []
+      );
+      Toast.show(' 轨迹记录已停止');
+    }
   }
 
   _toggleTrailPause() {
@@ -795,6 +835,152 @@ class App {
     }
     this._updateTrailUI();
     Toast.show(this._trailSmoothing ? ' 轨迹平滑已开启' : ' 轨迹平滑已关闭');
+  }
+
+  // ===== 当前轨迹手动分段 =====
+
+  _toggleTrailSegmentForm(forceShow) {
+    const form = document.getElementById('trail-segment-form');
+    if (!form) return;
+    if (forceShow === false) {
+      form.classList.add('hidden');
+      return;
+    }
+    const willOpen = forceShow === true || form.classList.contains('hidden');
+    form.classList.toggle('hidden', !willOpen);
+    if (willOpen) {
+      this._renderCurrentManualSegments();
+      const label = document.getElementById('trail-segment-label');
+      if (label) label.focus();
+    }
+  }
+
+  _addCurrentManualSegment() {
+    if (this.trail.positions.length < 2) {
+      Toast.show(' 轨迹点数不足，无法分段');
+      return;
+    }
+    const labelEl = document.getElementById('trail-segment-label');
+    const ratioEl = document.getElementById('trail-segment-ratio');
+    const valEl = document.getElementById('trail-segment-ratio-val');
+    const label = (labelEl && labelEl.value.trim()) || '';
+    if (!label) { Toast.show('请输入分段标签'); return; }
+    const ratio = parseInt(ratioEl.value, 10) / 100;
+    const positions = this.trail.positions;
+    const idx = TrailAnalysis.ratioToIndex(positions, ratio);
+    const pt = positions[idx] || positions[0];
+    const ms = {
+      id: 'ms_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      label,
+      lat: pt.lat,
+      lng: pt.lng,
+      time: pt.time || 0,
+      ratio
+    };
+    this.trail.manualSegments = (this.trail.manualSegments || []).concat([ms]);
+    this._persistTrailManualSegments();
+    this._refreshCurrentTrailMarkers();
+    this._renderCurrentManualSegments();
+    if (labelEl) labelEl.value = '';
+    if (ratioEl) ratioEl.value = 50;
+    if (valEl) valEl.textContent = '50%';
+    Toast.show(' 已添加手动分段');
+  }
+
+  _removeCurrentManualSegment(id) {
+    if (!id) return;
+    this.trail.manualSegments = (this.trail.manualSegments || []).filter((s) => s.id !== id);
+    this._persistTrailManualSegments();
+    this._refreshCurrentTrailMarkers();
+    this._renderCurrentManualSegments();
+    Toast.show(' 已删除');
+  }
+
+  /**
+   * 在当前 GPS 位置打点（waypoint）。
+   * 记录中直接落默认名"打点 N"，与手动分段共用 manualSegments 集合（kind:'waypoint'），
+   * 随轨迹持久化并在地图上以绿色图钉实时显示。
+   */
+  _addCurrentWaypoint() {
+    if (!this.trail.isRecording || this.trail.isPaused) {
+      Toast.show(' 打点仅在记录进行中可用');
+      return;
+    }
+    if (!this.myPosition) {
+      Toast.show(' 尚未定位，无法打点');
+      return;
+    }
+    const wpCount = (this.trail.manualSegments || []).filter((s) => s.kind === 'waypoint').length;
+    const wp = {
+      id: 'wp_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      label: '打点 ' + (wpCount + 1),
+      lat: this.myPosition.lat,
+      lng: this.myPosition.lng,
+      time: Date.now(),
+      ratio: -1,
+      kind: 'waypoint'
+    };
+    this.trail.manualSegments = (this.trail.manualSegments || []).concat([wp]);
+    this._persistTrailManualSegments();
+    this._refreshCurrentTrailMarkers();
+    this._renderCurrentManualSegments();
+    Toast.show(` 已打点「${wp.label}」`);
+  }
+
+  _persistTrailManualSegments() {
+    this._trailDirty = true;
+    Storage.saveTrail(this.trail);
+  }
+
+  _renderCurrentManualSegments() {
+    const listEl = document.getElementById('trail-segment-list');
+    if (!listEl) return;
+    const manualSegments = this.trail.manualSegments || [];
+    if (manualSegments.length === 0) {
+      listEl.innerHTML = '<div class="trail-segment-empty">暂无分段或打点</div>';
+      return;
+    }
+    listEl.innerHTML = manualSegments.map((ms) => {
+      const isWp = ms.kind === 'waypoint';
+      const fmtTime = (ts) => {
+        if (!ts) return '';
+        const d = new Date(ts);
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      };
+      const meta = isWp
+        ? `打点 · ${fmtTime(ms.time)}`
+        : `手动 · ${Math.round((ms.ratio || 0) * 100)}%`;
+      return `
+      <div class="trail-segment-item ${isWp ? 'waypoint' : 'manual'}">
+        <span class="segment-dot ${isWp ? 'waypoint-dot' : 'manual-dot'}"></span>
+        <div class="segment-item-main">
+          <span class="segment-item-label">${this._escapeHtml(ms.label || (isWp ? '打点' : '分段'))}</span>
+          <span class="segment-item-meta">${meta}</span>
+        </div>
+        <button class="segment-remove-btn" data-id="${ms.id}" title="${isWp ? '删除此打点' : '删除此分段'}">✕</button>
+      </div>`;
+    }).join('');
+  }
+
+  _refreshCurrentTrailMarkers() {
+    const positions = this.trail.positions;
+    const manualSegments = this.trail.manualSegments || [];
+    if (this.trail.isRecording) {
+      // 记录中：保留实时关键点层（起/终/速），只重绘分段/打点标记，避免关键点重复
+      if (positions && positions.length >= 2) {
+        this.mapManager.setTrailMarkers({}, manualSegments);
+        this.mapManager.setRealtimeKeyPoints(TrailAnalysis.analyzeKeyPoints(positions));
+      } else if (manualSegments.length > 0) {
+        this.mapManager.setTrailMarkers({}, manualSegments);
+      }
+      return;
+    }
+    if (!positions || positions.length < 2) return;
+    this.mapManager.setTrailMarkers(
+      TrailAnalysis.analyzeKeyPoints(positions),
+      manualSegments
+    );
   }
 
   // ===== 轨迹回放功能 =====
@@ -824,6 +1010,7 @@ class App {
   _startReplay(positions, trailName) {
     this._isReplaying = true;
     document.body.classList.add('replay-mode');
+    this._replayLastPanPoint = null;
 
     if (this._replayPlayer) {
       this._replayPlayer.destroy();
@@ -865,11 +1052,14 @@ class App {
   _stopReplay() {
     this._isReplaying = false;
     document.body.classList.remove('replay-mode');
+    this._replayLastPanPoint = null;
 
     if (this._replayPlayer) {
       this._replayPlayer.destroy();
       this._replayPlayer = null;
     }
+
+    this.mapManager.clearRealtimeKeyPoints();
 
     const replayPanel = document.getElementById('replay-panel');
     if (replayPanel) {
@@ -930,13 +1120,50 @@ class App {
   _onReplayFrame(point, index) {
     this._replayCurrentIndex = index;
     if (this._replayFollowMode && this.mapManager.map) {
-      this.mapManager.map.panTo(new qq.maps.LatLng(point.lat, point.lng));
+      this._panToReplayPoint(point);
+    }
+  }
+
+  /**
+   * 跟随模式平滑移动地图中心。
+   * 避免每帧调用带动画的 panTo（会互相打断导致地图抖动）：
+   * 仅在屏幕像素位移超过阈值时用无动画的 setCenter 对齐一次。
+   */
+  _panToReplayPoint(point) {
+    const map = this.mapManager.map;
+    const pt = new qq.maps.LatLng(point.lat, point.lng);
+    const last = this._replayLastPanPoint;
+    if (!last) {
+      this._replayLastPanPoint = { lat: point.lat, lng: point.lng };
+      map.setCenter(pt);
+      return;
+    }
+    try {
+      const proj = map.getProjection();
+      if (!proj) {
+        this._replayLastPanPoint = { lat: point.lat, lng: point.lng };
+        map.setCenter(pt);
+        return;
+      }
+      const p0 = proj.fromLatLngToPoint(new qq.maps.LatLng(last.lat, last.lng));
+      const p1 = proj.fromLatLngToPoint(pt);
+      const dx = p1.x - p0.x;
+      const dy = p1.y - p0.y;
+      if (Math.hypot(dx, dy) >= 30) {
+        this._replayLastPanPoint = { lat: point.lat, lng: point.lng };
+        map.setCenter(pt);
+      }
+    } catch (e) {
+      this._replayLastPanPoint = { lat: point.lat, lng: point.lng };
+      map.setCenter(pt);
     }
   }
 
   _onReplayComplete() {
     this._updateReplayUI();
     Toast.show(' 回放完成');
+    // 自然播放结束：清除跟随对齐残留，避免地图继续惯性移动
+    this._replayLastPanPoint = null;
   }
 
   _updateReplayUI() {
@@ -971,11 +1198,16 @@ class App {
     const remaining = TrailPlayer.formatDuration(info.remainingMs);
     const seg = TrailAnalysis.segmentAt(this._replaySegments, this._replayCurrentIndex || 0);
 
-    infoEl.innerHTML = `
+    const html = `
       进度: ${elapsed} | 剩余: ${remaining}<br>
       速度: <span class="speed-val">${speedKmh.toFixed(1)} km/h</span> | 方向: ${direction} | 距离: ${formatDistance(info.distance)}<br>
       当前段: <span class="segment-val">${seg ? seg.label : '--'}</span>
     `;
+    // 仅在内容变化时更新 DOM，避免每帧重排导致的面板抖动/卡顿
+    if (infoEl._lastHtml !== html) {
+      infoEl._lastHtml = html;
+      infoEl.innerHTML = html;
+    }
   }
 
   _restoreTrailSmoothing() {
@@ -987,83 +1219,12 @@ class App {
 
   // ===== 轨迹列表管理 =====
 
-  _saveCurrentTrailToList() {
-    if (!this.trail.positions || this.trail.positions.length < 2) {
-      Toast.show(' 轨迹点数不足，无法保存');
-      return;
-    }
-
-    const positions = this.trail.positions.slice();
-    const distance = this.trail.getDistance();
-    const duration = this.trail.getDuration ? this.trail.getDuration() : 0;
-    const maxSpeed = this.trail.getMaxSpeed ? this.trail.getMaxSpeed() : 0;
-    const avgSpeed = distance / Math.max(1, duration / 1000);
-    const name = Storage._fmtTrailName(Date.now());
-
-    Toast.show(' 正在保存...', true);
-
-    Storage.saveTrailToList(positions, name).then((id) => {
-      if (id) {
-        this._invalidateTrailCache();
-        // 显示保存成功，然后清空当前轨迹并切换到历史 Tab
-        const itemCount = positions.length;
-        const distStr = distance >= 1000
-          ? (distance / 1000).toFixed(2) + ' km'
-          : Math.round(distance) + ' m';
-
-        // 保存当前轨迹信息用于撤销恢复
-        const savedState = {
-          positions: positions.slice(),
-          trailState: { ...this.trail },
-          hadActiveTrail: true
-        };
-
-        Toast.showUndo(' 轨迹已保存到历史', () => {
-          // 撤销保存：删除刚保存的轨迹并恢复原轨迹
-          Storage.deleteTrail(id).then((success) => {
-            if (success) {
-              // 恢复原轨迹
-              this.trail.clear();
-              this.trail.positions = savedState.positions;
-              if (savedState.trailState.lastPos) {
-                this.trail.lastPos = savedState.trailState.lastPos;
-              }
-              this.mapManager.clearTrail();
-              this.mapManager.setTrail(this._getTrailPositions());
-              this._trailDirty = true;
-              this._updateTrailUI();
-              
-              // 切回记录 Tab
-              this._setTab('record');
-              
-              Toast.show(' 已撤销保存');
-            } else {
-              Toast.show(' 撤销失败');
-            }
-          });
-        }, 8000);
-
-        // 清空当前轨迹
-        this.trail.clear();
-        this.mapManager.clearTrail();
-        Storage.clearTrail();
-        this._trailDirty = false;
-        this._updateTrailUI();
-
-        // 切换到历史 Tab 查看
-        this._setTab('history');
-        this._renderTrailList();
-      } else {
-        Toast.show(' 保存失败，请重试');
-      }
-    });
-  }
-
   _saveCurrentTrail() {
     if (!this.trail.positions || this.trail.positions.length === 0) return;
     const positions = this.trail.positions.slice();
     const name = Storage._fmtTrailName(Date.now());
-    Storage.saveTrailToList(positions, name).then((id) => {
+    const manualSegments = (this.trail.manualSegments || []).slice();
+    Storage.saveTrailToList(positions, name, false, { manualSegments }).then((id) => {
       if (id) {
         this._invalidateTrailCache();
         Toast.show(' 轨迹已保存');
@@ -1114,6 +1275,11 @@ class App {
       // 停止当前回放
       if (this._isReplaying) {
         this._stopReplay();
+      }
+
+      // 若正在记录，先停止记录，避免后续 clear/positions 覆盖破坏正在采集的轨迹
+      if (this.trail.isRecording) {
+        this._stopTrailRecording();
       }
 
       // 切换到回放 Tab
@@ -1194,6 +1360,36 @@ class App {
         });
         this._renderTrailList();
       }
+    });
+  }
+
+  /**
+   * 将历史轨迹导出为单张轨迹图片（含标题与统计）
+   */
+  _exportTrailImage(id) {
+    Storage.loadTrailById(id).then((data) => {
+      if (!data || !data.positions || data.positions.length < 2) {
+        Toast.show('轨迹数据不足，无法导出');
+        return;
+      }
+      const stats = this._computeTrailStats(data.positions);
+      const dataUrl = this.mapManager.renderTrailThumbnail(data.positions, {
+        title: data.name || '轨迹',
+        stats: { distance: stats.distance, duration: stats.duration, points: data.positions.length }
+      });
+      if (!dataUrl) {
+        Toast.show('导出失败，请重试');
+        return;
+      }
+      const safeName = (data.name || '轨迹').replace(/[\\/:*?"<>|]/g, '_');
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `途刻-${safeName}-${dateStr}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      Toast.show('轨迹图片已导出');
     });
   }
 
@@ -1444,12 +1640,14 @@ class App {
     }
 
     for (const ms of manualSegments) {
+      const isWp = ms.kind === 'waypoint';
       items.push({
-        kind: 'manual',
-        ratio: ms.ratio || 0,
+        kind: isWp ? 'waypoint' : 'manual',
+        ratio: isWp ? 0 : (ms.ratio || 0),
         id: ms.id,
-        label: ms.label || '分段',
-        meta: `手动 · ${Math.round((ms.ratio || 0) * 100)}%`
+        time: ms.time,
+        label: ms.label || (isWp ? '打点' : '分段'),
+        meta: isWp ? '打点' : `手动 · ${Math.round((ms.ratio || 0) * 100)}%`
       });
     }
 
@@ -1460,7 +1658,24 @@ class App {
       return;
     }
 
+    const fmtWpTime = (ts) => {
+      if (!ts) return '';
+      const d = new Date(ts);
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+
     listEl.innerHTML = items.map((it) => {
+      if (it.kind === 'waypoint') {
+        return `<div class="trail-segment-item waypoint">
+          <span class="segment-dot waypoint-dot"></span>
+          <div class="segment-item-main">
+            <span class="segment-item-label">${this._escapeHtml(it.label)}</span>
+            <span class="segment-item-meta">打点 · ${fmtWpTime(it.time)}</span>
+          </div>
+          <button class="segment-remove-btn" data-id="${it.id}" title="删除此打点">✕</button>
+        </div>`;
+      }
       if (it.kind === 'manual') {
         return `<div class="trail-segment-item manual">
           <span class="segment-dot manual-dot"></span>
@@ -1511,6 +1726,9 @@ class App {
       : `${infoBtn}
         <button class="trail-item-btn load-btn" data-id="${item.id}" title="加载到地图">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+        </button>
+        <button class="trail-item-btn export-btn" data-id="${item.id}" title="导出轨迹图片">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
         <button class="trail-item-btn delete-btn" data-id="${item.id}" title="删除">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -1602,6 +1820,13 @@ class App {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         this._loadTrailFromList(btn.dataset.id);
+      });
+    });
+
+    listEl.querySelectorAll('.trail-item-btn.export-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._exportTrailImage(btn.dataset.id);
       });
     });
 
@@ -2175,10 +2400,10 @@ class App {
     const btn = this._trailRecordBtn || (this._trailRecordBtn = document.getElementById('trail-record-btn'));
     const pauseBtn = this._trailPauseBtn || (this._trailPauseBtn = document.getElementById('trail-pause-btn'));
     const clearBtn = this._trailClearBtn || (this._trailClearBtn = document.getElementById('trail-clear-btn'));
-    const saveBtn = this._trailSaveBtn || (this._trailSaveBtn = document.getElementById('trail-save-btn'));
     const statsBtn = this._trailStatsBtn || (this._trailStatsBtn = document.getElementById('trail-stats-btn'));
     const exportBtn = this._trailExportBtn || (this._trailExportBtn = document.getElementById('export-report-btn'));
     const smoothBtn = this._trailSmoothBtn || (this._trailSmoothBtn = document.getElementById('trail-smooth-btn'));
+    const segBtn = this._trailSegBtn || (this._trailSegBtn = document.getElementById('trail-segment-btn'));
     const distEl = this._trailDistEl || (this._trailDistEl = document.getElementById('trail-distance'));
 
     if (btn) {
@@ -2200,16 +2425,20 @@ class App {
 
     const hasPoints = this.trail.positions.length > 0;
     if (clearBtn) clearBtn.disabled = !hasPoints;
-    if (saveBtn) {
-      const canSave = this.trail.positions.length >= 2 && !this.trail.isRecording;
-      saveBtn.disabled = !canSave;
-      saveBtn.classList.toggle('active', canSave);
-    }
     if (statsBtn) statsBtn.disabled = this.trail.positions.length < 2;
     if (exportBtn) exportBtn.disabled = this.trail.positions.length < 2;
 
     if (smoothBtn) {
       smoothBtn.classList.toggle('active', this._trailSmoothing);
+    }
+
+    if (segBtn) segBtn.disabled = this.trail.positions.length < 2;
+
+    const wpBtn = this._trailWaypointBtn || (this._trailWaypointBtn = document.getElementById('trail-waypoint-btn'));
+    if (wpBtn) {
+      const canWp = this.trail.isRecording && !this.trail.isPaused && !!this.myPosition;
+      wpBtn.disabled = !canWp;
+      wpBtn.classList.toggle('active', canWp);
     }
   }
 
@@ -2267,7 +2496,7 @@ class App {
 
         if (this._restoringView) {
           this._restoringView = false;
-        } else {
+        } else if (!this._isReplaying) {
           this.mapManager.flyTo(convPos);
           this._gpsBtn.classList.add('located');
           setTimeout(() => this._gpsBtn.classList.remove('located'), CONFIG.LOCATED_ANIM_MS);
@@ -2279,13 +2508,13 @@ class App {
             }
           }).catch(err => console.error('[GNSS] unexpected error:', err));
         }
-      } else if (this._isWatching) {
+      } else if (this._isWatching && !this._isReplaying) {
         if (this._followMode) {
           this.mapManager.flyTo(convPos);
         }
       }
 
-      if (this.trail.isRecording && !this._trailLoading) {
+      if (this.trail.isRecording && !this._trailLoading && !this._isReplaying) {
         const added = this.trail.addPoint({
           lat: convPos.lat,
           lng: convPos.lng,
@@ -2297,6 +2526,7 @@ class App {
         if (added) {
           this._trailDirty = true;
           this.mapManager.setTrail(this._getTrailPositions());
+          this.mapManager.setRealtimeKeyPoints(TrailAnalysis.analyzeKeyPoints(this.trail.positions));
           this._updateTrailUI();
         }
       }
@@ -2576,11 +2806,19 @@ class App {
 
       const hasPositions = trailData.positions && trailData.positions.length > 0;
 
+      this.trail.manualSegments = Array.isArray(trailData.manualSegments) ? trailData.manualSegments : [];
+
       if (hasPositions) {
         this.trail.positions = trailData.positions;
         this.trail.lastPos = trailData.positions[trailData.positions.length - 1];
         if (trailData.positions.length >= 2) {
           this.mapManager.setTrail(this._getTrailPositions());
+          if (this.trail.manualSegments.length > 0) {
+            this.mapManager.setTrailMarkers(
+              TrailAnalysis.analyzeKeyPoints(this._getTrailPositions()),
+              this.trail.manualSegments
+            );
+          }
         }
       }
 

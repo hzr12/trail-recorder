@@ -120,6 +120,7 @@ App.prototype._updateStatusBar = function (force) {
   const watchingIcon = isTracking ? ' <span class="gps-tracking">◉</span>' : '';
   const staleIcon = stale ? ' <span class="gps-stale"> 已过期</span>' : '';
   const degradedIcon = isDowngraded ? ' <span class="gps-degraded"> 低精度</span>' : '';
+  const followIcon = this._followMode ? ' <span class="gps-follow"> 跟随中</span>' : '';
 
   let gnssHtml = '';
   if (this.gpsManager.hasGnssPlugin) {
@@ -174,11 +175,32 @@ App.prototype._updateStatusBar = function (force) {
   const line3 = this._weatherHtml ? `<div class="gps-line2">${this._weatherHtml}</div>` : '';
 
   this._statusEl.innerHTML =
-    `<div class="gps-line1"><span class="${dotClass}"></span><span class="gps-online">◉ 已定位</span>${degradedIcon}${watchingIcon} <span class="gps-elapsed">(${elapsed})</span>${staleIcon}</div>` +
+    `<div class="gps-line1"><span class="${dotClass}"></span><span class="gps-online">◉ 已定位</span>${degradedIcon}${watchingIcon}${followIcon} <span class="gps-elapsed">(${elapsed})</span>${staleIcon}</div>` +
     `<div class="gps-line2">${line2}</div>` +
     line3;
 
   if (this._gnssBarEl) {
     this._gnssBarEl.innerHTML = gnssHtml || '';
   }
+};
+
+/* ── 跟随模式切换 ─────────────────────────────────── */
+
+App.prototype._toggleFollowMode = function () {
+  if (this._isReplaying) {
+    Toast.show(' 回放中不可切换跟随模式');
+    return;
+  }
+  if (!this.myPosition) {
+    Toast.show(' 请先获取位置');
+    return;
+  }
+  this._followMode = !this._followMode;
+  if (this._followMode) {
+    this.mapManager.flyTo(this.myPosition);
+    Toast.show(' 地图跟随已开启');
+  } else {
+    Toast.show(' 地图跟随已关闭');
+  }
+  this._updateStatusBar(true);
 };

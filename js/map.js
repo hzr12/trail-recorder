@@ -27,20 +27,6 @@ if (typeof CanvasRenderingContext2D !== 'undefined' &&
   };
 }
 
-/**
- * 格式化时长（短格式，用于缩略图统计条）
- */
-function _fmtDurationShort(ms) {
-  if (!ms || ms <= 0) return '--';
-  const totalSec = Math.round(ms / 1000);
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  if (h > 0) return `${h}时${m}分`;
-  if (m > 0) return `${m}分${s}秒`;
-  return `${s}秒`;
-}
-
 class MapManager {
   constructor() {
     this.map = null;
@@ -414,12 +400,12 @@ class MapManager {
     if (typeof TrailAnalysis !== 'undefined' && TrailAnalysis.speedLevel) {
       return TrailAnalysis.speedLevel(speed);
     }
-    if (speed == null || speed < 2.78) return 'walk';
-    if (speed < 5.56) return 'bike';
-    if (speed < 16.67) return 'bus';
-    if (speed < 33.33) return 'car';
-    if (speed < 55.56) return 'train';
-    if (speed < 97.22) return 'hsr';
+    // 极端 fallback：TrailAnalysis 未加载时，依据单一来源速度等级表兜底
+    if (speed == null) return 'walk';
+    const levels = CONFIG.TRAIL_SPEED_LEVELS || [];
+    for (const lv of levels) {
+      if (speed < lv.max) return lv.mode;
+    }
     return 'sct';
   }
 
@@ -595,9 +581,34 @@ class MapManager {
   }
 
   /**
-   * 在地图上标出关键点 + 手动分段
+   * 用户打点（waypoint）标记图标（绿色图钉，带备注文字气泡可经 InfoWindow 查看）
+   */
+  _createWaypointIcon() {
+    const svg = [
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 40">',
+      '  <defs>',
+      '    <filter id="wp-glow" x="-40%" y="-40%" width="180%" height="180%">',
+      '      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.5"/>',
+      '    </filter>',
+      '  </defs>',
+      '  <path d="M16 39 C16 39 5 27 5 15 A11 11 0 0 1 27 15 C27 27 16 39 16 39 Z" fill="#34C759" stroke="#fff" stroke-width="2" filter="url(#wp-glow)"/>',
+      '  <circle cx="16" cy="14" r="5" fill="#fff" opacity="0.92"/>',
+      '</svg>'
+    ].join('\n');
+    const dataUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    return new qq.maps.MarkerImage(
+      dataUri,
+      new qq.maps.Size(32, 40),
+      new qq.maps.Point(0, 0),
+      new qq.maps.Point(16, 38),
+      new qq.maps.Size(32, 40)
+    );
+  }
+
+  /**
+   * 在地图上标出关键点 + 手动分段（segment 紫旗 / waypoint 绿钉）
    * @param {Object} keyPoints analyzeKeyPoints 的输出 {start,end,maxSpeed}
-   * @param {Array} [manualSegments] [{lat,lng,label}]
+   * @param {Array} [manualSegments] [{lat,lng,label,kind?}]
    */
   setTrailMarkers(keyPoints, manualSegments) {
     this.clearTrailMarkers();
@@ -609,6 +620,7 @@ class MapManager {
     if (keyPoints.maxSpeed) kpList.push(keyPoints.maxSpeed);
 
     for (const kp of kpList) {
+      if (!kp || !Number.isFinite(kp.lat) || !Number.isFinite(kp.lng)) continue;
       const marker = new qq.maps.Marker({
         position: new qq.maps.LatLng(kp.lat, kp.lng),
         map: this.map,
@@ -623,13 +635,15 @@ class MapManager {
 
     if (Array.isArray(manualSegments)) {
       for (const ms of manualSegments) {
-        const label = ms.label || '分段';
+        if (!ms || !Number.isFinite(ms.lat) || !Number.isFinite(ms.lng)) continue;
+        const isWaypoint = ms.kind === 'waypoint';
+        const label = ms.label || (isWaypoint ? '打点' : '分段');
         const marker = new qq.maps.Marker({
           position: new qq.maps.LatLng(ms.lat, ms.lng),
           map: this.map,
-          icon: this._createSegmentMarkerIcon(),
+          icon: isWaypoint ? this._createWaypointIcon() : this._createSegmentMarkerIcon(),
           title: label,
-          zIndex: 21,
+          zIndex: isWaypoint ? 22 : 21,
           clickable: true
         });
         qq.maps.event.addListener(marker, 'click', () => this._showMarkerInfo(marker, label));
@@ -658,10 +672,85 @@ class MapManager {
       try { m.setMap(null); } catch (_) {}
     }
     this.trailMarkers = [];
+    this.clearRealtimeKeyPoints();
     if (this._trailInfoWindow) {
       try { this._trailInfoWindow.close(); } catch (_) {}
       this._trailInfoWindow = null;
     }
+  }
+
+  /* ================================================================
+   *  实时关键点图层（记录过程中增量更新 起/终/速，不整层重建）
+   * ================================================================ */
+
+  /**
+   * 记录过程中实时显示关键点（起点 / 终点 / 最高速点）。
+   * 只对每个 type 增量更新：不存在则创建，坐标变化超过阈值才 setPosition，
+   * label 变化才刷新 title 与 InfoWindow 内容。
+   * @param {Object} keyPoints analyzeKeyPoints 的输出 {start,end,maxSpeed}
+   */
+  setRealtimeKeyPoints(keyPoints) {
+    if (!this.map || !keyPoints) return;
+    if (this._kpEnabled === false) return;
+    this._kpEnabled = true;
+
+    if (!this._kpMarkers) this._kpMarkers = {};
+
+    const defs = [
+      { type: 'start', kp: keyPoints.start },
+      { type: 'end', kp: keyPoints.end },
+      { type: 'maxSpeed', kp: keyPoints.maxSpeed }
+    ];
+
+    for (const { type, kp } of defs) {
+      if (!kp || !Number.isFinite(kp.lat) || !Number.isFinite(kp.lng)) continue;
+      const marker = this._kpMarkers[type];
+      if (!marker) {
+        const m = new qq.maps.Marker({
+          position: new qq.maps.LatLng(kp.lat, kp.lng),
+          map: this.map,
+          icon: this._createKeyPointIcon(kp.type),
+          title: kp.label || '',
+          zIndex: 25,
+          clickable: true
+        });
+        m._kpLabel = kp.label || '';
+        qq.maps.event.addListener(m, 'click', () => this._showMarkerInfo(m, m._kpLabel || ''));
+        this._kpMarkers[type] = m;
+        continue;
+      }
+      const cur = marker.getPosition();
+      if (!cur) continue;
+      if (Math.abs(cur.lat - kp.lat) > 1e-7 || Math.abs(cur.lng - kp.lng) > 1e-7) {
+        marker.setPosition(new qq.maps.LatLng(kp.lat, kp.lng));
+      }
+      const label = kp.label || '';
+      if (marker._kpLabel !== label) {
+        marker._kpLabel = label;
+        try { marker.setTitle(label); } catch (_) {}
+        if (this._trailInfoWindow && this._trailInfoWindow.getPosition &&
+            this._trailInfoWindow.getPosition().equals(marker.getPosition())) {
+          try {
+            this._trailInfoWindow.setContent(
+              `<div class="trail-keypoint-info">${String(label).replace(/</g, '&lt;')}</div>`
+            );
+          } catch (_) {}
+        }
+      }
+    }
+  }
+
+  /**
+   * 清除实时关键点图层（停止记录 / 清空轨迹 / 切回放时调用）
+   */
+  clearRealtimeKeyPoints() {
+    if (this._kpMarkers) {
+      for (const type of Object.keys(this._kpMarkers)) {
+        try { this._kpMarkers[type].setMap(null); } catch (_) {}
+      }
+      this._kpMarkers = null;
+    }
+    this._kpEnabled = false;
   }
 
   refreshTrailColors(positions) {
@@ -909,7 +998,7 @@ class MapManager {
       ctx.textBaseline = 'middle';
       const parts = [];
       if (o.stats.distance != null) parts.push(`距离 ${formatDistance(o.stats.distance)}`);
-      if (o.stats.duration != null && o.stats.duration > 0) parts.push(`时长 ${_fmtDurationShort(o.stats.duration)}`);
+      if (o.stats.duration != null && o.stats.duration > 0) parts.push(`时长 ${formatDurationShort(o.stats.duration)}`);
       if (o.stats.points != null) parts.push(`${o.stats.points} 点`);
       if (parts.length) ctx.fillText(parts.join('  ·  '), 40, statsY + statsH / 2);
     }
@@ -1024,6 +1113,7 @@ class MapManager {
     this._stopLocationAnim();
     this.clearTrail();
     this.clearTrailMarkers();
+    this.clearRealtimeKeyPoints();
     if (this.accuracyCircle) {
       this.accuracyCircle.setMap(null);
       this.accuracyCircle = null;

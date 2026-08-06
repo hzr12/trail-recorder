@@ -157,6 +157,21 @@
   background: rgba(255, 71, 87, 0.12);
 }
 
+.trail-item-btn.export-btn {
+  color: #34C759;
+  border-color: rgba(52, 199, 89, 0.35);
+}
+
+.trail-item-btn.export-btn:hover {
+  color: #2FB65C;
+  border-color: rgba(52, 199, 89, 0.5);
+  background: rgba(52, 199, 89, 0.1);
+}
+
+.trail-item-btn.export-btn:active {
+  background: rgba(52, 199, 89, 0.16);
+}
+
 /* ---------- 收藏 / 重命名按钮 ---------- */
 
 .trail-item-name.editing {
@@ -970,26 +985,26 @@
   opacity: 0.6;
 }
 
-/* 保存按钮在轨迹操作栏中的样式 */
-#trail-save-btn {
-  color: var(--accent-1);
-  border-color: rgba(0, 212, 170, 0.3);
+/* 打点按钮样式 */
+#trail-waypoint-btn {
+  color: #34C759;
+  border-color: rgba(52, 199, 89, 0.35);
 }
 
-#trail-save-btn:disabled {
+#trail-waypoint-btn:disabled {
   opacity: 0.4;
   color: var(--text-tertiary);
   border-color: var(--border-color);
   cursor: not-allowed;
 }
 
-#trail-save-btn:not(:disabled):hover {
-  background: rgba(0, 212, 170, 0.12);
+#trail-waypoint-btn:not(:disabled):hover {
+  background: rgba(52, 199, 89, 0.12);
 }
 
-#trail-save-btn.active {
-  background: rgba(0, 212, 170, 0.15);
-  border-color: rgba(0, 212, 170, 0.4);
+#trail-waypoint-btn.active {
+  background: rgba(52, 199, 89, 0.15);
+  border-color: rgba(52, 199, 89, 0.5);
 }
 
 /* 回放按钮在轨迹操作栏中的样式 */
@@ -1332,6 +1347,11 @@
   background: rgba(191, 64, 255, 0.06);
 }
 
+.trail-segment-item.waypoint {
+  border-color: rgba(52, 199, 89, 0.35);
+  background: rgba(52, 199, 89, 0.06);
+}
+
 .segment-dot {
   width: 10px;
   height: 10px;
@@ -1342,6 +1362,10 @@
 
 .segment-dot.manual-dot {
   background: #BF40FF;
+}
+
+.segment-dot.waypoint-dot {
+  background: #34C759;
 }
 
 .segment-item-main {

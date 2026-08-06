@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="css/map.css?t=20260805v9">
   <link rel="stylesheet" href="css/panel.css?t=20260805v11">
   <link rel="stylesheet" href="css/gps.css?t=20260805v9">
-  <link rel="stylesheet" href="css/trail.css?t=20260805v11">
+  <link rel="stylesheet" href="css/trail.css?t=20260805v13">
   <link rel="stylesheet" href="css/toast-modal.css?t=20260805v9">
   <link rel="stylesheet" href="css/responsive.css?t=20260805v9">
 </head>
@@ -102,10 +102,26 @@
           <button id="trail-clear-btn" class="btn btn-secondary btn-sm" disabled>清除</button>
         </div>
         <div class="trail-actions">
-          <button id="trail-save-btn" class="btn-sm" disabled title="保存当前轨迹到历史"> 保存</button>
           <button id="trail-stats-btn" class="btn-sm" disabled> 统计</button>
           <button id="trail-smooth-btn" class="btn-sm active"> 平滑</button>
+          <button id="trail-segment-btn" class="btn-sm" disabled title="给当前轨迹添加手动分段"> 分段</button>
+          <button id="trail-waypoint-btn" class="btn-sm" disabled title="在当前位置打点标记"> 打点</button>
           <button id="export-report-btn" class="btn-sm" title="导出活动报告图片（含轨迹、速度曲线、统计）"> 报告</button>
+        </div>
+
+        <!-- 当前轨迹手动分段面板 -->
+        <div class="trail-segment-add-form hidden" id="trail-segment-form">
+          <input type="text" class="trail-segment-add-label" id="trail-segment-label" placeholder="分段标签，如：补给点" maxlength="20"/>
+          <div class="trail-segment-add-pos">
+            <span class="trail-segment-add-pos-label">位置</span>
+            <input type="range" class="trail-segment-add-ratio" id="trail-segment-ratio" min="0" max="100" value="50"/>
+            <span class="trail-segment-add-pos-val" id="trail-segment-ratio-val">50%</span>
+          </div>
+          <div class="trail-segment-add-actions">
+            <button class="btn-sm trail-segment-add-cancel" id="trail-segment-cancel">取消</button>
+            <button class="btn-sm trail-segment-add-confirm" id="trail-segment-confirm">添加</button>
+          </div>
+          <div class="trail-segment-list" id="trail-segment-list"></div>
         </div>
 
         <!-- 后台+省电模块 -->
@@ -266,15 +282,15 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 
   <!-- 应用脚本 -->
-  <script src="js/config.js?t=20260805v9"></script>
+  <script src="js/config.js?t=20260805v10"></script>
   <script src="js/toast.js?t=20260805v8"></script>
-  <script src="js/storage.js?t=20260805v9"></script>
-  <script src="js/trail.js?t=20260805v8"></script>
-  <script src="js/trail-analysis.js?t=20260805v9"></script>
-  <script src="js/map.js?t=20260805v9"></script>
+  <script src="js/storage.js?t=20260805v10"></script>
+  <script src="js/trail.js?t=20260805v11"></script>
+  <script src="js/trail-analysis.js?t=20260805v11"></script>
+  <script src="js/map.js?t=20260805v12"></script>
   <script src="js/gps.js?t=20260805v8"></script>
   <script src="js/replay.js?t=20260805v8"></script>
-  <script src="js/app-core.js?t=20260805v9"></script>
+  <script src="js/app-core.js?t=20260805v13"></script>
   <script src="js/app-gps-ui.js?t=20260805v8"></script>
 </body>
 </html>

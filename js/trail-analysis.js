@@ -12,27 +12,17 @@
  */
 
 const TrailAnalysis = {
-  // 与 map.js 速度着色保持一致的速度等级
-  SPEED_LEVELS: [
-    { mode: 'walk',  max: 2.78,    label: '步行', color: '#00E5CC' },
-    { mode: 'bike',  max: 5.56,    label: '骑行', color: '#FFD700' },
-    { mode: 'bus',   max: 16.67,   label: '公交', color: '#FF8C00' },
-    { mode: 'car',   max: 33.33,   label: '驾车', color: '#FF5E33' },
-    { mode: 'train', max: 55.56,   label: '火车', color: '#FF3366' },
-    { mode: 'hsr',   max: 97.22,   label: '高铁', color: '#BF40FF' },
-    { mode: 'sct',   max: Infinity, label: '超高速', color: '#5E5CE6' },
-  ],
+  // 速度等级单一来源：config.js CONFIG.TRAIL_SPEED_LEVELS
+  SPEED_LEVELS: CONFIG.TRAIL_SPEED_LEVELS,
 
   /**
    * 速度(m/s) → 交通方式等级
    */
   speedLevel(speed) {
-    if (speed == null || speed < 2.78) return 'walk';
-    if (speed < 5.56) return 'bike';
-    if (speed < 16.67) return 'bus';
-    if (speed < 33.33) return 'car';
-    if (speed < 55.56) return 'train';
-    if (speed < 97.22) return 'hsr';
+    if (speed == null) return 'walk';
+    for (const lv of this.SPEED_LEVELS) {
+      if (speed < lv.max) return lv.mode;
+    }
     return 'sct';
   },
 
@@ -44,6 +34,27 @@ const TrailAnalysis = {
   modeColor(mode) {
     const m = this.SPEED_LEVELS.find((s) => s.mode === mode);
     return m ? m.color : '#00E5CC';
+  },
+
+  /**
+   * 速度等级 → 时速上限文案（如 bus → "≤60km/h"，最高档 → ">350km/h"）
+   * 用于分段标签：以时速上限替代交通方式名（如"公交"）
+   */
+  modeSpeedLimit(mode) {
+    const levels = this.SPEED_LEVELS;
+    const idx = levels.findIndex((s) => s.mode === mode);
+    if (idx < 0) return mode || '--';
+    const lv = levels[idx];
+    if (Number.isFinite(lv.max)) {
+      return `≤${Math.round(lv.max * 3.6)}km/h`;
+    }
+    // 上限为 Infinity 的档（sct）：取上一档上限
+    for (let i = idx - 1; i >= 0; i--) {
+      if (Number.isFinite(levels[i].max)) {
+        return `>${Math.round(levels[i].max * 3.6)}km/h`;
+      }
+    }
+    return '--';
   },
 
   // 与 map.js 一致：优先取后一点速度
@@ -104,7 +115,9 @@ const TrailAnalysis = {
         lat: maxSpeedPt.lat, lng: maxSpeedPt.lng,
         time: maxSpeedPt.time || 0,
         speed: maxSpeed,
-        label: `最高速 ${(maxSpeed * 3.6).toFixed(1)} km/h`
+        label: maxSpeed > 0
+          ? `最高速 ${(maxSpeed * 3.6).toFixed(1)} km/h`
+          : '最高速点'
       }
     };
   },
@@ -208,18 +221,7 @@ const TrailAnalysis = {
   },
 
   formatSegmentLabel(mode, distance, durationMs) {
-    return `${this.modeLabel(mode)} ${formatDistance(distance)} · ${this._fmtDurationShort(durationMs)}`;
-  },
-
-  _fmtDurationShort(ms) {
-    if (!ms || ms <= 0) return '--';
-    const totalSec = Math.round(ms / 1000);
-    const h = Math.floor(totalSec / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    const s = totalSec % 60;
-    if (h > 0) return `${h}小时${m}分`;
-    if (m > 0) return `${m}分${s}秒`;
-    return `${s}秒`;
+    return `${this.modeSpeedLimit(mode)} ${formatDistance(distance)} · ${formatDurationShort(durationMs)}`;
   },
 
   /**
