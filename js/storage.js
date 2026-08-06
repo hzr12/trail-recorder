@@ -478,7 +478,7 @@ class Storage {
     return 0;
   }
 
-  static saveTrailToList(positions, name, favorite) {
+  static saveTrailToList(positions, name, favorite, meta) {
     if (!positions || positions.length === 0) return Promise.resolve(null);
     const id = Storage._TRAIL_LIST_PREFIX + Date.now();
     const distance = Storage._calcDistance(positions);
@@ -494,6 +494,9 @@ class Storage {
       favorite: !!favorite,
       positions
     };
+    if (meta && Array.isArray(meta.manualSegments)) {
+      trailMeta.manualSegments = meta.manualSegments;
+    }
     return Storage._saveToIndexedDB(trailMeta).then(() => id).catch(err => {
       console.warn('[Storage] 轨迹列表保存失败:', err.message);
       return null;
@@ -609,6 +612,33 @@ class Storage {
       });
     }).catch(err => {
       console.warn('[Storage] 删除轨迹失败:', err.message);
+      return false;
+    });
+  }
+
+  /**
+   * 更新轨迹的手动分段列表
+   * @param {string} id
+   * @param {Array} manualSegments [{id,label,lat,lng,time,ratio}]
+   */
+  static updateTrailManualSegments(id, manualSegments) {
+    return Storage._initDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readwrite');
+        const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
+        const request = store.get(id);
+        request.onsuccess = () => {
+          const data = request.result;
+          if (data) {
+            data.manualSegments = Array.isArray(manualSegments) ? manualSegments : [];
+            store.put(data);
+          }
+          transaction.oncomplete = () => resolve(true);
+        };
+        request.onerror = (e) => reject(e.target.error);
+      });
+    }).catch(err => {
+      console.warn('[Storage] 更新手动分段失败:', err.message);
       return false;
     });
   }

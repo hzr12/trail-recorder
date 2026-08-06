@@ -91,6 +91,8 @@ class App {
     this._replayPlayer = null;
     this._isReplaying = false;
     this._replaySpeed = 1;
+    this._replaySegments = [];
+    this._replayCurrentIndex = 0;
     this._replayFollowMode = true;
     this._onlyFav = false;
     this._replayOnlyFav = false;
@@ -730,6 +732,7 @@ class App {
 
     this.trail.clear();
     this.mapManager.clearTrail();
+    this.mapManager.clearTrailMarkers();
     this._updateTrailUI();
     this._trailDirty = true;
     Storage.clearTrail();
@@ -763,6 +766,7 @@ class App {
     } else {
       this.trail.start();
       this.mapManager.clearTrail();
+      this.mapManager.clearTrailMarkers();
       Toast.show(' 轨迹记录已开始');
     }
     this._updateTrailUI();
@@ -831,6 +835,11 @@ class App {
       onComplete: () => this._onReplayComplete(),
       onFrame: (point, index) => this._onReplayFrame(point, index)
     });
+
+    // 预计算分段，供回放实时显示当前段；回放有独立视觉体系，清掉关键点标记
+    this._replaySegments = TrailAnalysis.analyzeSegments(positions);
+    this._replayCurrentIndex = 0;
+    this.mapManager.clearTrailMarkers();
 
     this._replayPlayer.setSpeed(this._replaySpeed);
 
@@ -919,6 +928,7 @@ class App {
   }
 
   _onReplayFrame(point, index) {
+    this._replayCurrentIndex = index;
     if (this._replayFollowMode && this.mapManager.map) {
       this.mapManager.map.panTo(new qq.maps.LatLng(point.lat, point.lng));
     }
@@ -959,10 +969,12 @@ class App {
     const direction = bearingToDir(info.currentHeading || 0);
     const elapsed = TrailPlayer.formatDuration(info.elapsedMs);
     const remaining = TrailPlayer.formatDuration(info.remainingMs);
+    const seg = TrailAnalysis.segmentAt(this._replaySegments, this._replayCurrentIndex || 0);
 
     infoEl.innerHTML = `
       进度: ${elapsed} | 剩余: ${remaining}<br>
-      速度: <span class="speed-val">${speedKmh.toFixed(1)} km/h</span> | 方向: ${direction} | 距离: ${formatDistance(info.distance)}
+      速度: <span class="speed-val">${speedKmh.toFixed(1)} km/h</span> | 方向: ${direction} | 距离: ${formatDistance(info.distance)}<br>
+      当前段: <span class="segment-val">${seg ? seg.label : '--'}</span>
     `;
   }
 
@@ -1154,6 +1166,10 @@ class App {
       this.trail.positions = data.positions;
       this.trail.lastPos = data.positions[data.positions.length - 1];
       this.mapManager.setTrail(this._getTrailPositions());
+      this.mapManager.setTrailMarkers(
+        TrailAnalysis.analyzeKeyPoints(data.positions),
+        data.manualSegments || []
+      );
       this._updateTrailUI();
       this._setTab('record');
       Toast.show(` 已加载「${data.name}」（${data.positions.length} 点）`);
@@ -1258,6 +1274,7 @@ class App {
       });
       const firstTime = pos[0].time;
       const lastTime = pos[pos.length - 1].time;
+      const manualSegments = Array.isArray(data.manualSegments) ? data.manualSegments : [];
 
       const overlay = document.createElement('div');
       overlay.className = 'modal-overlay show';
@@ -1277,6 +1294,25 @@ class App {
             <div class="stat-card"><span class="stat-label">最高速度</span><span class="stat-value warning">${hasSpeed ? (maxSpeed * 3.6).toFixed(1) + ' km/h' : '--'}</span></div>
             <div class="stat-card"><span class="stat-label">轨迹点数</span><span class="stat-value accent2">${pos.length}</span></div>
             <div class="stat-card"><span class="stat-label">是否收藏</span><span class="stat-value">${data.favorite ? '已收藏' : '未收藏'}</span></div>
+          </div>
+          <div class="trail-detail-segments">
+            <div class="trail-segments-header">
+              <span class="trail-segments-title">轨迹分段</span>
+              <button class="trail-segments-add-btn" title="添加手动分段">+ 手动</button>
+            </div>
+            <div class="trail-segment-add-form hidden">
+              <input type="text" class="trail-segment-add-label" placeholder="分段标签，如：晨跑" maxlength="20"/>
+              <div class="trail-segment-add-pos">
+                <span class="trail-segment-add-pos-label">位置</span>
+                <input type="range" class="trail-segment-add-ratio" min="0" max="100" value="50"/>
+                <span class="trail-segment-add-pos-val">50%</span>
+              </div>
+              <div class="trail-segment-add-actions">
+                <button class="btn-sm trail-segment-add-cancel">取消</button>
+                <button class="btn-sm trail-segment-add-confirm">添加</button>
+              </div>
+            </div>
+            <div class="trail-segment-list"></div>
           </div>
           <div class="confirm-actions">
             <button class="btn-sm trail-detail-load">加载到地图</button>
@@ -1300,7 +1336,149 @@ class App {
           this._loadTrailFromList(id);
         });
       }
+
+      // ---- 分段区块 ----
+      const segList = overlay.querySelector('.trail-segment-list');
+      const addForm = overlay.querySelector('.trail-segment-add-form');
+      const addLabel = overlay.querySelector('.trail-segment-add-label');
+      const addRatio = overlay.querySelector('.trail-segment-add-ratio');
+      const addPosVal = overlay.querySelector('.trail-segment-add-pos-val');
+
+      const refreshSegments = () => {
+        this._renderTrailDetailSegments(segList, pos, manualSegments);
+      };
+
+      overlay.querySelector('.trail-segments-add-btn').addEventListener('click', () => {
+        addForm.classList.remove('hidden');
+        addLabel.focus();
+      });
+      overlay.querySelector('.trail-segment-add-cancel').addEventListener('click', () => {
+        addForm.classList.add('hidden');
+      });
+      addRatio.addEventListener('input', () => {
+        addPosVal.textContent = addRatio.value + '%';
+      });
+      overlay.querySelector('.trail-segment-add-confirm').addEventListener('click', () => {
+        const label = addLabel.value.trim();
+        if (!label) { Toast.show('请输入分段标签'); return; }
+        const ratio = parseInt(addRatio.value, 10) / 100;
+        const idx = TrailAnalysis.ratioToIndex(pos, ratio);
+        const pt = pos[idx] || pos[0];
+        const ms = {
+          id: 'ms_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+          label,
+          lat: pt.lat,
+          lng: pt.lng,
+          time: pt.time || 0,
+          ratio
+        };
+        const next = manualSegments.concat([ms]);
+        Storage.updateTrailManualSegments(id, next).then((ok) => {
+          if (!ok) { Toast.show('保存失败，请重试'); return; }
+          manualSegments.length = 0;
+          manualSegments.push(...next);
+          this._invalidateTrailCache();
+          addForm.classList.add('hidden');
+          addLabel.value = '';
+          addRatio.value = 50;
+          addPosVal.textContent = '50%';
+          Toast.show('已添加手动分段');
+          refreshSegments();
+        });
+      });
+      segList.addEventListener('click', (e) => {
+        const btn = e.target.closest('.segment-remove-btn');
+        if (!btn) return;
+        const msId = btn.dataset.id;
+        const next = manualSegments.filter((s) => s.id !== msId);
+        Storage.updateTrailManualSegments(id, next).then((ok) => {
+          if (!ok) { Toast.show('删除失败，请重试'); return; }
+          manualSegments.length = 0;
+          manualSegments.push(...next);
+          this._invalidateTrailCache();
+          Toast.show('已删除分段');
+          refreshSegments();
+        });
+      });
+
+      refreshSegments();
     });
+  }
+
+  /**
+   * 计算轨迹每个索引对应的累计距离比例（0~1）
+   */
+  _calcCumulativeRatios(positions) {
+    const n = positions.length;
+    if (n < 2) return new Array(n).fill(0);
+    const cum = new Array(n).fill(0);
+    let total = 0;
+    for (let i = 1; i < n; i++) {
+      total += calcDistance(positions[i - 1], positions[i]);
+      cum[i] = total;
+    }
+    if (total <= 0) {
+      return cum.map((_, i) => (n > 1 ? i / (n - 1) : 0));
+    }
+    return cum.map((c) => c / total);
+  }
+
+  /**
+   * 渲染详情弹窗的分段列表（自动段 + 手动段按轨迹位置混排）
+   */
+  _renderTrailDetailSegments(listEl, positions, manualSegments) {
+    if (!listEl) return;
+    const items = [];
+
+    const ratios = this._calcCumulativeRatios(positions);
+    const autoSegments = TrailAnalysis.analyzeSegments(positions);
+    for (const seg of autoSegments) {
+      const r = seg.endIdx < ratios.length ? ratios[seg.endIdx] : 0;
+      items.push({
+        kind: 'auto',
+        ratio: r,
+        mode: seg.mode,
+        label: seg.label,
+        meta: `自动 · ${Math.round(r * 100)}%`
+      });
+    }
+
+    for (const ms of manualSegments) {
+      items.push({
+        kind: 'manual',
+        ratio: ms.ratio || 0,
+        id: ms.id,
+        label: ms.label || '分段',
+        meta: `手动 · ${Math.round((ms.ratio || 0) * 100)}%`
+      });
+    }
+
+    items.sort((a, b) => a.ratio - b.ratio);
+
+    if (items.length === 0) {
+      listEl.innerHTML = '<div class="trail-segment-empty">暂无分段（速度变化时自动生成）</div>';
+      return;
+    }
+
+    listEl.innerHTML = items.map((it) => {
+      if (it.kind === 'manual') {
+        return `<div class="trail-segment-item manual">
+          <span class="segment-dot manual-dot"></span>
+          <div class="segment-item-main">
+            <span class="segment-item-label">${this._escapeHtml(it.label)}</span>
+            <span class="segment-item-meta">${it.meta}</span>
+          </div>
+          <button class="segment-remove-btn" data-id="${it.id}" title="删除此分段">✕</button>
+        </div>`;
+      }
+      return `<div class="trail-segment-item auto">
+        <span class="segment-dot" style="background:${TrailAnalysis.modeColor(it.mode)}"></span>
+        <div class="segment-item-main">
+          <span class="segment-item-label">${this._escapeHtml(it.label)}</span>
+          <span class="segment-item-meta">${it.meta}</span>
+        </div>
+      </div>`;
+    }).join('');
   }
 
   _trailItemHTML(item, isReplay) {

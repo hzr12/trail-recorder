@@ -52,6 +52,11 @@ const CONFIG = {
   TRAIL_JITTER_FACTOR: 1.5,
   TRAIL_MAX_POINTS: 300000,
 
+  // ----- 轨迹分段 / 关键点分析 -----
+  TRAIL_SEGMENT_MIN_POINTS: 3,   // 速度等级连续 N 个点才切段（防抖）
+  TRAIL_SEGMENT_MIN_DIST: 60,    // 段最短距离（米），过短并入相邻段
+  TRAIL_SEGMENT_MIN_MS: 10000,   // 段最短时长（毫秒），过短并入相邻段
+
   // ----- GPS 节流（百度式速度自适应）-----
   GPS_ADAPTIVE_K: 8000,
   GPS_MIN_INTERVAL: 500,
