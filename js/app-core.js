@@ -1359,27 +1359,18 @@ class App {
     const checkHtml = `<label class="trail-select-check${checked}" data-id="${item.id}">
         <input type="checkbox" data-id="${item.id}"${checked ? ' checked' : ''} />
       </label>`;
-    const infoBtn = `<button class="trail-item-btn info-btn" data-id="${item.id}" title="详情">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+    const moreBtn = `<button class="trail-item-btn more-btn" data-id="${item.id}" title="更多操作">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
       </button>`;
     const actions = isReplay
-      ? `${infoBtn}
-        <button class="trail-item-btn replay-btn" data-id="${item.id}" title="回放">
+      ? `<button class="trail-item-btn replay-btn" data-id="${item.id}" title="回放">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>
         </button>
-        <button class="trail-item-btn load-btn" data-id="${item.id}" title="加载">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-        </button>`
-      : `${infoBtn}
-        <button class="trail-item-btn load-btn" data-id="${item.id}" title="加载到地图">
+        ${moreBtn}`
+      : `<button class="trail-item-btn load-btn" data-id="${item.id}" title="加载到地图">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
         </button>
-        <button class="trail-item-btn export-btn" data-id="${item.id}" title="导出轨迹图片">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        </button>
-        <button class="trail-item-btn delete-btn" data-id="${item.id}" title="删除">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-        </button>`;
+        ${moreBtn}`;
     return `<div class="trail-list-item${multiCls}" data-id="${item.id}">
       ${checkHtml}
       <button class="${favClass}" data-id="${item.id}" title="收藏">
@@ -1391,9 +1382,6 @@ class App {
         <div class="trail-item-meta">${dateStr} · ${distStr}${metaExtra}</div>
       </div>
       <div class="trail-item-actions">
-        <button class="trail-item-btn rename-btn" data-id="${item.id}" title="重命名">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-        </button>
         ${actions}
       </div>
     </div>`;
@@ -1435,22 +1423,24 @@ class App {
       });
     });
 
-    listEl.querySelectorAll('.rename-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const nameEl = listEl.querySelector(`.trail-item-name[data-id="${btn.dataset.id}"]`);
-        if (nameEl) this._renameTrail(btn.dataset.id, nameEl);
-      });
-    });
-
+    // 点击名称 → 重命名（已替代 rename-btn）
     listEl.querySelectorAll('.trail-item-name').forEach((el) => {
       el.addEventListener('click', () => this._renameTrail(el.dataset.id, el));
     });
 
-    listEl.querySelectorAll('.trail-item-btn.info-btn').forEach((btn) => {
+    // 点击卡片空白区域 → 打开详情（已替代 info-btn）
+    listEl.querySelectorAll('.trail-list-item').forEach((item) => {
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('.trail-item-btn, .favorite-btn, .trail-select-check, .trail-item-name')) return;
+        this._showTrailDetail(item.dataset.id);
+      });
+    });
+
+    // 更多操作按钮 → 弹出菜单
+    listEl.querySelectorAll('.trail-item-btn.more-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        this._showTrailDetail(btn.dataset.id);
+        this._showTrailItemMenu(btn, btn.dataset.id, isReplay);
       });
     });
 
@@ -1469,20 +1459,67 @@ class App {
         this._loadTrailFromList(btn.dataset.id);
       });
     });
+  }
 
-    listEl.querySelectorAll('.trail-item-btn.export-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this._exportTrailImage(btn.dataset.id);
-      });
-    });
+  /**
+   * 弹出轨迹项的「⋯」更多操作菜单
+   * @param {HTMLElement} anchorBtn 触发按钮
+   * @param {string} id 轨迹 id
+   * @param {boolean} isReplay 是否回放列表
+   */
+  _showTrailItemMenu(anchorBtn, id, isReplay) {
+    this._closeTrailItemMenu();
+    const menu = document.createElement('div');
+    menu.className = 'trail-item-menu';
+    const items = [
+      { act: 'detail', label: '详情', fn: () => this._showTrailDetail(id) },
+      { act: 'load', label: '加载到地图', fn: () => this._loadTrailFromList(id), replayOnly: true },
+      { act: 'export', label: '导出轨迹图片', fn: () => this._exportTrailImage(id), historyOnly: true },
+      { act: 'delete', label: '删除', danger: true, fn: () => this._deleteTrailFromList(id) }
+    ];
+    menu.innerHTML = items
+      .filter((it) => !(it.replayOnly && !isReplay) && !(it.historyOnly && isReplay))
+      .map((it) => `<button class="trail-menu-item${it.danger ? ' danger' : ''}" data-act="${it.act}" data-id="${id}">${it.label}</button>`)
+      .join('');
+    document.body.appendChild(menu);
 
-    listEl.querySelectorAll('.trail-item-btn.delete-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this._deleteTrailFromList(btn.dataset.id);
-      });
-    });
+    // 定位在触发按钮下方（fixed，避免被列表 overflow 裁剪）
+    const rect = anchorBtn.getBoundingClientRect();
+    const mw = menu.offsetWidth;
+    let left = rect.right - mw;
+    if (left < 8) left = 8;
+    menu.style.left = `${left}px`;
+    menu.style.top = `${rect.bottom + 4}px`;
+
+    this._trailMenu = menu;
+    this._trailMenuClickHandler = (e) => {
+      const btn = e.target.closest('.trail-menu-item');
+      if (!btn) return;
+      const item = items.find((it) => it.act === btn.dataset.act);
+      this._closeTrailItemMenu();
+      if (item && item.fn) item.fn();
+    };
+    this._trailMenuDocHandler = (e) => {
+      if (menu && !menu.contains(e.target)) this._closeTrailItemMenu();
+    };
+    menu.addEventListener('click', this._trailMenuClickHandler);
+    // 等当前事件冒泡结束后再挂 document 监听，避免立即关闭
+    setTimeout(() => document.addEventListener('click', this._trailMenuDocHandler), 0);
+  }
+
+  _closeTrailItemMenu() {
+    if (this._trailMenu) {
+      this._trailMenu.remove();
+      this._trailMenu = null;
+    }
+    if (this._trailMenuClickHandler) {
+      // handler 随元素移除自动失效，无需额外清理
+      this._trailMenuClickHandler = null;
+    }
+    if (this._trailMenuDocHandler) {
+      document.removeEventListener('click', this._trailMenuDocHandler);
+      this._trailMenuDocHandler = null;
+    }
   }
 
   _syncBatchToolbar() {

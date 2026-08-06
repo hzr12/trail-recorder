@@ -148,31 +148,7 @@
   background: rgba(0, 212, 170, 0.12);
 }
 
-.trail-item-btn.delete-btn {
-  color: var(--danger);
-  border-color: rgba(255, 71, 87, 0.2);
-}
-
-.trail-item-btn.delete-btn:active {
-  background: rgba(255, 71, 87, 0.12);
-}
-
-.trail-item-btn.export-btn {
-  color: #34C759;
-  border-color: rgba(52, 199, 89, 0.35);
-}
-
-.trail-item-btn.export-btn:hover {
-  color: #2FB65C;
-  border-color: rgba(52, 199, 89, 0.5);
-  background: rgba(52, 199, 89, 0.1);
-}
-
-.trail-item-btn.export-btn:active {
-  background: rgba(52, 199, 89, 0.16);
-}
-
-/* ---------- 收藏 / 重命名按钮 ---------- */
+/* ---------- 收藏按钮 ---------- */
 
 .trail-item-name.editing {
   cursor: text;
@@ -207,21 +183,6 @@
 
 .favorite-btn.active:hover {
   background: rgba(255, 184, 0, 0.12);
-}
-
-.trail-item-btn.rename-btn {
-  color: var(--text-secondary);
-  border-color: var(--border-color);
-}
-
-.trail-item-btn.rename-btn:hover {
-  color: var(--accent-1);
-  border-color: rgba(0, 212, 170, 0.4);
-  background: rgba(0, 212, 170, 0.1);
-}
-
-.trail-item-btn.rename-btn:active {
-  background: rgba(0, 212, 170, 0.18);
 }
 
 /* ---------- 仅看收藏筛选 ---------- */
@@ -448,21 +409,38 @@
   border-color: rgba(0, 163, 255, 0.5);
 }
 
-/* ---------- 轨迹详情按钮 ---------- */
+/* ---------- 轨迹项「⋯」更多操作菜单 ---------- */
 
-.trail-item-btn.info-btn {
-  color: var(--text-secondary);
-  border-color: var(--border-color);
+.trail-item-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 140px;
+  padding: 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
 }
 
-.trail-item-btn.info-btn:hover {
-  color: var(--accent-2);
-  border-color: rgba(0, 163, 255, 0.4);
-  background: rgba(0, 163, 255, 0.08);
+.trail-menu-item {
+  display: block;
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
 }
 
-.trail-item-btn.info-btn:active {
-  background: rgba(0, 163, 255, 0.16);
+.trail-menu-item:hover {
+  background: var(--bg-hover);
+}
+
+.trail-menu-item.danger {
+  color: var(--danger);
 }
 
 .speed-chart-section {
