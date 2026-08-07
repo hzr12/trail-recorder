@@ -84,20 +84,78 @@
   padding: 0 20px calc(16px + var(--safe-bottom));
 }
 
-/* ---------- 通用玻璃卡片 ---------- */
+/* ---------- 通用玻璃卡片（毛玻璃 + 反光条 + 悬浮发光） ---------- */
 .panel-card {
   position: relative;
-  background: var(--bg-input);
-  border: 1px solid var(--border-color);
+  background: rgba(18, 28, 50, 0.55);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
   border-radius: var(--radius-md);
   padding: 12px;
   margin-bottom: 10px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 0.25s cubic-bezier(0.22, 1, 0.36, 1);
   animation: cardIn 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* 顶部玻璃反光条：模拟玻璃顶边折射高光 */
+.panel-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 12px;
+  right: 12px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.25), transparent);
+  pointer-events: none;
+}
+
+/* 桌面端悬浮：轻微上浮 + 同色系泛光（移动端 hover:none 禁用） */
+@media (hover: hover) {
+  .panel-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(0, 163, 255, 0.18);
+  }
+  .panel-card.card-replay-list:hover {
+    box-shadow: 0 6px 20px rgba(255, 149, 0, 0.18);
+  }
+  .panel-card.card-history-list:hover {
+    box-shadow: 0 6px 20px rgba(124, 58, 237, 0.18);
+  }
+}
+
+/* 浅色主题：玻璃底色与描边适配亮背景 */
+[data-theme="light"] .panel-card {
+  background: rgba(255, 255, 255, 0.62);
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+}
+[data-theme="light"] .panel-card::before {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.9), transparent);
 }
 
 @keyframes cardIn {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: none; }
+}
+
+/* ---------- 三 Tab 差异化语义光晕（与 Tab 胶囊颜色一致） ---------- */
+.panel-card.card-record {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18),
+              0 0 0 1px rgba(0, 212, 170, 0.06) inset,
+              0 4px 18px rgba(0, 163, 255, 0.10);
+}
+.panel-card.card-replay-list {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18),
+              0 0 0 1px rgba(255, 149, 0, 0.06) inset,
+              0 4px 18px rgba(255, 149, 0, 0.10);
+}
+.panel-card.card-history-list {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18),
+              0 0 0 1px rgba(124, 58, 237, 0.06) inset,
+              0 4px 18px rgba(124, 58, 237, 0.10);
 }
 
 /* 卡片内部既有区块的间距由卡片统一呼吸，消除双重边距 */
@@ -129,8 +187,32 @@
   margin: 0 16px 12px;
 }
 
+/* 滑动胶囊指示器：丝滑跟随激活 Tab，半透明 + 外发光 */
+.bottom-panel .mode-tabs .mode-tab-slider {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  height: calc(100% - 8px);
+  border-radius: var(--radius-full);
+  background: linear-gradient(135deg, rgba(0, 212, 170, 0.4), rgba(0, 163, 255, 0.4));
+  box-shadow: 0 0 6px rgba(0, 163, 255, 0.45),
+              0 1px 10px rgba(0, 163, 255, 0.35),
+              0 3px 22px rgba(0, 163, 255, 0.2),
+              inset 0 0 8px rgba(255, 255, 255, 0.16);
+  -webkit-backdrop-filter: saturate(170%) blur(12px);
+  backdrop-filter: saturate(170%) blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  transition: left 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+              width 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+              background 0.32s ease;
+  z-index: 1;
+  pointer-events: none;
+}
+
 .bottom-panel .mode-tabs .mode-tab {
   flex: 1;
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -141,8 +223,11 @@
   font-weight: 500;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: color 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+              transform 0.15s ease,
+              text-shadow 0.28s ease;
   -webkit-tap-highlight-color: transparent;
+  background: transparent;
 }
 
 .bottom-panel .mode-tabs .mode-tab:active {
@@ -150,16 +235,64 @@
 }
 
 .bottom-panel .mode-tabs .mode-tab.active {
-  background: var(--accent-gradient);
   color: #fff;
-  box-shadow: 0 4px 14px rgba(0, 163, 255, 0.28);
+  font-weight: 600;
+  text-shadow: 0 1px 6px rgba(0, 163, 255, 0.45);
+  background: transparent;
 }
 
-/* 回放 Tab 保持橙色语义 */
+/* 回放 Tab 橙色语义：滑块换色 + 文字橙光 */
+.bottom-panel .mode-tabs[data-tab="replay"] .mode-tab-slider {
+  background: linear-gradient(135deg, rgba(255, 149, 0, 0.42), rgba(255, 120, 40, 0.4));
+  box-shadow: 0 0 6px rgba(255, 149, 0, 0.45),
+              0 1px 10px rgba(255, 149, 0, 0.35),
+              0 3px 22px rgba(255, 149, 0, 0.2),
+              inset 0 0 8px rgba(255, 255, 255, 0.16);
+}
+
 .bottom-panel .mode-tabs .mode-tab[data-tab="replay"].active {
-  background: rgba(255, 149, 0, 0.16);
-  color: #FF9500;
-  box-shadow: 0 4px 12px rgba(255, 149, 0, 0.18);
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(255, 149, 0, 0.5);
+  background: transparent;
+}
+
+/* 历史 Tab 紫色语义：滑块换色 + 文字紫光 */
+.bottom-panel .mode-tabs[data-tab="history"] .mode-tab-slider {
+  background: linear-gradient(135deg, rgba(167, 139, 250, 0.45), rgba(124, 58, 237, 0.42));
+  box-shadow: 0 0 6px rgba(124, 58, 237, 0.45),
+              0 1px 10px rgba(124, 58, 237, 0.35),
+              0 3px 22px rgba(124, 58, 237, 0.2),
+              inset 0 0 8px rgba(255, 255, 255, 0.16);
+}
+
+.bottom-panel .mode-tabs .mode-tab[data-tab="history"].active {
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(124, 58, 237, 0.5);
+  background: transparent;
+}
+
+/* 面板内容 Tab 切换动画：淡入 + 上滑 */
+.bottom-panel .panel-body > .tab-pane {
+  animation: tabPaneIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes tabPaneIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bottom-panel .mode-tabs .mode-tab-slider,
+  .bottom-panel .panel-body > .tab-pane {
+    transition: none;
+    animation: none;
+  }
 }
 
 /* ---------- 面板内卡片对齐 ---------- */

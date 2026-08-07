@@ -19,7 +19,7 @@
   <link rel="stylesheet" href="css/theme.css?t=20260805v9">
   <link rel="stylesheet" href="css/base.css?t=20260805v10">
   <link rel="stylesheet" href="css/map.css?t=20260805v9">
-  <link rel="stylesheet" href="css/panel.css?t=20260805v11">
+  <link rel="stylesheet" href="css/panel.css?t=20260805v15">
   <link rel="stylesheet" href="css/gps.css?t=20260805v9">
   <link rel="stylesheet" href="css/trail.css?t=20260805v14">
   <link rel="stylesheet" href="css/toast-modal.css?t=20260805v9">
@@ -65,7 +65,8 @@
     </div>
 
     <!-- Tab 切换 -->
-    <div class="mode-tabs">
+    <div class="mode-tabs" id="mode-tabs">
+      <span class="mode-tab-slider" aria-hidden="true"></span>
       <button class="mode-tab active" data-tab="record" id="tab-record-btn">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M4 20c2-5 5-7 7-13"/>
@@ -92,7 +93,7 @@
 
     <div class="panel-body">
       <!-- 记录 Tab -->
-      <div id="tab-record">
+      <div id="tab-record" class="tab-pane">
       <div class="panel-card card-record">
       <!-- 轨迹记录 -->
       <div class="trail-section">
@@ -155,7 +156,7 @@
       </div><!-- /tab-record -->
 
       <!-- 回放 Tab -->
-      <div id="tab-replay" style="display:none">
+      <div id="tab-replay" class="tab-pane" style="display:none">
         <div class="replay-empty" id="replay-empty">
           <div class="replay-empty-icon">
             <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -235,7 +236,7 @@
       </div>
 
       <!-- 历史 Tab -->
-      <div id="tab-history" style="display:none">
+      <div id="tab-history" class="tab-pane" style="display:none">
         <div class="panel-card card-history-list">
         <div class="trail-list-header">
           <input type="text" class="trail-search-input" id="history-search" placeholder="搜索名称/日期/距离…" />
@@ -291,7 +292,7 @@
   <script src="js/map.js?t=20260805v20"></script>
   <script src="js/gps.js?t=20260805v8"></script>
   <script src="js/replay.js?t=20260805v9"></script>
-  <script src="js/app-core.js?t=20260805v18"></script>
+  <script src="js/app-core.js?t=20260805v19"></script>
   <script src="js/app-gps-ui.js?t=20260805v8"></script>
 </body>
 </html>

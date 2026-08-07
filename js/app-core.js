@@ -182,6 +182,7 @@ class App {
     this._restoreAutoPause();
     this._loadState();
     this._updateTrailUI();
+    this._syncTabSlider('record');
 
     window._app = this;
     this._fetchWeather();
@@ -437,14 +438,36 @@ class App {
     document.querySelectorAll('.mode-tab').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.tab === tab);
     });
+    this._syncTabSlider(tab);
     const recordEl = document.getElementById('tab-record');
     const replayEl = document.getElementById('tab-replay');
     const historyEl = document.getElementById('tab-history');
     if (recordEl) recordEl.style.display = tab === 'record' ? '' : 'none';
     if (replayEl) replayEl.style.display = tab === 'replay' ? '' : 'none';
     if (historyEl) historyEl.style.display = tab === 'history' ? '' : 'none';
+    // 重触发内容淡入动画（强制 reflow 使相同元素重复播放）
+    const targetEl = tab === 'record' ? recordEl : (tab === 'replay' ? replayEl : historyEl);
+    if (targetEl) {
+      targetEl.classList.remove('tab-pane');
+      void targetEl.offsetWidth;
+      targetEl.classList.add('tab-pane');
+    }
     if (tab === 'history') this._renderTrailList();
     if (tab === 'replay') this._renderReplayTrailList();
+  }
+
+  /**
+   * 让滑动胶囊指示器对齐当前激活 Tab（含回放橙色语义 data-tab）
+   */
+  _syncTabSlider(tab) {
+    const tabs = document.getElementById('mode-tabs');
+    if (!tabs) return;
+    const activeBtn = tabs.querySelector('.mode-tab.active');
+    const slider = tabs.querySelector('.mode-tab-slider');
+    if (!activeBtn || !slider) return;
+    tabs.setAttribute('data-tab', tab);
+    slider.style.left = `${activeBtn.offsetLeft}px`;
+    slider.style.width = `${activeBtn.offsetWidth}px`;
   }
 
   async _locateMe() {
