@@ -36,6 +36,7 @@ class TrailPlayer {
 
     this._replayMarker = null;
     this._replayPathPolyline = null;
+    this._playedPathPolylines = [];   // 已播放路径：按速度分段的 polyline 集合
 
     this._markerDisplayPos = null;
     this._markerTargetPos = null;
@@ -149,26 +150,70 @@ class TrailPlayer {
 
   _updatePlayedPath() {
     if (!this.mapManager.map) return;
+    if (this.positions.length < 2) return;
 
     const currentPoint = this._interpolateAtTime(this._playbackTime);
     const pathPoints = this.positions.slice(0, this._currentIndex + 1);
     if (this._currentIndex < this.positions.length - 1 && currentPoint) {
       pathPoints.push(currentPoint);
     }
+    if (pathPoints.length < 2) {
+      this._clearPlayedPolylines();
+      return;
+    }
 
-    if (!this._playedPathPolyline && pathPoints.length >= 2) {
-      const playedPath = pathPoints.map(p => new qq.maps.LatLng(p.lat, p.lng));
-      this._playedPathPolyline = new qq.maps.Polyline({
-        path: playedPath,
-        strokeColor: new qq.maps.Color(255, 149, 0, 0.9),
-        strokeWeight: 4,
-        map: this.mapManager.map,
-        clickable: false,
-        zIndex: 101 // 已播路径最高层级，始终盖在记录轨迹之上
+    // 按速度等级分段构建已播路径：段边界处拆分为多条 polyline 并分别着色
+    const segments = [];
+    let curSeg = null;
+    for (let i = 1; i < pathPoints.length; i++) {
+      const speed = this.mapManager._segmentSpeed(pathPoints[i - 1], pathPoints[i]);
+      const key = this.mapManager._speedColorKey(speed);
+      if (!curSeg || curSeg.key !== key) {
+        curSeg = { key, pts: [pathPoints[i - 1]] };
+        segments.push(curSeg);
+      }
+      curSeg.pts.push(pathPoints[i]);
+    }
+
+    // 用分段 key 序列做增量判断：绝大多数帧分段序列不变（仅最后一个分段在变长），
+    // 此时只需对末段 setPath 增量更新，避免每帧重建全部 polyline 造成卡顿。
+    const keySig = segments.map(s => s.key).join('|');
+    if (this._playedPathKeySig === keySig && this._playedPathPolylines.length === segments.length) {
+      // 分段序列未变：仅更新最后一个分段（正在增长的活动段）
+      const lastSeg = segments[segments.length - 1];
+      if (lastSeg && lastSeg.pts.length >= 2 && this._playedPathPolylines.length > 0) {
+        const pl = this._playedPathPolylines[this._playedPathPolylines.length - 1];
+        const ll = new qq.maps.LatLng(lastSeg.pts[lastSeg.pts.length - 1].lat, lastSeg.pts[lastSeg.pts.length - 1].lng);
+        pl.setPath([...pl.getPath(), ll]);
+      }
+      return;
+    }
+
+    // 分段序列变化：清理旧分段，重建速度着色路径
+    this._playedPathKeySig = keySig;
+    this._clearPlayedPolylines();
+    const colorMap = this.mapManager._speedColorMap;
+    this._playedPathPolylines = segments
+      .filter(s => s.pts.length >= 2)
+      .map((s) => {
+        const c = colorMap[s.key] || { r: 255, g: 149, b: 0, a: 0.9 };
+        return new qq.maps.Polyline({
+          path: s.pts.map(p => new qq.maps.LatLng(p.lat, p.lng)),
+          strokeColor: new qq.maps.Color(c.r, c.g, c.b, c.a),
+          strokeWeight: 4,
+          map: this.mapManager.map,
+          clickable: false,
+          zIndex: 101 // 已播路径最高层级，始终盖在记录轨迹之上
+        });
       });
-    } else if (this._playedPathPolyline) {
-      const playedPath = pathPoints.map(p => new qq.maps.LatLng(p.lat, p.lng));
-      this._playedPathPolyline.setPath(playedPath);
+  }
+
+  _clearPlayedPolylines() {
+    if (this._playedPathPolylines) {
+      for (const pl of this._playedPathPolylines) {
+        pl.setMap(null);
+      }
+      this._playedPathPolylines = [];
     }
   }
 
@@ -183,10 +228,7 @@ class TrailPlayer {
       this._markerTargetPos = null;
       this._markerLastAnimTime = 0;
       this._markerHeading = null;
-      if (this._playedPathPolyline) {
-        this._playedPathPolyline.setMap(null);
-        this._playedPathPolyline = null;
-      }
+      this._clearPlayedPolylines();
       this._updateMarker(this.positions[0]);
     }
 
@@ -235,10 +277,7 @@ class TrailPlayer {
       this._replayPathPolyline.setMap(null);
       this._replayPathPolyline = null;
     }
-    if (this._playedPathPolyline) {
-      this._playedPathPolyline.setMap(null);
-      this._playedPathPolyline = null;
-    }
+    this._clearPlayedPolylines();
   }
 
   setSpeed(speed) {

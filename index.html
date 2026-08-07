@@ -21,7 +21,7 @@
   <link rel="stylesheet" href="css/map.css?t=20260805v9">
   <link rel="stylesheet" href="css/panel.css?t=20260805v11">
   <link rel="stylesheet" href="css/gps.css?t=20260805v9">
-  <link rel="stylesheet" href="css/trail.css?t=20260805v13">
+  <link rel="stylesheet" href="css/trail.css?t=20260805v14">
   <link rel="stylesheet" href="css/toast-modal.css?t=20260805v9">
   <link rel="stylesheet" href="css/responsive.css?t=20260805v9">
 </head>
@@ -104,7 +104,7 @@
           <button id="trail-record-btn" class="btn btn-trail">
             <span class="trail-dot"></span> 开始记录
           </button>
-          <button id="trail-pause-btn" class="btn btn-secondary btn-sm" disabled>暂停</button>
+          <button id="trail-pause-btn" class="btn btn-secondary btn-sm" disabled>结束并保存</button>
           <button id="trail-clear-btn" class="btn btn-secondary btn-sm" disabled>清除</button>
         </div>
         <div class="trail-actions">
@@ -116,6 +116,7 @@
         <!-- 后台+省电模块 -->
         <div class="power-section" id="power-section">
           <span class="power-status" id="power-status">定位间隔: 2s</span>
+          <button id="trail-autopause-btn" class="btn-sm" title="开启后连续静止自动暂停计时，恢复移动自动继续">自动暂停</button>
           <button id="power-saving-btn" class="btn-sm" title="省电模式">省电</button>
         </div>
         <!-- 速度色阶图例 -->
@@ -266,7 +267,7 @@
       <div class="batch-toolbar" id="batch-toolbar">
         <span class="batch-count">未选择</span>
         <div class="batch-actions">
-          <button class="batch-btn batch-export" id="batch-export" disabled>导出长图</button>
+          <button class="batch-btn batch-export" id="batch-export" disabled>分享合集</button>
           <button class="batch-btn batch-merge" id="batch-merge" disabled>合并轨迹</button>
           <button class="batch-btn batch-invert" id="batch-invert" disabled>反选</button>
           <button class="batch-btn batch-clear" id="batch-clear" disabled>取消选择</button>
@@ -282,15 +283,15 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 
   <!-- 应用脚本 -->
-  <script src="js/config.js?t=20260805v10"></script>
+  <script src="js/config.js?t=20260805v11"></script>
   <script src="js/toast.js?t=20260805v8"></script>
-  <script src="js/storage.js?t=20260805v10"></script>
+  <script src="js/storage.js?t=20260805v11"></script>
   <script src="js/trail.js?t=20260805v11"></script>
-  <script src="js/trail-analysis.js?t=20260805v11"></script>
-  <script src="js/map.js?t=20260805v12"></script>
+  <script src="js/trail-analysis.js?t=20260805v12"></script>
+  <script src="js/map.js?t=20260805v20"></script>
   <script src="js/gps.js?t=20260805v8"></script>
-  <script src="js/replay.js?t=20260805v8"></script>
-  <script src="js/app-core.js?t=20260805v13"></script>
+  <script src="js/replay.js?t=20260805v9"></script>
+  <script src="js/app-core.js?t=20260805v18"></script>
   <script src="js/app-gps-ui.js?t=20260805v8"></script>
 </body>
 </html>

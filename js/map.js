@@ -927,6 +927,16 @@ class MapManager {
       if (parts.length) ctx.fillText(parts.join('  ·  '), 40, statsY + statsH / 2);
     }
 
+    // 底图免责注记（仅单条导出开启；合集每张小图不重复，由合集整体底部统一标注）
+    if (o.disclaimer) {
+      ctx.fillStyle = isLight ? 'rgba(0,0,0,0.28)' : 'rgba(255,255,255,0.24)';
+      ctx.font = '11px -apple-system, "PingFang SC", sans-serif';
+      ctx.textBaseline = 'alphabetic';
+      ctx.textAlign = 'right';
+      ctx.fillText('注：底图较老，仅供参考使用', W - 24, H - 14);
+      ctx.textAlign = 'left';
+    }
+
     return canvas;
   }
 
@@ -939,11 +949,14 @@ class MapManager {
    */
   async _drawThumbnailTiles(ctx, geo) {
     const { padX, padY, W, H, scale, offX, offY } = geo;
+    // 支持非对称底部 padding：默认与顶部一致（对称），分享卡片传入 padBottom 限定底部
+    const padBottom = geo.padBottom != null ? geo.padBottom : padY;
+    const areaHpx = H - padY - padBottom;
     // 绘制区四角世界坐标（Web Mercator 0~1）
     const areaLeft = (padX - offX) / scale;
     const areaRight = (W - padX - offX) / scale;
     const areaTop = (padY - offY) / scale;
-    const areaBottom = (H - padY - offY) / scale;
+    const areaBottom = (H - padBottom - offY) / scale;
     const areaW = Math.max(1e-9, areaRight - areaLeft);
 
     // 选定层级：瓦片像素分辨率 ≈ 画布分辨率
@@ -981,7 +994,7 @@ class MapManager {
     const tilePx = scale / n;
     ctx.save();
     ctx.beginPath();
-    ctx.rect(padX, padY, W - 2 * padX, H - 2 * padY);
+    ctx.rect(padX, padY, W - 2 * padX, areaHpx);
     ctx.clip();
     let i = 0;
     for (let tx = range.x0; tx <= range.x1; tx++) {
@@ -996,8 +1009,10 @@ class MapManager {
   }
 
   /**
-   * 加载高德地图瓦片（普通道路图 style=8，GCJ-02 与腾讯地图同坐标系）
-   * scale=2（512px retina）失败时回退 scale=1（256px）
+   * 加载地图瓦片（GCJ-02 与轨迹同坐标系）
+   * 主源：高德 webrd01-04 节点（style=8 普通道路图，已验证稳定返回有效图）
+   * 每次成功解码都会做「占位图」校验：部分服务端会返回可正常解码的纯色占位图，
+   * 若不校验会误当成有效瓦片导致底图纯色。
    * fetch + blob 加载避免 canvas 污染（PNG 可正常导出）；带内存缓存与超时
    * @param {number} z 瓦片层级
    * @param {number} x 瓦片列号
@@ -1007,27 +1022,16 @@ class MapManager {
   _loadMapTile(z, x, y) {
     const key = `${z}/${x}/${y}`;
     if (this._tileCache && this._tileCache.get(key)) return this._tileCache.get(key);
-    const base = 'https://webrd01.is.autonavi.com/appmaptile';
     const task = (async () => {
+      // 主源：webrd01-04 节点（scale=2 → scale=1 两级降级，各子域负载均衡）
       for (const scale of [2, 1]) {
-        // 每个瓦片带超时（AbortController），避免离线/慢网时导出无限挂起
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 5000);
-        try {
-          const url = `${base}?lang=zh_cn&size=1&scale=${scale}&style=8&x=${x}&y=${y}&z=${z}`;
-          const res = await fetch(url, { signal: controller.signal });
-          if (!res.ok) continue;
-          const blob = await res.blob();
-          const image = await new Promise((resolve, reject) => {
-            const img = new Image();
-            const objectUrl = URL.createObjectURL(blob);
-            img.onload = () => { URL.revokeObjectURL(objectUrl); resolve(img); };
-            img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('tile decode failed')); };
-            img.src = objectUrl;
-          });
-          return image;
-        } finally {
-          clearTimeout(timer);
+        for (let i = 0; i < 4; i++) {
+          const sub = (x + y + i) % 4;
+          try {
+            const url = `https://webrd0${sub + 1}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=${scale}&style=8&x=${x}&y=${y}&z=${z}`;
+            const img = await this._fetchTileImage(url, 5000);
+            if (!this._isPlaceholderTile(img)) return img;
+          } catch (_) {}
         }
       }
       throw new Error('tile fetch failed');
@@ -1037,6 +1041,67 @@ class MapManager {
     task.catch(() => { if (this._tileCache) this._tileCache.delete(key); });
     if (this._tileCache.size > 80) this._tileCache.clear();
     return task;
+  }
+
+  /**
+   * 抓取单个瓦片并解码为图片（fetch + blob + objectURL，避免 canvas 污染）
+   * @param {string} url 瓦片 URL
+   * @param {number} timeoutMs 超时毫秒
+   * @returns {Promise<HTMLImageElement>}
+   */
+  async _fetchTileImage(url, timeoutMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error(`tile status ${res.status}`);
+      const blob = await res.blob();
+      return await new Promise((resolve, reject) => {
+        const img = new Image();
+        const objectUrl = URL.createObjectURL(blob);
+        img.onload = () => { URL.revokeObjectURL(objectUrl); resolve(img); };
+        img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('tile decode failed')); };
+        img.src = objectUrl;
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * 判断瓦片是否为纯色占位图（腾讯等服务端来源校验失败时返回的 1714 字节单色 JPEG）
+   * 采样四角 + 中心像素，若全部为同一颜色则判定为占位图。
+   * @param {HTMLImageElement} img 已解码的瓦片图片
+   * @returns {boolean}
+   */
+  _isPlaceholderTile(img) {
+    try {
+      if (!img || !img.width || !img.height) return true;
+      const c = document.createElement('canvas');
+      // 用瓦片原始尺寸绘制，避免缩放下采样混淆纯色判定
+      c.width = img.width;
+      c.height = img.height;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return false;
+      ctx.drawImage(img, 0, 0);
+      const samples = [
+        [0, 0], [img.width - 1, 0], [0, img.height - 1],
+        [img.width - 1, img.height - 1],
+        [Math.floor(img.width / 2), Math.floor(img.height / 2)]
+      ];
+      const data = ctx.getImageData(0, 0, img.width, img.height).data;
+      const first = data.slice(0, 4);
+      for (const [sx, sy] of samples) {
+        const i = (sy * img.width + sx) * 4;
+        if (data[i] !== first[0] || data[i + 1] !== first[1] ||
+            data[i + 2] !== first[2] || data[i + 3] !== first[3]) {
+          return false; // 有颜色差异，是真实地图
+        }
+      }
+      return true; // 五个采样点同色 → 纯色占位图
+    } catch (e) {
+      return false; // 校验失败时保守放行，避免误降级
+    }
   }
 
   /**
@@ -1127,12 +1192,242 @@ class MapManager {
       }
     }
 
+    // 底部免责注记
+    ctx.fillStyle = isLight ? 'rgba(0,0,0,0.28)' : 'rgba(255,255,255,0.24)';
+    ctx.font = '12px -apple-system, "PingFang SC", sans-serif';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('注：底图较老，仅供参考使用', 26, totalH - 16);
+
     try {
       return canvas.toDataURL('image/png');
     } catch (e) {
       console.warn('[MapManager] 轨迹合集导出失败:', e.message);
       return null;
     }
+  }
+
+  /**
+   * 截断文本，超出最大宽度以省略号结尾（canvas 标题防溢出）
+   */
+  _truncateText(ctx, text, maxWidth) {
+    if (!text) return '';
+    let str = String(text);
+    if (ctx.measureText(str).width <= maxWidth) return str;
+    let lo = 0, hi = str.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (ctx.measureText(str.slice(0, mid) + '…').width <= maxWidth) lo = mid;
+      else hi = mid - 1;
+    }
+    return str.slice(0, lo) + '…';
+  }
+
+  _fmtShareDate(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const pad = (n) => String(n).padStart(2, '0');
+    const week = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 周${week} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  /**
+   * 生成方形一键分享卡片（1080×1080，高 DPR 自动放大）
+   * 顶部渐变标题 + 瓦片底图速度着色轨迹 + 底部统计 + 品牌水印。
+   * 复用 _drawThumbnailTiles 瓦片底图与 _speedColorMap 速度着色，跨域安全。
+   * @param {Object} trail {positions, name, createdAt}
+   * @param {Object} [opts] {width,height,title,subtitle,stats,background,map}
+   * @returns {Promise<string|null>} PNG dataURL，失败返回 null
+   */
+  async renderShareCard(trail, opts) {
+    if (!trail || !trail.positions || trail.positions.length < 2) return null;
+    const o = opts || {};
+    const positions = trail.positions;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const W = o.width || 1080;
+    const H = o.height || 1080;
+    const S = dpr;
+    const canvas = document.createElement('canvas');
+    canvas.width = W * S;
+    canvas.height = H * S;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(S, S);
+
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    const bg = o.background || (isLight ? '#f3f5f9' : '#0d1117');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    // 轨迹世界坐标（Web Mercator，zoom 0）与绘制区几何
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const worldPts = positions.map((p) => {
+      const wp = {
+        x: p.lng / 360 + 0.5,
+        y: 0.5 - Math.log(Math.tan(Math.PI / 4 + (p.lat * Math.PI / 180) / 2)) / (2 * Math.PI)
+      };
+      if (wp.x < minX) minX = wp.x;
+      if (wp.y < minY) minY = wp.y;
+      if (wp.x > maxX) maxX = wp.x;
+      if (wp.y > maxY) maxY = wp.y;
+      return wp;
+    });
+
+    const worldW = Math.max(1e-9, maxX - minX);
+    const worldH = Math.max(1e-9, maxY - minY);
+    const padX = o.padX || 56;
+    const padTop = o.padTop || 130;
+    const padBottom = o.padBottom || 320;
+    // 轨迹范围四周扩展缓冲比例：起/终点标记（半径 9×DPR）不会贴在绘制区边缘
+    const bufferRatio = (o.bufferRatio != null && o.bufferRatio > 0) ? o.bufferRatio : 0.18;
+    const extX = worldW * bufferRatio;
+    const extY = worldH * bufferRatio;
+    const bMinX = minX - extX;
+    const bMaxX = maxX + extX;
+    const bMinY = minY - extY;
+    const bMaxY = maxY + extY;
+    const bufW = Math.max(1e-9, bMaxX - bMinX);
+    const bufH = Math.max(1e-9, bMaxY - bMinY);
+    const areaW = W - 2 * padX;
+    const areaH = H - padTop - padBottom;
+    const scaleX = areaW / bufW;
+    const scaleY = areaH / bufH;
+    const scale = Math.min(scaleX, scaleY);
+    const drawW = bufW * scale;
+    const drawH = bufH * scale;
+    // 居中于「轨迹绘制区」（padX..W-padX / padTop..H-padBottom），而非整个画布：
+    // 顶部标题区(padTop)与底部统计面板(padBottom)不对称，若按画布中心居中，
+    // 轨迹会整体偏下、起终点顶到统计面板/瓦片可视区边缘。
+    const offX = padX + (areaW - drawW) / 2 - bMinX * scale;
+    const offY = padTop + (areaH - drawH) / 2 - bMinY * scale;
+    const toXY = (wp) => ({ x: wp.x * scale + offX, y: wp.y * scale + offY });
+
+    // 地图底图（失败自动降级纯色）；padBottom 使瓦片裁剪区与轨迹绘制区严格一致，
+    // 避免瓦片底部延伸到统计面板区域、以及轨迹起终点贴到瓦片可视边缘
+    if (o.map !== false) {
+      try {
+        await this._drawThumbnailTiles(ctx, { padX, padY: padTop, W, H, scale, offX, offY, padBottom });
+      } catch (e) {
+        if (typeof CONFIG !== 'undefined' && CONFIG.DEBUG) console.warn('[MapManager] 分享卡片底图降级纯色:', e && e.message);
+      }
+    }
+
+    // 顶部渐变遮罩：压暗地图、衬托标题
+    const headerGrad = ctx.createLinearGradient(0, 0, 0, padTop);
+    headerGrad.addColorStop(0, isLight ? 'rgba(243,245,249,0.96)' : 'rgba(13,17,23,0.94)');
+    headerGrad.addColorStop(1, isLight ? 'rgba(243,245,249,0.30)' : 'rgba(13,17,23,0.25)');
+    ctx.fillStyle = headerGrad;
+    ctx.fillRect(0, 0, W, padTop);
+
+    // 标题
+    const title = this._truncateText(ctx, o.title || trail.name || '途刻轨迹', W - 2 * padX);
+    ctx.fillStyle = isLight ? '#14181f' : '#ffffff';
+    ctx.font = `700 ${32 * S}px "HarmonyOS Sans", "PingFang SC", sans-serif`;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(title, padX, 52);
+
+    // 副标题（日期）
+    const subtitle = o.subtitle || this._fmtShareDate(trail.createdAt);
+    if (subtitle) {
+      ctx.fillStyle = isLight ? 'rgba(20,24,31,0.55)' : 'rgba(255,255,255,0.55)';
+      ctx.font = `${18 * S}px "HarmonyOS Sans", "PingFang SC", sans-serif`;
+      ctx.fillText(subtitle, padX, 94);
+    }
+
+    // 速度着色轨迹折线
+    const colorMap = this._speedColorMap;
+    ctx.lineWidth = 8 * S;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    for (let i = 1; i < worldPts.length; i++) {
+      const p0 = worldPts[i - 1];
+      const p1 = worldPts[i];
+      const speed = this._segmentSpeed(positions[i - 1], positions[i]);
+      const c = colorMap[this._speedColorKey(speed)] || { r: 0, g: 200, b: 160, a: 0.9 };
+      const a = toXY(p0);
+      const b = toXY(p1);
+      ctx.strokeStyle = `rgba(${c.r},${c.g},${c.b},${c.a})`;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+
+    // 起点/终点标记
+    const startPt = toXY(worldPts[0]);
+    const endPt = toXY(worldPts[worldPts.length - 1]);
+    ctx.fillStyle = '#34C759';
+    ctx.beginPath();
+    ctx.arc(startPt.x, startPt.y, 9 * S, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FF453A';
+    ctx.beginPath();
+    ctx.arc(endPt.x, endPt.y, 9 * S, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 底部统计区
+    const stats = o.stats || (() => {
+      let distance = 0;
+      for (let i = 1; i < positions.length; i++) distance += calcDistance(positions[i - 1], positions[i]);
+      let duration = 0;
+      const f = positions[0];
+      const l = positions[positions.length - 1];
+      if (f && l && f.time && l.time && l.time > f.time) duration = l.time - f.time;
+      return { distance, duration, points: positions.length };
+    })();
+
+    const panelY = H - 240;
+    const panelH = 240;
+    ctx.fillStyle = isLight ? 'rgba(255,255,255,0.92)' : 'rgba(22,27,34,0.92)';
+    ctx.beginPath();
+    ctx.roundRect(32, panelY - 26, W - 64, panelH, 24);
+    ctx.fill();
+
+    // 距离（大字）+ 时长/配速/点数
+    const statCols = [
+      { label: '距离', value: formatDistance(stats.distance), big: true },
+      { label: '时长', value: formatDurationShort(stats.duration), big: false },
+      { label: '配速', value: stats.distance > 0 && stats.duration > 0 ? this._fmtPace(stats.distance, stats.duration) : '--', big: false },
+      { label: '点数', value: String(stats.points), big: false }
+    ];
+    const colW = (W - 64) / statCols.length;
+    statCols.forEach((col, i) => {
+      const cx = 32 + colW * i + colW / 2;
+      const top = panelY + 24;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = isLight ? 'rgba(20,24,31,0.5)' : 'rgba(255,255,255,0.5)';
+      ctx.font = `${15 * S}px "HarmonyOS Sans", "PingFang SC", sans-serif`;
+      ctx.fillText(col.label, cx, top);
+      ctx.fillStyle = isLight ? '#14181f' : '#ffffff';
+      ctx.font = col.big ? `700 ${26 * S}px "HarmonyOS Sans", sans-serif` : `700 ${22 * S}px "HarmonyOS Sans", sans-serif`;
+      ctx.fillText(col.value, cx, top + 44);
+      ctx.textAlign = 'left';
+    });
+
+    // 品牌水印 + 底图免责注记
+    const watermarkY = H - 40;
+    ctx.textAlign = 'right';
+    ctx.fillStyle = isLight ? 'rgba(20,24,31,0.35)' : 'rgba(255,255,255,0.30)';
+    ctx.font = `${17 * S}px "HarmonyOS Sans", "PingFang SC", sans-serif`;
+    ctx.fillText('途刻 TraceCraft', W - 40, watermarkY);
+    ctx.fillStyle = isLight ? 'rgba(20,24,31,0.28)' : 'rgba(255,255,255,0.24)';
+    ctx.font = `${13 * S}px "HarmonyOS Sans", "PingFang SC", sans-serif`;
+    ctx.fillText('注：底图较老，仅供参考使用', W - 40, watermarkY - 26 * S);
+    ctx.textAlign = 'left';
+
+    try {
+      return canvas.toDataURL('image/png');
+    } catch (e) {
+      console.warn('[MapManager] 分享卡片导出失败:', e.message);
+      return null;
+    }
+  }
+
+  _fmtPace(distance, durationMs) {
+    // 配速 = 秒/公里，格式 M'SS"
+    const secPerKm = (durationMs / 1000) / (distance / 1000);
+    const m = Math.floor(secPerKm / 60);
+    const s = Math.round(secPerKm % 60);
+    if (s >= 60) return `${m + 1}'00"`;
+    return `${m}'${String(s).padStart(2, '0')}"`;
   }
 
   /**

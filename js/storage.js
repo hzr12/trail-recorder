@@ -478,12 +478,13 @@ class Storage {
     return 0;
   }
 
-  static saveTrailToList(positions, name, favorite) {
+  static saveTrailToList(positions, name, favorite, opts) {
     if (!positions || positions.length === 0) return Promise.resolve(null);
     const id = Storage._TRAIL_LIST_PREFIX + Date.now();
     const distance = Storage._calcDistance(positions);
     const duration = Storage._calcDuration(positions);
     const now = Date.now();
+    const o = opts || {};
     const trailMeta = {
       id,
       name: name || Storage._fmtTrailName(now),
@@ -492,6 +493,7 @@ class Storage {
       duration,
       pointCount: positions.length,
       favorite: !!favorite,
+      ...(o.cleaned ? { cleaned: true } : {}),
       positions
     };
     return Storage._saveToIndexedDB(trailMeta).then(() => id).catch(err => {
@@ -552,7 +554,8 @@ class Storage {
               createdAt: data.createdAt,
               distance: data.distance,
               pointCount: data.pointCount,
-              duration: data.duration || 0
+              duration: data.duration || 0,
+              cleaned: !!data.cleaned
             });
           } else {
             resolve(null);
@@ -652,6 +655,35 @@ class Storage {
       });
     }).catch(err => {
       console.warn('[Storage] 切换收藏失败:', err.message);
+      return false;
+    });
+  }
+
+  /**
+   * 更新单条历史轨迹的元数据 / 数据（仅覆盖传入字段，positions 可在 patch 中整体替换）
+   * @param {string} id 轨迹 id
+   * @param {Object} patch 要写入的字段（如 {cleaned:true, positions:[...], distance:..., duration:..., pointCount:...}）
+   * @returns {Promise<boolean>}
+   */
+  static updateTrailMeta(id, patch) {
+    if (!id || !patch || typeof patch !== 'object') return Promise.resolve(false);
+    return Storage._initDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readwrite');
+        const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
+        const request = store.get(id);
+        request.onsuccess = () => {
+          const data = request.result;
+          if (!data) { resolve(false); return; }
+          Object.assign(data, patch);
+          store.put(data);
+          transaction.oncomplete = () => resolve(true);
+          transaction.onerror = (e) => reject(e.target.error);
+        };
+        request.onerror = (e) => reject(e.target.error);
+      });
+    }).catch(err => {
+      console.warn('[Storage] 更新轨迹失败:', err.message);
       return false;
     });
   }

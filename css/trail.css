@@ -682,11 +682,19 @@
 .power-section .btn-sm {
   font-size: 11px;
   padding: 4px 8px;
+  white-space: nowrap;
 }
 .power-section .btn-sm.active {
   background: rgba(0, 212, 170, 0.12);
   color: var(--accent-1);
   border-color: rgba(0, 212, 170, 0.3);
+}
+/* 自动暂停开关：开启态使用实心强调色，便于一眼识别 */
+#trail-autopause-btn.active {
+  background: linear-gradient(135deg, rgba(0, 212, 170, 0.85), rgba(0, 163, 255, 0.85));
+  color: #fff;
+  border-color: transparent;
+  font-weight: 600;
 }
 /* 速度色阶图例 */
 .speed-legend {

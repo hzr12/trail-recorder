@@ -220,6 +220,102 @@ const TrailAnalysis = {
     return `${this.modeSpeedLimit(mode)} ${formatDistance(distance)} · ${formatDurationShort(durationMs)}`;
   },
 
+  /* ================================================================
+   *  轨迹清洗（数据纠偏）：纯函数，返回新数组，不修改原数组
+   * ================================================================ */
+
+  /**
+   * 剔除起点/终点静止漂移段（O(n) 单趟扫描）
+   * 起点向后 / 终点向前连续扫描：当某点速度 ≥ 静止阈值，或累计位移超过阈值时停止裁剪。
+   * @param {Array} positions 轨迹点 [{lat,lng,time,speed?}]
+   * @param {Object} [opts] {startM=30, endM=30} 首/尾可裁剪的最大累计位移（米）
+   * @returns {Array} 裁剪后的新数组（不足 3 点或无需裁剪时返回原数组副本）
+   */
+  trimEndpoints(positions, opts) {
+    if (!Array.isArray(positions) || positions.length < 3) {
+      return Array.isArray(positions) ? positions.slice() : [];
+    }
+    const o = opts || {};
+    const startM = Number.isFinite(o.startM) ? o.startM : (CONFIG.TRAIL_CLEAN_START_M || 30);
+    const endM = Number.isFinite(o.endM) ? o.endM : (CONFIG.TRAIL_CLEAN_END_M || 30);
+    const stationary = CONFIG.TRAIL_STATIONARY_SPEED || 0.3;
+    const n = positions.length;
+
+    // 起点向后扫描：连续静止（speed 低）且累计位移未超阈值 → 视为漂移尾巴
+    let startIdx = 0;
+    let acc = 0;
+    for (let i = 1; i < n; i++) {
+      const speed = positions[i].speed;
+      acc += calcDistance(positions[i - 1], positions[i]);
+      if (acc >= startM) break;
+      if (speed != null && speed >= stationary) break;
+      startIdx = i;
+    }
+
+    // 终点向前扫描：连续静止且累计位移未超阈值 → 视为漂移尾巴
+    let endIdx = n - 1;
+    acc = 0;
+    for (let i = n - 2; i >= 0; i--) {
+      const speed = positions[i].speed;
+      acc += calcDistance(positions[i], positions[i + 1]);
+      if (acc >= endM) break;
+      if (speed != null && speed >= stationary) break;
+      endIdx = i;
+    }
+
+    if (startIdx >= endIdx) return positions.slice();
+    return positions.slice(startIdx, endIdx + 1);
+  },
+
+  /**
+   * 剔除异常漂移点（O(n) 单趟扫描）
+   * 对每个内部点：若它相对前一点、后一点的位移均超过「参考速度 × 时间窗 × factor + 基础阈值」，
+   * 判定为 GPS 跳变/漂移鬼点剔除（避免误杀高速真实拐点）。
+   * 参考速度取段上两点中后一点优先（与 map.js _segmentSpeed 一致），缺速度时由基础阈值兜底。
+   * @param {Array} positions 轨迹点 [{lat,lng,time,speed?}]
+   * @param {Object} [opts] {maxJumpFactor=5} 相对期望位移的倍数上限
+   * @returns {Array} 清洗后的新数组
+   */
+  filterOutliers(positions, opts) {
+    if (!Array.isArray(positions) || positions.length < 4) {
+      return Array.isArray(positions) ? positions.slice() : [];
+    }
+    const o = opts || {};
+    const factor = Number.isFinite(o.maxJumpFactor) ? o.maxJumpFactor : (CONFIG.TRAIL_CLEAN_MAX_JUMP_FACTOR || 5);
+    const base = (CONFIG.TRAIL_SAMPLE_MIN_DIST || 5) * 2;
+    const n = positions.length;
+    const keep = new Array(n).fill(true);
+
+    for (let i = 1; i < n - 1; i++) {
+      const prev = positions[i - 1];
+      const cur = positions[i];
+      const next = positions[i + 1];
+
+      const dt1 = ((cur.time || 0) - (prev.time || 0)) / 1000;
+      const dt2 = ((next.time || 0) - (cur.time || 0)) / 1000;
+      if (dt1 <= 0 || dt2 <= 0) continue; // 时间缺失/无效时保守跳过
+
+      const d1 = calcDistance(prev, cur);
+      const d2 = calcDistance(cur, next);
+
+      const refSpeed1 = this._segmentSpeed(prev, cur);
+      const refSpeed2 = this._segmentSpeed(cur, next);
+
+      const maxJump1 = refSpeed1 * dt1 * factor + base;
+      const maxJump2 = refSpeed2 * dt2 * factor + base;
+
+      // 相对前、后均超阈值 → 异常点
+      if (d1 > maxJump1 && d2 > maxJump2) keep[i] = false;
+    }
+
+    const result = [];
+    for (let i = 0; i < n; i++) {
+      if (keep[i]) result.push(positions[i]);
+    }
+    // 至少保留 2 个点，避免过度清洗
+    return result.length >= 2 ? result : positions.slice();
+  },
+
   /**
    * 综合输出
    * @param {Array} positions

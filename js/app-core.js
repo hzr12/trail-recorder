@@ -88,6 +88,9 @@ class App {
     this._lastAccuracy = null;
     this._theme = 'dark';
     this._trailSmoothing = true;
+    this._autoPauseEnabled = false;   // 自动暂停手动开关（默认关闭）
+    this._autoPaused = false;         // 当前是否处于「静止自动暂停」状态
+    this._autoPauseStart = null;      // 连续静止计时起点（时间戳）
     this._processQueue = Promise.resolve();
     this._queuePending = 0;
     this._replayPlayer = null;
@@ -176,6 +179,7 @@ class App {
 
     this._restoreTheme();
     this._restoreTrailSmoothing();
+    this._restoreAutoPause();
     this._loadState();
     this._updateTrailUI();
 
@@ -239,12 +243,14 @@ class App {
     this._panelHandle = document.querySelector('.panel-handle');
 
     document.getElementById('trail-record-btn').addEventListener('click', () => this._toggleTrailRecording());
-    document.getElementById('trail-pause-btn').addEventListener('click', () => this._toggleTrailPause());
+    document.getElementById('trail-pause-btn').addEventListener('click', () => this._stopTrailRecording());
     document.getElementById('trail-clear-btn').addEventListener('click', () => this._clearTrail());
     document.getElementById('trail-stats-btn').addEventListener('click', () => this._showTrailStats());
     document.getElementById('trail-smooth-btn').addEventListener('click', () => this._toggleTrailSmoothing());
     document.getElementById('export-report-btn').addEventListener('click', () => this._exportReport());
     document.getElementById('power-saving-btn').addEventListener('click', () => this._togglePowerSaving());
+    const autoPauseBtn = document.getElementById('trail-autopause-btn');
+    if (autoPauseBtn) autoPauseBtn.addEventListener('click', () => this._toggleAutoPause());
 
     // 回放控制面板
     const replaySlider = document.getElementById('replay-slider');
@@ -688,6 +694,9 @@ class App {
 
       this._recordFix(pos, convPos, false, true);
 
+      // 静止自动暂停检查（后台定位同样生效，仅手动开关开启时）
+      this._checkAutoPause(pos.speed, pos.timestamp || Date.now());
+
       // 回放期间允许记录继续采集（并行模式）：记录轨迹线与回放路径分属不同 zIndex 层，互不遮挡
       if (this.trail.isRecording && !this.trail.isPaused && !this._trailLoading) {
         const added = this.trail.addPoint({
@@ -774,14 +783,31 @@ class App {
       Toast.show(' 回放中无法记录，请先停止回放');
       return;
     }
-    if (this.trail.isRecording) {
-      this._stopTrailRecording();
-    } else {
+    if (!this.trail.isRecording) {
+      // 未记录：开始记录
       this.trail.start();
+      // 新一轮记录重置自动暂停状态
+      this._autoPaused = false;
+      this._autoPauseStart = null;
       this.mapManager.clearTrail();
       this.mapManager.clearTrailMarkers();
       this.mapManager.clearRealtimeKeyPoints();
       Toast.show(' 轨迹记录已开始');
+    } else if (this.trail.isPaused) {
+      // 记录中且已暂停：继续记录
+      this.trail.resume();
+      this._trailDirty = true;
+      Toast.show(' 轨迹记录已继续');
+      // 手动继续接管暂停状态，清除自动暂停相关标志
+      this._autoPaused = false;
+      this._autoPauseStart = null;
+    } else {
+      // 记录中且未暂停：暂停记录
+      this.trail.pause();
+      Toast.show(' 轨迹记录已暂停');
+      // 手动暂停接管暂停状态，清除自动暂停相关标志
+      this._autoPaused = false;
+      this._autoPauseStart = null;
     }
     this._updateTrailUI();
   }
@@ -790,6 +816,9 @@ class App {
     if (!this.trail.isRecording) return;
     const pointCount = this.trail.positions.length;
     this.trail.stop();
+    // 停止记录清理自动暂停状态
+    this._autoPaused = false;
+    this._autoPauseStart = null;
     this._trailDirty = true;
     if (pointCount === 0) {
       Storage.clearTrail();
@@ -802,19 +831,77 @@ class App {
       this.mapManager.setTrailMarkers(TrailAnalysis.analyzeKeyPoints(this.trail.positions));
       Toast.show(' 轨迹记录已停止');
     }
+    this._updateTrailUI();
   }
 
-  _toggleTrailPause() {
-    if (!this.trail.isRecording) return;
-    if (this.trail.isPaused) {
-      this.trail.resume();
-      this._trailDirty = true;
-      Toast.show(' 轨迹记录已继续');
+  /**
+   * 切换「自动暂停」手动开关（默认关闭，localStorage 持久化）
+   * 关闭时若有正在进行的自动暂停，先手动恢复记录，避免记录被卡在暂停态。
+   */
+  _toggleAutoPause() {
+    this._autoPauseEnabled = !this._autoPauseEnabled;
+    try {
+      localStorage.setItem(CONFIG.AUTO_PAUSE_STORAGE_KEY, this._autoPauseEnabled ? '1' : '0');
+    } catch (e) {}
+    if (!this._autoPauseEnabled) {
+      // 关闭开关：若正处自动暂停中，先恢复记录并清标志
+      if (this._autoPaused && this.trail.isRecording && this.trail.isPaused) {
+        this.trail.resume();
+        this._trailDirty = true;
+        Toast.show(' 自动暂停已关闭，记录已继续');
+      }
+      this._autoPaused = false;
+      this._autoPauseStart = null;
     } else {
-      this.trail.pause();
-      Toast.show(' 轨迹记录已暂停');
+      this._autoPauseStart = null;
+      Toast.show(' 自动暂停已开启');
     }
     this._updateTrailUI();
+  }
+
+  /**
+   * 静止自动暂停检查（仅开关开启时生效，O(1) 增量状态）
+   * 连续低速超窗 → 自动暂停计时；恢复移动超阈值 → 自动继续记录。
+   * 不覆盖用户手动暂停状态：仅当 trail.isPaused 为 false 时才自动暂停，
+   * 仅当 _autoPaused 为 true（且用户未手动接管）时才自动恢复。
+   * @param {number|null|undefined} speed 当前速度（m/s）
+   * @param {number} time 定位时间戳（ms）
+   */
+  _checkAutoPause(speed, time) {
+    if (!this._autoPauseEnabled) return;
+    if (!this.trail.isRecording) {
+      this._autoPaused = false;
+      this._autoPauseStart = null;
+      return;
+    }
+    const now = time || Date.now();
+
+    if (typeof speed === 'number' && speed >= 0 && speed < CONFIG.AUTO_PAUSE_SPEED) {
+      // 低速：开始/延续静止计时
+      if (!this._autoPauseStart) this._autoPauseStart = now;
+      if (this._autoPauseStart && (now - this._autoPauseStart) >= CONFIG.AUTO_PAUSE_WINDOW_S * 1000) {
+        if (!this.trail.isPaused && !this._autoPaused) {
+          this.trail.pause();
+          this._autoPaused = true;
+          this._autoPauseStart = null;
+          this._trailDirty = true;
+          this._updateTrailUI();
+          Toast.show(' 已自动暂停（静止）');
+        }
+      }
+    } else if (typeof speed === 'number' && speed > CONFIG.AUTO_PAUSE_RESUME_SPEED) {
+      // 恢复移动：仅当处于自动暂停态且未被手动接管时自动继续
+      if (this._autoPaused && this.trail.isPaused) {
+        this.trail.resume();
+        this._autoPaused = false;
+        this._autoPauseStart = null;
+        this._trailDirty = true;
+        this._updateTrailUI();
+        Toast.show(' 自动恢复记录');
+      } else {
+        this._autoPauseStart = null;
+      }
+    }
   }
 
   _toggleTrailSmoothing() {
@@ -1065,6 +1152,15 @@ class App {
     } catch (e) {}
   }
 
+  _restoreAutoPause() {
+    try {
+      const pref = localStorage.getItem(CONFIG.AUTO_PAUSE_STORAGE_KEY);
+      this._autoPauseEnabled = pref === '1';
+    } catch (e) {
+      this._autoPauseEnabled = false;
+    }
+  }
+
   // ===== 轨迹列表管理 =====
 
   _saveCurrentTrail() {
@@ -1215,7 +1311,8 @@ class App {
       Toast.show('正在生成轨迹图片…');
       const dataUrl = await this.mapManager.renderTrailThumbnail(data.positions, {
         title: data.name || '轨迹',
-        stats: { distance: stats.distance, duration: stats.duration, points: data.positions.length }
+        stats: { distance: stats.distance, duration: stats.duration, points: data.positions.length },
+        disclaimer: true
       });
       if (!dataUrl) {
         Toast.show('导出失败，请重试');
@@ -1230,10 +1327,99 @@ class App {
   }
 
   /**
-   * 下载 dataURL 图片（兼容 web 与 Capacitor 原生环境）
-   * 原生：写入缓存目录并调起系统分享；web：Blob URL + a[download]
+   * 生成并分享轨迹分享卡片（覆盖原「导出轨迹图片」）
+   * 分享链路与 _exportReport 相同：原生 Capacitor Filesystem+Share 系统分享 / Web 端 Blob URL 下载。
+   * 绘制前可选做只读清洗（剔除首尾漂移段/异常点），仅用于卡片渲染，不落库不污染原数据。
    */
-  _downloadDataUrl(dataUrl, filename) {
+  async _exportShareCard(id) {
+    const data = await Storage.loadTrailById(id);
+    if (!data || !data.positions || data.positions.length < 2) {
+      Toast.show('轨迹数据不足，无法分享');
+      return;
+    }
+    // 只读清洗：trimEndpoints + filterOutliers，仅用于卡片绘制
+    let cardPositions = data.positions;
+    if (cardPositions.length >= 3) {
+      let cleaned = TrailAnalysis.trimEndpoints(cardPositions);
+      cleaned = TrailAnalysis.filterOutliers(cleaned);
+      if (cleaned.length >= 2) cardPositions = cleaned;
+    }
+    const stats = this._computeTrailStats(cardPositions);
+    Toast.show('正在生成分享卡片…');
+    const dataUrl = await this.mapManager.renderShareCard({
+      positions: cardPositions,
+      name: data.name || '轨迹',
+      createdAt: data.createdAt
+    }, {
+      stats: { distance: stats.distance, duration: stats.duration, points: cardPositions.length }
+    });
+    if (!dataUrl) {
+      Toast.show('生成分享卡片失败，请重试');
+      return;
+    }
+    const safeName = (data.name || '轨迹').replace(/[\\/:*?"<>|]/g, '_');
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filename = `途刻-${safeName}-${dateStr}.png`;
+    // 复用 _exportReport 的分享链路（原生系统分享 / Web 下载）
+    this._downloadDataUrl(dataUrl, filename, {
+      title: '途刻分享卡片',
+      text: `途刻 — ${data.name || '轨迹'}`,
+      dialogTitle: '分享或保存分享卡片'
+    });
+  }
+
+  /**
+   * 清洗历史轨迹：剔除起点/终点静止漂移段与异常漂移点（数据纠偏）
+   * 清洗后重算 distance/duration/pointCount 并写回，打 cleaned 标记。
+   * 纯函数处理（不修改原始数组），仅当点数有变化才落库，避免无意义写入。
+   */
+  async _cleanTrail(id) {
+    const data = await Storage.loadTrailById(id);
+    if (!data || !data.positions || data.positions.length < 2) {
+      Toast.show('轨迹数据不足，无法清洗');
+      return;
+    }
+    Toast.show('正在清洗轨迹…');
+    let cleaned = TrailAnalysis.trimEndpoints(data.positions);
+    cleaned = TrailAnalysis.filterOutliers(cleaned);
+
+    const before = data.positions.length;
+    const after = cleaned.length;
+    if (after < 2) {
+      Toast.show('清洗后点数不足，已保留原轨迹');
+      return;
+    }
+    if (after === before) {
+      Toast.show('轨迹已较干净，无需清洗');
+      return;
+    }
+
+    const stats = this._computeTrailStats(cleaned);
+    const ok = await Storage.updateTrailMeta(id, {
+      positions: cleaned,
+      distance: stats.distance,
+      duration: stats.duration,
+      pointCount: stats.points,
+      cleaned: true
+    });
+    if (!ok) {
+      Toast.show('清洗保存失败，请重试');
+      return;
+    }
+    this._invalidateTrailCache();
+    this._renderTrailList();
+    this._renderReplayTrailList();
+    Toast.show(`已清洗轨迹：${before} → ${after} 点`);
+  }
+
+  /**
+   * 下载/分享 dataURL 图片（兼容 web 与 Capacitor 原生环境）
+   * 原生：写入缓存目录并调起系统分享；web：Blob URL + a[download]。
+   * @param {string} dataUrl PNG dataURL
+   * @param {string} filename 文件名
+   * @param {Object} [shareMeta] {title,text,dialogTitle} 自定义原生分享文案（默认轨迹图片）
+   */
+  _downloadDataUrl(dataUrl, filename, shareMeta) {
     // dataURL → Blob（兼容含中文的 SVG dataURI 与 PNG base64）
     const fetchBlob = () =>
       fetch(dataUrl).then((r) => r.blob()).catch(() => null);
@@ -1253,10 +1439,10 @@ class App {
             directory: 'CACHE'
           }).then((result) => {
             return Capacitor.Plugins.Share.share({
-              title: '途刻轨迹图片',
-              text: filename,
+              title: (shareMeta && shareMeta.title) || '途刻轨迹图片',
+              text: (shareMeta && shareMeta.text) || filename,
               url: result.uri,
-              dialogTitle: '分享或保存轨迹图片'
+              dialogTitle: (shareMeta && shareMeta.dialogTitle) || '分享或保存轨迹图片'
             });
           }).then(() => {
             Toast.show('轨迹图片已导出');
@@ -1547,7 +1733,8 @@ class App {
     const items = [
       { act: 'detail', label: '详情', fn: () => this._showTrailDetail(id) },
       { act: 'load', label: '加载到地图', fn: () => this._loadTrailFromList(id), replayOnly: true },
-      { act: 'export', label: '导出轨迹图片', fn: () => this._exportTrailImage(id), historyOnly: true },
+      { act: 'clean', label: '清洗轨迹', fn: () => this._cleanTrail(id), historyOnly: true },
+      { act: 'share-card', label: '分享卡片', fn: () => this._exportShareCard(id), historyOnly: true },
       { act: 'delete', label: '删除', danger: true, fn: () => this._deleteTrailFromList(id) }
     ];
     menu.innerHTML = items
@@ -1690,10 +1877,10 @@ class App {
   _exportSelectedImages() {
     const ids = Array.from(new Set([...this._historySelected, ...this._replaySelected]));
     if (ids.length === 0) return;
-    Toast.show('正在生成轨迹长图…');
+    Toast.show('正在生成轨迹合集卡片…');
     Storage.loadTrailsByIds(ids).then(async (trails) => {
       if (!trails || trails.length === 0) {
-        Toast.show('导出失败');
+        Toast.show('分享失败');
         return;
       }
       const items = trails.map((t) => ({
@@ -1703,17 +1890,17 @@ class App {
       }));
       const dataUrl = await this.mapManager.renderTrailCollage(items);
       if (!dataUrl) {
-        Toast.show('导出失败，请重试');
+        Toast.show('生成失败，请重试');
         return;
       }
       const dateStr = new Date().toISOString().slice(0, 10);
-      const a = document.createElement('a');
-      a.href = dataUrl;
-      a.download = `途刻-轨迹合集-${dateStr}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      Toast.show(`已导出 ${items.length} 条轨迹合集长图`);
+      const filename = `途刻-轨迹合集-${dateStr}.png`;
+      // 批量导出改为分享链路（与报告导出相同）：原生系统分享 / Web 端下载
+      this._downloadDataUrl(dataUrl, filename, {
+        title: '途刻轨迹合集',
+        text: `途刻 — ${items.length} 条轨迹合集`,
+        dialogTitle: '分享或保存轨迹合集长图'
+      });
       this._toggleMultiSelect(false);
     });
   }
@@ -2182,6 +2369,7 @@ class App {
       ctx.font = `${11 * S}px "HarmonyOS Sans", sans-serif`;
       ctx.textAlign = 'right';
       ctx.fillText('途刻', W - 24 * S, H - 16 * S);
+      ctx.fillText('注：底图较老，仅供参考使用', W - 24 * S, H - 40 * S);
       ctx.textAlign = 'left';
 
       const dateStr = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
@@ -2243,18 +2431,23 @@ class App {
     const statsBtn = this._trailStatsBtn || (this._trailStatsBtn = document.getElementById('trail-stats-btn'));
     const exportBtn = this._trailExportBtn || (this._trailExportBtn = document.getElementById('export-report-btn'));
     const smoothBtn = this._trailSmoothBtn || (this._trailSmoothBtn = document.getElementById('trail-smooth-btn'));
+    const autoPauseBtn = this._trailAutoPauseBtn || (this._trailAutoPauseBtn = document.getElementById('trail-autopause-btn'));
     const distEl = this._trailDistEl || (this._trailDistEl = document.getElementById('trail-distance'));
 
     if (btn) {
-      btn.classList.toggle('recording', this.trail.isRecording);
-      btn.innerHTML = this.trail.isRecording
-        ? '<span class="trail-dot"></span> 记录中...'
-        : '<span class="trail-dot"></span> 开始记录';
+      btn.classList.toggle('recording', this.trail.isRecording && !this.trail.isPaused);
+      if (!this.trail.isRecording) {
+        btn.innerHTML = '<span class="trail-dot"></span> 开始记录';
+      } else if (this.trail.isPaused) {
+        btn.innerHTML = '<span class="trail-dot"></span> 继续';
+      } else {
+        btn.innerHTML = '<span class="trail-dot"></span> 暂停';
+      }
     }
 
     if (pauseBtn) {
       pauseBtn.disabled = !this.trail.isRecording;
-      pauseBtn.textContent = this.trail.isPaused ? '继续' : '暂停';
+      pauseBtn.textContent = '结束并保存';
     }
 
     const dist = this.trail.getDistance();
@@ -2269,6 +2462,11 @@ class App {
 
     if (smoothBtn) {
       smoothBtn.classList.toggle('active', this._trailSmoothing);
+    }
+
+    if (autoPauseBtn) {
+      autoPauseBtn.classList.toggle('active', this._autoPauseEnabled);
+      autoPauseBtn.textContent = this._autoPauseEnabled ? '自动暂停开' : '自动暂停';
     }
   }
 
@@ -2316,6 +2514,9 @@ class App {
       this.myPosition = convPos;
       this.myPositionTime = Date.now();
       this._recordFix(pos, convPos);
+
+      // 静止自动暂停检查（仅手动开关开启时生效）
+      this._checkAutoPause(this._lastSpeed, pos.timestamp || Date.now());
 
       this._fetchWeather();
 
@@ -2532,8 +2733,9 @@ class App {
     const pos = this.myPosition;
     const lat = pos?.lat ?? 39.9;
     const lng = pos?.lng ?? 116.4;
+    // 主源 Open-Meteo，失败自动降级 wttr.in
     this._fetchWeatherOpenMeteo(lat, lng)
-      .catch(() => {});
+      .catch(() => this._fetchWeatherWttrIn(lat, lng).catch(() => {}));
   }
 
   _fetchWeatherOpenMeteo(lat, lng) {
@@ -2546,7 +2748,6 @@ class App {
         const temp = cur.temperature_2m;
         const feelsLike = cur.apparent_temperature;
         const humidity = cur.relative_humidity_2m;
-        const wind = cur.wind_speed_10m;
         const desc = App._weatherCodeToZh(cur.weather_code);
         const feelsText = feelsLike != null ? ` 体感${Math.round(feelsLike)}°` : '';
         const humidityText = humidity != null ? ` 湿度${humidity}%` : '';
@@ -2557,7 +2758,48 @@ class App {
           const sunset = daily.sunset[0].slice(11);
           sunText = ` 日出${sunrise} 日落${sunset}`;
         }
-        this._weatherHtml = `<span class="gps-weather">${temp}°C${feelsText} ${wind}km/h${humidityText}${desc ? ' ' + desc : ''}${sunText}</span>`;
+        // 更新时间：Open-Meteo current.time 为本地时区 ISO 时间（timezone=auto），取 HH:MM
+        const updateText = cur.time && /T\d{2}:\d{2}/.test(cur.time)
+          ? ` 更新${cur.time.slice(11, 16)}`
+          : '';
+        this._weatherHtml = `<span class="gps-weather">${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}${sunText}${updateText}</span>`;
+        this._updateStatusBar(true);
+      });
+  }
+
+  /**
+   * 备用天气源：wttr.in（Open-Meteo 失败时降级）
+   * 返回结构：current_condition[0]（temp_C/FeelsLikeC/humidity/windspeedKmph/weatherDesc[0].value/localObsDateTime）
+   * 与 weather[0].astronomy[0]（sunrise/sunset）。lang=zh 使 weatherDesc 直接返回中文。
+   */
+  _fetchWeatherWttrIn(lat, lng) {
+    const url = `https://wttr.in/${lat.toFixed(4)},${lng.toFixed(4)}?format=j1&lang=zh&timezone=auto`;
+    return fetch(url, { signal: AbortSignal.timeout(6000) })
+      .then(r => r.json())
+      .then(data => {
+        const cc = data?.current_condition?.[0];
+        if (!cc) throw new Error('no data');
+        const temp = cc.temp_C;
+        const feelsLike = cc.FeelsLikeC;
+        const humidity = cc.humidity;
+        const desc = cc.weatherDesc?.[0]?.value || '';
+        const feelsText = feelsLike != null ? ` 体感${Math.round(feelsLike)}°` : '';
+        const humidityText = humidity != null ? ` 湿度${humidity}%` : '';
+        let sunText = '';
+        const astro = data.weather?.[0]?.astronomy?.[0];
+        if (astro?.sunrise && astro?.sunset) {
+          sunText = ` 日出${astro.sunrise} 日落${astro.sunset}`;
+        }
+        // 更新时间：wttr.in localObsDateTime 如 "2026-08-07 02:30 PM"，转 24 小时制 HH:MM
+        let updateText = '';
+        const obs = String(cc.localObsDateTime || '');
+        const m = obs.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+        if (m) {
+          let h = parseInt(m[1], 10) % 12;
+          if (/pm/i.test(m[3])) h += 12;
+          updateText = ` 更新${String(h).padStart(2, '0')}:${m[2]}`;
+        }
+        this._weatherHtml = `<span class="gps-weather">${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}${sunText}${updateText}</span>`;
         this._updateStatusBar(true);
       });
   }

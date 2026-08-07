@@ -54,6 +54,17 @@ const CONFIG = {
   TRAIL_STATIONARY_SPEED: 0.3,
   TRAIL_MAX_POINTS: 300000,
 
+  // ----- 自动暂停（记录 Tab 手动开关，默认关闭）-----
+  AUTO_PAUSE_WINDOW_S: 10,       // 静止持续时长（秒）达到后自动暂停计时
+  AUTO_PAUSE_SPEED: 0.5,         // 低于该速度视为静止（m/s）
+  AUTO_PAUSE_RESUME_SPEED: 1.2,  // 高于该速度视为恢复移动（m/s）
+  AUTO_PAUSE_STORAGE_KEY: 'trailcraft_autopause',
+
+  // ----- 轨迹清洗（trimEndpoints / filterOutliers）-----
+  TRAIL_CLEAN_START_M: 30,          // 起点静止漂移段累计位移阈值（米），累计超过则停止裁剪
+  TRAIL_CLEAN_END_M: 30,            // 终点静止漂移段累计位移阈值（米）
+  TRAIL_CLEAN_MAX_JUMP_FACTOR: 5,   // 单点跳变相对「速度×时间」的倍数上限，超过判异常
+
   // ----- 轨迹分段 / 关键点分析 -----
   TRAIL_SEGMENT_MIN_POINTS: 3,   // 速度等级连续 N 个点才切段（防抖）
   TRAIL_SEGMENT_MIN_DIST: 60,    // 段最短距离（米），过短并入相邻段
