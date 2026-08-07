@@ -50,8 +50,8 @@ const CONFIG = {
   // ----- 轨迹 -----
   TRAIL_SAMPLE_MIN_DIST: 5,
   TRAIL_JITTER_FACTOR: 1.5,
-  // 静止速度阈值（m/s）：GPS 上报速度低于该值视为静止，此时若位移异常大则判定为漂移鬼点
-  TRAIL_STATIONARY_SPEED: 0.5,
+  // 静止速度阈值（m/s）：约 1km/h。GPS 上报速度低于该值视为静止，此时若位移异常大则判定为漂移鬼点
+  TRAIL_STATIONARY_SPEED: 0.3,
   TRAIL_MAX_POINTS: 300000,
 
   // ----- 轨迹分段 / 关键点分析 -----

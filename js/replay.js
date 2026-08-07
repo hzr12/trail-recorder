@@ -355,21 +355,34 @@ class TrailPlayer {
     const p0 = positions[idx];
     const p1 = positions[Math.min(idx + 1, positions.length - 1)];
 
-    // 优先使用 GPS 原始 speed（停车时 GPS 通常上报 0，位移推算反而会因漂移误差放大成非零）；
-    // 钳制非负避免 GPS 负值显示成负数；原始 speed 缺失时才用位移推算兜底
-    let speed = 0;
-    if (p0.speed != null) {
-      speed = Math.max(0, p0.speed);
-    } else if (p1.speed != null) {
-      speed = Math.max(0, p1.speed);
-    } else {
+    // 速度计算：位移推算与 GPS 上报 speed 互相印证
+    // - dispSpeed：相邻点位移 / 时间差（距离恒非负）
+    // - gpsSpeed：GPS 上报原始 speed（钳制非负）
+    // 任一来源显示「静止」（低于阈值，约 1km/h）即视为停车，速度为 0：
+    //   静止时 GPS 可能上报 0.3~0.5 m/s 噪声，且漂移会让位移推算放大成 1 m/s 左右，
+    //   仅靠单一来源无法可靠判定，取两者较小值 < 阈值则归零。
+    const dispSpeed = (() => {
       const dtMs = (p1.time || 0) - (p0.time || 0);
-      if (dtMs > 0) {
-        speed = calcDistance(
-          { lat: p0.lat, lng: p0.lng },
-          { lat: p1.lat, lng: p1.lng }
-        ) / (dtMs / 1000); // m/s，距离恒非负
-      }
+      if (dtMs <= 0) return null;
+      const d = calcDistance(
+        { lat: p0.lat, lng: p0.lng },
+        { lat: p1.lat, lng: p1.lng }
+      );
+      return d / (dtMs / 1000);
+    })();
+    const gpsSpeed = p0.speed != null ? Math.max(0, p0.speed)
+      : (p1.speed != null ? Math.max(0, p1.speed) : null);
+
+    // 静止速度阈值：约 1km/h（0.3 m/s）
+    const STATIONARY_SPEED = 0.3;
+    let speed = 0;
+    if (dispSpeed != null && gpsSpeed != null) {
+      // 两来源都可信：取较小者判断是否静止，移动时取较大者反映真实速度
+      speed = Math.min(dispSpeed, gpsSpeed) < STATIONARY_SPEED ? 0 : Math.max(dispSpeed, gpsSpeed);
+    } else if (gpsSpeed != null) {
+      speed = gpsSpeed < STATIONARY_SPEED ? 0 : gpsSpeed;
+    } else if (dispSpeed != null) {
+      speed = dispSpeed < STATIONARY_SPEED ? 0 : dispSpeed;
     }
 
     return {
