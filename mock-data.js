@@ -21,11 +21,6 @@ function haversine(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function bearingToDir(heading) {
-  const dirs = ['北', '东北', '东', '东南', '南', '西南', '西', '西北'];
-  return dirs[Math.round(heading / 45) % 8];
-}
-
 // ===== 轨迹生成器 =====
 
 const MockTrails = {

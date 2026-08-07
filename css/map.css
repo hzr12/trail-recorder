@@ -20,7 +20,7 @@
 #circle-canvas { z-index: 10; }
 #overlay-canvas { z-index: 11; }
 
-/* 地图控件调整（适配深色背景�?*/
+/* 地图控件调整（适配深色背景） */
 .qq-map .map-controls {
   filter: invert(0.85) hue-rotate(180deg);
 }
@@ -71,7 +71,7 @@
   color: var(--accent-1);
 }
 
-/* 持续追踪中按钮样�?*/
+/* 持续追踪中按钮样式 */
 .fab-btn.watching {
   background: rgba(0, 212, 170, 0.2);
   border-color: rgba(0, 212, 170, 0.5);

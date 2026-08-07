@@ -261,7 +261,7 @@ class MapManager {
       '</svg>'
     ].join('\n');
 
-    const dataUri = 'data:image/svg+xml;base64,' + btoa(svg);
+    const dataUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
 
     return new qq.maps.MarkerImage(
       dataUri,

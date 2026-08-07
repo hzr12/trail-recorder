@@ -20,9 +20,9 @@
     opacity: 0.5;
   }
 
-  /* 把手状态指示：折叠�?展开�?*/
+  /* 把手状态指示：折叠态/展开态 */
   .bottom-panel.collapsed .handle-bar::after {
-    transform: rotate(135deg); /* 向上箭头 �?上拉展开 */
+    transform: rotate(135deg); /* 向上箭头：上拉展开 */
   }
 
   .handle-bar {
@@ -39,7 +39,7 @@
     margin: -6px 0 0 -4px;
     border-left: 2px solid rgba(255,255,255,0.35);
     border-bottom: 2px solid rgba(255,255,255,0.35);
-    transform: rotate(-45deg); /* 向下箭头 �?按下折叠 */
+    transform: rotate(-45deg); /* 向下箭头：按下折叠 */
     transition: transform 0.3s ease;
   }
 
@@ -230,7 +230,7 @@
   }
 }
 
-/* 超小屏进一步紧�?*/
+/* 超小屏进一步紧凑 */
 @media (max-width: 360px) {
   .panel-body {
     padding-left: 10px;

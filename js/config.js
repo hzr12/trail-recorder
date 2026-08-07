@@ -149,7 +149,6 @@ function bearingToDir(deg) {
 function formatDistance(meters) {
   if (!Number.isFinite(meters) || meters < 0) return '--';
   const val = Math.round(meters);
-  if (val < 10) return `${val}m`;
   if (val < 1000) return `${val}m`;
   if (val < 10000) return `${(val / 1000).toFixed(2)}km`;
   return `${(val / 1000).toFixed(1)}km`;

@@ -46,6 +46,7 @@ class App {
     this._lastDistPos = null;
     this._lastFullUpdate = 0;
     this._panelCollapsed = window.innerWidth <= CONFIG.MOBILE_BREAKPOINT;
+    this._panelUserToggled = false;
     this._watchingBeforeHide = false;
     this._restoringView = false;
     this._isBackground = false;
@@ -79,6 +80,7 @@ class App {
     this._batteryLevelHandler = null;
     this._batteryChargingHandler = null;
     this._batteryTimeHandler = null;
+    this._lowBatteryNotified = false;
     this._panelMediaQuery = null;
     this._panelMediaqueryChange = null;
     this._lastCalcPos = null;
@@ -166,6 +168,8 @@ class App {
     }
     this._panelMediaQuery = window.matchMedia(`(max-width: ${CONFIG.MOBILE_BREAKPOINT}px)`);
     this._panelMediaqueryChange = (e) => {
+      // 用户手动切换过面板状态后，不再被断点变化强制覆盖
+      if (this._panelUserToggled) return;
       this._panelCollapsed = e.matches;
       this._bottomPanel.classList.toggle('collapsed', e.matches);
     };
@@ -305,6 +309,7 @@ class App {
 
     this._panelHandle.addEventListener('click', () => {
       this._panelCollapsed = !this._panelCollapsed;
+      this._panelUserToggled = true;
       this._bottomPanel.classList.toggle('collapsed', this._panelCollapsed);
     });
 
@@ -2570,8 +2575,14 @@ class App {
         this._batteryCharging = battery.charging;
         this._batteryTime = battery.dischargingTime;
         this._updateStatusBar(true);
+        // 仅在首次进入低电量（≤15% 且未充电）时提示一次，避免每次 levelchange 重复弹
         if (battery.level <= 0.15 && !battery.charging) {
-          Toast.show('电量不足 15%，建议开启省电模式');
+          if (!this._lowBatteryNotified) {
+            this._lowBatteryNotified = true;
+            Toast.show('电量不足 15%，建议开启省电模式');
+          }
+        } else {
+          this._lowBatteryNotified = false;
         }
       };
       battery.addEventListener('levelchange', this._batteryLevelHandler);

@@ -129,7 +129,7 @@ class TrailPlayer {
       '</svg>'
     ].join('\n');
 
-    const dataUri = 'data:image/svg+xml;base64,' + btoa(svg);
+    const dataUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
     return new qq.maps.MarkerImage(
       dataUri,
       new qq.maps.Size(40, 40),
@@ -169,10 +169,16 @@ class TrailPlayer {
       this._currentIndex = 0;
       this._playbackTime = 0;
       this._accumulatedTime = 0;
+      // 重播需重置 marker 平滑动画状态，否则 marker 会从终点平滑飞回起点
+      this._markerDisplayPos = null;
+      this._markerTargetPos = null;
+      this._markerLastAnimTime = 0;
+      this._markerHeading = null;
       if (this._playedPathPolyline) {
         this._playedPathPolyline.setMap(null);
         this._playedPathPolyline = null;
       }
+      this._updateMarker(this.positions[0]);
     }
 
     this.isPlaying = true;
