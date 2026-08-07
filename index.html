@@ -258,22 +258,19 @@
     </div>
   </div>
 
-  <!-- Tencent Map API -->
-  <script charset="utf-8" src="https://map.qq.com/api/js?v=2.exp&key=OB4BZ-D4W3U-B7VVO-4PJWW-6TKDJ-WPB77&libraries=geometry,convertor"></script>
+  <!-- Tencent Map API（async 异步加载，MapManager.init 会等待 SDK 就绪） -->
+  <script charset="utf-8" async src="https://map.qq.com/api/js?v=2.exp&key=OB4BZ-D4W3U-B7VVO-4PJWW-6TKDJ-WPB77&libraries=geometry,convertor"></script>
 
-  <!-- Chart.js（速度曲线） -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
-
-  <!-- 应用脚本 -->
-  <script src="js/config.js?t=20260805v10"></script>
-  <script src="js/toast.js?t=20260805v8"></script>
-  <script src="js/storage.js?t=20260805v10"></script>
-  <script src="js/trail.js?t=20260805v11"></script>
-  <script src="js/trail-analysis.js?t=20260805v11"></script>
-  <script src="js/map.js?t=20260805v12"></script>
-  <script src="js/gps.js?t=20260805v8"></script>
-  <script src="js/replay.js?t=20260805v8"></script>
-  <script src="js/app-core.js?t=20260805v13"></script>
-  <script src="js/app-gps-ui.js?t=20260805v8"></script>
+  <!-- 应用脚本（defer：并行下载、按序执行，不阻塞 HTML 解析；Chart.js 改为首次打开速度曲线时懒加载） -->
+  <script defer src="js/config.js?t=20260805v10"></script>
+  <script defer src="js/toast.js?t=20260805v8"></script>
+  <script defer src="js/storage.js?t=20260805v10"></script>
+  <script defer src="js/trail.js?t=20260805v11"></script>
+  <script defer src="js/trail-analysis.js?t=20260805v11"></script>
+  <script defer src="js/map.js?t=20260805v12"></script>
+  <script defer src="js/gps.js?t=20260805v8"></script>
+  <script defer src="js/replay.js?t=20260805v8"></script>
+  <script defer src="js/app-core.js?t=20260805v13"></script>
+  <script defer src="js/app-gps-ui.js?t=20260805v8"></script>
 </body>
 </html>

@@ -55,16 +55,18 @@ class MapManager {
 
   /**
    * 初始化地图 + Canvas 叠加层
+   * 地图 SDK 采用 async 加载，这里先等待 qq.maps 就绪再创建地图
    */
-  init(containerId, center, zoom) {
+  async init(containerId, center, zoom) {
     const mapEl = document.getElementById(containerId);
 
     this.canvas = document.getElementById('circle-canvas');
-    this.ctx = this.canvas.getContext('2d');
+    this.ctx = this.canvas ? this.canvas.getContext('2d') : null;
     this.overlayCanvas = document.getElementById('overlay-canvas');
     this.overlayCtx = this.overlayCanvas ? this.overlayCanvas.getContext('2d') : null;
 
-    if (typeof qq === 'undefined' || !qq.maps || typeof qq.maps.Map !== 'function') {
+    const sdkReady = await this._waitForMapSDK();
+    if (!sdkReady) {
       console.error('[MapManager] 腾讯地图 SDK 加载失败');
       try { Toast.show(' 地图加载失败，请检查网络后刷新页面'); } catch (_) {}
       throw new Error('腾讯地图 SDK 未加载');
@@ -96,6 +98,28 @@ class MapManager {
     this._resizeCanvas();
 
     return this;
+  }
+
+  /**
+   * 等待腾讯地图 SDK 就绪（async 加载时 qq.maps 可能尚未注入）
+   * @returns {Promise<boolean>} SDK 是否在超时前就绪
+   */
+  _waitForMapSDK(timeoutMs = 15000) {
+    return new Promise((resolve) => {
+      const startedAt = Date.now();
+      const check = () => {
+        if (typeof qq !== 'undefined' && qq.maps && typeof qq.maps.Map === 'function') {
+          resolve(true);
+          return;
+        }
+        if (Date.now() - startedAt >= timeoutMs) {
+          resolve(false);
+          return;
+        }
+        setTimeout(check, 100);
+      };
+      check();
+    });
   }
 
   _invalidateCoordCache() {

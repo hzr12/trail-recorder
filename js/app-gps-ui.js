@@ -7,11 +7,30 @@
 
 /* ── 速度曲线 ─────────────────────────────────────── */
 
+App.prototype._ensureChartJS = function () {
+  if (typeof Chart !== 'undefined') return Promise.resolve();
+  if (this._chartJsPromise) return this._chartJsPromise;
+  this._chartJsPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js';
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => {
+      this._chartJsPromise = null;
+      reject(new Error('Chart.js 加载失败'));
+    };
+    document.head.appendChild(s);
+  });
+  return this._chartJsPromise;
+};
+
 App.prototype._showSpeedChart = function () {
   const section = document.getElementById('speed-chart-section');
   if (!section) return;
   section.classList.remove('hidden');
-  this._initSpeedChart();
+  this._ensureChartJS()
+    .then(() => this._initSpeedChart())
+    .catch((err) => console.warn('[App] 速度曲线库加载失败:', err.message));
   const header = section.querySelector('.speed-chart-header');
   const body = document.getElementById('speed-chart-body');
   const toggle = document.getElementById('speed-chart-toggle');

@@ -157,8 +157,13 @@ class App {
     });
   }
 
-  init() {
-    this.mapManager.init('map', CONFIG.DEFAULT_CENTER, CONFIG.DEFAULT_ZOOM);
+  async init() {
+    // 地图 SDK 为 async 加载，先等待就绪；失败不阻断 UI 初始化
+    try {
+      await this.mapManager.init('map', CONFIG.DEFAULT_CENTER, CONFIG.DEFAULT_ZOOM);
+    } catch (e) {
+      console.error('[App] 地图初始化失败，继续加载 UI:', e.message);
+    }
     this._setupUI();
 
     if (this._panelCollapsed) {
@@ -2657,7 +2662,9 @@ function _bootApp() {
   if (_appInitialized) return;
   _appInitialized = true;
   const app = new App();
-  app.init();
+  app.init().catch((err) => {
+    console.error('[App] 启动异常:', err && err.message ? err.message : err);
+  });
   window.app = app;
 }
 
