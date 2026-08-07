@@ -1206,13 +1206,14 @@ class App {
    * 将历史轨迹导出为单张轨迹图片（含标题与统计）
    */
   _exportTrailImage(id) {
-    Storage.loadTrailById(id).then((data) => {
+    Storage.loadTrailById(id).then(async (data) => {
       if (!data || !data.positions || data.positions.length < 2) {
         Toast.show('轨迹数据不足，无法导出');
         return;
       }
       const stats = this._computeTrailStats(data.positions);
-      const dataUrl = this.mapManager.renderTrailThumbnail(data.positions, {
+      Toast.show('正在生成轨迹图片…');
+      const dataUrl = await this.mapManager.renderTrailThumbnail(data.positions, {
         title: data.name || '轨迹',
         stats: { distance: stats.distance, duration: stats.duration, points: data.positions.length }
       });
@@ -1319,7 +1320,7 @@ class App {
   }
 
   _showTrailDetail(id) {
-    Storage.loadTrailById(id).then((data) => {
+    Storage.loadTrailById(id).then(async (data) => {
       if (!data || !data.positions || data.positions.length < 2) {
         Toast.show('轨迹数据不足');
         return;
@@ -1352,8 +1353,9 @@ class App {
         return `${sec}秒`;
       };
 
-      const thumb = this.mapManager.renderTrailThumbnail(pos, {
+      const thumb = await this.mapManager.renderTrailThumbnail(pos, {
         title: data.name,
+        map: false,
         stats: { distance: stats.distance, duration: durationMs, points: pos.length }
       });
       const firstTime = pos[0].time;
@@ -1689,7 +1691,7 @@ class App {
     const ids = Array.from(new Set([...this._historySelected, ...this._replaySelected]));
     if (ids.length === 0) return;
     Toast.show('正在生成轨迹长图…');
-    Storage.loadTrailsByIds(ids).then((trails) => {
+    Storage.loadTrailsByIds(ids).then(async (trails) => {
       if (!trails || trails.length === 0) {
         Toast.show('导出失败');
         return;
@@ -1699,7 +1701,7 @@ class App {
         name: t.name,
         stats: this._computeTrailStats(t.positions)
       }));
-      const dataUrl = this.mapManager.renderTrailCollage(items);
+      const dataUrl = await this.mapManager.renderTrailCollage(items);
       if (!dataUrl) {
         Toast.show('导出失败，请重试');
         return;
@@ -2051,7 +2053,7 @@ class App {
             const jobs = [];
             for (let tx = tileRange.x0; tx <= tileRange.x1; tx++) {
               for (let ty = tileRange.y0; ty <= tileRange.y1; ty++) {
-                jobs.push(this._loadMapTile(z, tx, ty));
+                jobs.push(this.mapManager._loadMapTile(z, tx, ty));
               }
             }
             return jobs;
@@ -2232,41 +2234,6 @@ class App {
       console.error('[Export] 报告导出失败:', e);
       Toast.show(' 导出报告失败');
     }
-  }
-
-  /**
-   * 加载高德地图瓦片（普通道路图 style=8，GCJ-02 与腾讯地图同坐标系）
-   * scale=2（512px retina）失败时回退 scale=1（256px）
-   * fetch + blob 加载避免 canvas 污染（PNG 可正常导出）
-   * @param {number} z 瓦片层级
-   * @param {number} x 瓦片列号
-   * @param {number} y 瓦片行号
-   * @returns {Promise<HTMLImageElement>}
-   */
-  async _loadMapTile(z, x, y) {
-    const base = 'https://webrd01.is.autonavi.com/appmaptile';
-    for (const scale of [2, 1]) {
-      // 每个瓦片带超时（AbortController），避免离线/慢网时导出无限挂起
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5000);
-      try {
-        const url = `${base}?lang=zh_cn&size=1&scale=${scale}&style=8&x=${x}&y=${y}&z=${z}`;
-        const res = await fetch(url, { signal: controller.signal });
-        if (!res.ok) continue;
-        const blob = await res.blob();
-        const image = await new Promise((resolve, reject) => {
-          const img = new Image();
-          const objectUrl = URL.createObjectURL(blob);
-          img.onload = () => { URL.revokeObjectURL(objectUrl); resolve(img); };
-          img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('tile decode failed')); };
-          img.src = objectUrl;
-        });
-        return image;
-      } finally {
-        clearTimeout(timer);
-      }
-    }
-    throw new Error('tile fetch failed');
   }
 
   _updateTrailUI() {

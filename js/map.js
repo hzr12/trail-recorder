@@ -811,13 +811,13 @@ class MapManager {
   }
 
   /**
-   * 在 canvas 上绘制轨迹缩略图（不依赖地图瓦片，避免跨域污染）
+   * 在 canvas 上绘制轨迹缩略图（默认叠加高德瓦片底图，跨域安全；失败自动降级纯色）
    * @param {HTMLCanvasElement} canvas
    * @param {Array} positions 轨迹点 [{lat,lng,speed?}]
-   * @param {Object} opts {width,height,title,stats,background}
-   * @returns {HTMLCanvasElement}
+   * @param {Object} opts {width,height,title,stats,background,map}
+   * @returns {Promise<HTMLCanvasElement>}
    */
-  _drawTrailThumbnail(canvas, positions, opts) {
+  async _drawTrailThumbnail(canvas, positions, opts) {
     if (!positions || positions.length < 2) return canvas;
     const o = opts || {};
     const W = canvas.width;
@@ -859,6 +859,15 @@ class MapManager {
     const offY = (H - drawH) / 2 - minY * scale;
 
     const toXY = (wp) => ({ x: wp.x * scale + offX, y: wp.y * scale + offY });
+
+    // 地图底图：高德瓦片（GCJ-02 与轨迹同坐标系），失败/禁用时保持纯色背景
+    if (o.map !== false) {
+      try {
+        await this._drawThumbnailTiles(ctx, { padX, padY, W, H, scale, offX, offY });
+      } catch (e) {
+        if (typeof CONFIG !== 'undefined' && CONFIG.DEBUG) console.warn('[MapManager] 缩略图底图降级纯色:', e && e.message);
+      }
+    }
 
     // 速度着色折线
     const colorMap = this._speedColorMap;
@@ -922,12 +931,121 @@ class MapManager {
   }
 
   /**
-   * 离线生成轨迹缩略图
-   * @param {Array} positions 轨迹点 [{lat,lng,speed?}]
-   * @param {Object} opts {width,height,title,stats,background}
-   * @returns {string|null} PNG dataURL，失败返回 null
+   * 为缩略图绘制高德瓦片底图（普通道路图 style=8，GCJ-02 与轨迹同坐标系）
+   * fetch + blob 加载避免 canvas 污染；任一张失败整体降级纯色
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {Object} geo {padX,padY,W,H,scale,offX,offY} 绘制区几何
+   * @returns {Promise<boolean>} 是否绘制成功
    */
-  renderTrailThumbnail(positions, opts) {
+  async _drawThumbnailTiles(ctx, geo) {
+    const { padX, padY, W, H, scale, offX, offY } = geo;
+    // 绘制区四角世界坐标（Web Mercator 0~1）
+    const areaLeft = (padX - offX) / scale;
+    const areaRight = (W - padX - offX) / scale;
+    const areaTop = (padY - offY) / scale;
+    const areaBottom = (H - padY - offY) / scale;
+    const areaW = Math.max(1e-9, areaRight - areaLeft);
+
+    // 选定层级：瓦片像素分辨率 ≈ 画布分辨率
+    let z = Math.round(Math.log2((W - 2 * padX) / (256 * areaW)));
+    z = Math.min(18, Math.max(3, z));
+
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    // 瓦片数量上限 100，超出则降档
+    let range = null;
+    for (; z >= 3; z--) {
+      const n = 1 << z;
+      const x0 = clamp(Math.floor(areaLeft * n), 0, n - 1);
+      const x1 = clamp(Math.floor(areaRight * n), 0, n - 1);
+      const y0 = clamp(Math.floor(areaTop * n), 0, n - 1);
+      const y1 = clamp(Math.floor(areaBottom * n), 0, n - 1);
+      range = { z, x0, x1, y0, y1, count: (x1 - x0 + 1) * (y1 - y0 + 1) };
+      if (range.count <= 100) break;
+    }
+    if (!range) return false;
+
+    // 并发加载全部瓦片
+    const jobs = [];
+    for (let tx = range.x0; tx <= range.x1; tx++) {
+      for (let ty = range.y0; ty <= range.y1; ty++) {
+        jobs.push(this._loadMapTile(range.z, tx, ty));
+      }
+    }
+    const results = await Promise.allSettled(jobs);
+    if (!results.every((r) => r.status === 'fulfilled')) return false;
+    const imgs = results.map((r) => r.value);
+
+    // 绘制（与轨迹投影严格对齐，边缘 +1px 防缝隙）
+    // 世界 0~1 投影下瓦片覆盖宽度 1/n，画布目标宽度 = scale/n（≈256px，由 zoom 选择保证）
+    const n = 1 << range.z;
+    const tilePx = scale / n;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(padX, padY, W - 2 * padX, H - 2 * padY);
+    ctx.clip();
+    let i = 0;
+    for (let tx = range.x0; tx <= range.x1; tx++) {
+      for (let ty = range.y0; ty <= range.y1; ty++) {
+        const px = (tx / n) * scale + offX;
+        const py = (ty / n) * scale + offY;
+        ctx.drawImage(imgs[i++], px - 0.5, py - 0.5, tilePx + 1, tilePx + 1);
+      }
+    }
+    ctx.restore();
+    return true;
+  }
+
+  /**
+   * 加载高德地图瓦片（普通道路图 style=8，GCJ-02 与腾讯地图同坐标系）
+   * scale=2（512px retina）失败时回退 scale=1（256px）
+   * fetch + blob 加载避免 canvas 污染（PNG 可正常导出）；带内存缓存与超时
+   * @param {number} z 瓦片层级
+   * @param {number} x 瓦片列号
+   * @param {number} y 瓦片行号
+   * @returns {Promise<HTMLImageElement>}
+   */
+  _loadMapTile(z, x, y) {
+    const key = `${z}/${x}/${y}`;
+    if (this._tileCache && this._tileCache.get(key)) return this._tileCache.get(key);
+    const base = 'https://webrd01.is.autonavi.com/appmaptile';
+    const task = (async () => {
+      for (const scale of [2, 1]) {
+        // 每个瓦片带超时（AbortController），避免离线/慢网时导出无限挂起
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        try {
+          const url = `${base}?lang=zh_cn&size=1&scale=${scale}&style=8&x=${x}&y=${y}&z=${z}`;
+          const res = await fetch(url, { signal: controller.signal });
+          if (!res.ok) continue;
+          const blob = await res.blob();
+          const image = await new Promise((resolve, reject) => {
+            const img = new Image();
+            const objectUrl = URL.createObjectURL(blob);
+            img.onload = () => { URL.revokeObjectURL(objectUrl); resolve(img); };
+            img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('tile decode failed')); };
+            img.src = objectUrl;
+          });
+          return image;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      throw new Error('tile fetch failed');
+    })();
+    if (!this._tileCache) this._tileCache = new Map();
+    this._tileCache.set(key, task);
+    task.catch(() => { if (this._tileCache) this._tileCache.delete(key); });
+    if (this._tileCache.size > 80) this._tileCache.clear();
+    return task;
+  }
+
+  /**
+   * 离线生成轨迹缩略图（默认叠加地图底图）
+   * @param {Array} positions 轨迹点 [{lat,lng,speed?}]
+   * @param {Object} opts {width,height,title,stats,background,map}
+   * @returns {Promise<string|null>} PNG dataURL，失败返回 null
+   */
+  async renderTrailThumbnail(positions, opts) {
     if (!positions || positions.length < 2) return null;
     const o = opts || {};
     const W = o.width || 800;
@@ -935,7 +1053,7 @@ class MapManager {
     const canvas = document.createElement('canvas');
     canvas.width = W;
     canvas.height = H;
-    this._drawTrailThumbnail(canvas, positions, o);
+    await this._drawTrailThumbnail(canvas, positions, o);
     try {
       return canvas.toDataURL('image/png');
     } catch (e) {
@@ -948,9 +1066,9 @@ class MapManager {
    * 将多条轨迹渲染成一张纵向长图（解决批量导出被浏览器拦截多文件下载的问题）
    * @param {Array} items [{positions, name, stats}]
    * @param {Object} opts {width,thumbHeight}
-   * @returns {string|null} PNG dataURL，失败返回 null
+   * @returns {Promise<string|null>} PNG dataURL，失败返回 null
    */
-  renderTrailCollage(items, opts) {
+  async renderTrailCollage(items, opts) {
     if (!items || items.length === 0) return null;
     const o = opts || {};
     const W = o.width || 800;
@@ -989,7 +1107,7 @@ class MapManager {
       const panel = document.createElement('canvas');
       panel.width = W;
       panel.height = thumbH;
-      this._drawTrailThumbnail(panel, it.positions, {
+      await this._drawTrailThumbnail(panel, it.positions, {
         title: it.name || `轨迹 ${i + 1}`,
         stats: it.stats
       });

@@ -93,6 +93,7 @@
     <div class="panel-body">
       <!-- 记录 Tab -->
       <div id="tab-record">
+      <div class="panel-card card-record">
       <!-- 轨迹记录 -->
       <div class="trail-section">
         <div class="trail-header">
@@ -132,6 +133,7 @@
           </div>
         </div>
       </div>
+      </div><!-- /card-record -->
 
       <!-- 速度曲线面板 -->
       <div id="speed-chart-section" class="speed-chart-section hidden">
@@ -201,6 +203,7 @@
         </div>
 
         <!-- 可回放轨迹列表 -->
+        <div class="panel-card card-replay-list">
         <div class="replay-trails-section">
           <div class="replay-trails-header">
             <span>可回放轨迹</span>
@@ -227,10 +230,12 @@
             <div class="trail-list-empty">暂无历史轨迹</div>
           </div>
         </div>
+        </div><!-- /card-replay-list -->
       </div>
 
       <!-- 历史 Tab -->
       <div id="tab-history" style="display:none">
+        <div class="panel-card card-history-list">
         <div class="trail-list-header">
           <input type="text" class="trail-search-input" id="history-search" placeholder="搜索名称/日期/距离…" />
           <select class="trail-time-select" id="history-time-range">
@@ -254,6 +259,7 @@
         <div class="trail-list" id="trail-list">
           <div class="trail-list-empty">暂无历史轨迹</div>
         </div>
+        </div><!-- /card-history-list -->
       </div>
 
       <!-- 批量操作工具栏（多选时显示） -->

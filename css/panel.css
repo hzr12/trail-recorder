@@ -1,5 +1,6 @@
 /* ============================================
    途刻 TraceCraft - 面板样式
+   深色玻璃卡片 · 分段控件 · 桌面右侧抽屉
    ============================================ */
 
 /* ---------- 底部面板 ---------- */
@@ -10,9 +11,9 @@
   right: 0;
   z-index: 200;
   background: var(--bg-panel);
-  backdrop-filter: blur(40px);
-  -webkit-backdrop-filter: blur(40px);
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(40px) saturate(1.4);
+  -webkit-backdrop-filter: blur(40px) saturate(1.4);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   box-shadow: var(--shadow-panel);
   max-height: 45vh;
@@ -41,6 +42,7 @@
   pointer-events: none;
 }
 
+/* ---------- 拖拽把手 ---------- */
 .panel-handle {
   display: flex;
   justify-content: center;
@@ -60,30 +62,123 @@
   background: var(--handle-bar-active);
 }
 
+/* ---------- 面板头 ---------- */
 .panel-header {
   position: relative;
-  padding: 0 20px 10px;
+  padding: 2px 20px 10px;
   text-align: center;
 }
 
 .panel-title {
-  font-size: 16px;
-  font-weight: normal;
+  font-size: 17px;
+  font-weight: 600;
   letter-spacing: -0.02em;
   background: var(--accent-gradient);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  display: inline;
 }
 
+/* ---------- 面板体 ---------- */
 .panel-body {
   padding: 0 20px calc(16px + var(--safe-bottom));
 }
 
-/* ---------- GPS 状态条 ---------- */
+/* ---------- 通用玻璃卡片 ---------- */
+.panel-card {
+  position: relative;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  margin-bottom: 10px;
+  animation: cardIn 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
 
-/* ---------- 浮动按钮 ---------- */
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* 卡片内部既有区块的间距由卡片统一呼吸，消除双重边距 */
+.card-record .trail-section,
+.card-replay-list .replay-trails-section,
+.card-history-list .trail-list-header {
+  margin-top: 0;
+}
+
+.card-record .trail-section {
+  margin-bottom: 0;
+}
+
+.card-replay-list .replay-trails-section {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+/* ---------- 分段控件（Tab） ---------- */
+/* 特异性高于 trail.css 的 .mode-tab*，保证分段控件样式生效 */
+.bottom-panel .mode-tabs {
+  display: flex;
+  position: relative;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  padding: 4px;
+  margin: 0 16px 12px;
+}
+
+.bottom-panel .mode-tabs .mode-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 8px;
+  border-radius: var(--radius-full);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.bottom-panel .mode-tabs .mode-tab:active {
+  transform: scale(0.96);
+}
+
+.bottom-panel .mode-tabs .mode-tab.active {
+  background: var(--accent-gradient);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(0, 163, 255, 0.28);
+}
+
+/* 回放 Tab 保持橙色语义 */
+.bottom-panel .mode-tabs .mode-tab[data-tab="replay"].active {
+  background: rgba(255, 149, 0, 0.16);
+  color: #FF9500;
+  box-shadow: 0 4px 12px rgba(255, 149, 0, 0.18);
+}
+
+/* ---------- 面板内卡片对齐 ---------- */
+#tab-record .speed-chart-section,
+#tab-record .gnss-bar {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+/* 回放空态卡片化，与其余区块呼吸一致 */
+#tab-replay .replay-empty {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  margin-bottom: 10px;
+  animation: cardIn 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* ---------- 浮动定位按钮 ---------- */
 .floating-buttons {
   position: fixed;
   right: 16px;
@@ -139,6 +234,7 @@
   font-size: 14px;
   font-weight: normal;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  -webkit-tap-highlight-color: transparent;
 }
 
 .btn:active {
@@ -163,6 +259,14 @@
 
 .btn-secondary:active {
   background: var(--bg-hover);
+}
+
+/* 通用轻交互：悬停提亮 */
+.btn-sm:hover:not(:disabled),
+.speed-btn:hover,
+.header-btn:hover,
+.batch-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
 }
 
 /* ---------- 标签 ---------- */

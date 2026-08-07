@@ -261,17 +261,32 @@
     min-width: 30px;
   }
 }
-/* ---------- 响应式：平板 / 桌面 ---------- */
+/* ---------- 响应式：平板 / 桌面（右侧浮动抽屉） ---------- */
 @media (min-width: 768px) {
   .bottom-panel {
     left: auto;
     right: 24px;
     bottom: 24px;
-    width: 380px;
-    max-height: 70vh;
+    width: 400px;
+    max-height: calc(100vh - 48px);
     border-radius: var(--radius-lg);
     border: 1px solid var(--border-color);
-    box-shadow: 0 8px 48px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.45);
+    scrollbar-width: thin;
+  }
+
+  /* 桌面端忽略移动折叠态：抽屉始终可滚动展示 */
+  .bottom-panel.collapsed {
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+  }
+
+  .bottom-panel.collapsed .panel-header,
+  .bottom-panel.collapsed .mode-tabs,
+  .bottom-panel.collapsed .panel-body,
+  .bottom-panel.collapsed .gps-status {
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .panel-handle {
@@ -279,7 +294,21 @@
   }
 
   .panel-header {
-    padding-top: 6px;
+    padding: 10px 20px 8px;
+    text-align: left;
+  }
+
+  .panel-title {
+    font-size: 18px;
+  }
+
+  .mode-tabs {
+    margin: 0 16px 14px;
+  }
+
+  .panel-body {
+    padding-left: 16px;
+    padding-right: 16px;
   }
 
   .info-grid {
@@ -289,16 +318,16 @@
   .floating-buttons {
     top: auto;
     bottom: 24px;
-    right: 420px;
+    right: 440px;
   }
 }
 
 @media (min-width: 1200px) {
   .bottom-panel {
-    width: 400px;
+    width: 440px;
   }
 
   .floating-buttons {
-    right: 440px;
+    right: 480px;
   }
 }
