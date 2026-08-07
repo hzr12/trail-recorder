@@ -1,7 +1,7 @@
 /**
  * 轨迹回放播放器
  * =============================================
- * 支持多倍速回放（1x, 1.5x, 2x, 4x）
+ * 支持多倍速回放（1x, 2x, 5x, 10x）
  * 使用 requestAnimationFrame 进行时间插值回放
  */
 
@@ -112,19 +112,21 @@ class TrailPlayer {
   }
 
   _createReplayIcon(heading) {
-    const deg = (heading != null && !isNaN(heading)) ? Number(heading) : 0;
-    // 箭头初始朝北（12 点方向），按方位角 deg（正北顺时针）旋转
-    const arrow = `<polygon points="20,3 26,15 14,15" fill="#fff" opacity="0.95" transform="rotate(${deg}, 20, 20)"/>`;
+    // 回放点：橙色实心圆点 + 方向小三角（结构与定位点一致，颜色区分）
+    const arrow = (heading != null && !isNaN(heading))
+      ? `<polygon points="20,2 23,10 17,10" fill="#FF9500" transform="rotate(${heading}, 20, 20)"/>`
+      : '';
     const svg = [
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">',
       '  <defs>',
-      '    <filter id="replay-glow" x="-50%" y="-50%" width="200%" height="200%">',
-      '      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#FF9500" flood-opacity="0.5"/>',
+      '    <filter id="replay-shadow" x="-20%" y="-20%" width="140%" height="140%">',
+      '      <feDropShadow dx="0" dy="1" stdDeviation="3" flood-opacity="0.5"/>',
       '    </filter>',
       '  </defs>',
-      '  <circle cx="20" cy="20" r="18" fill="none" stroke="#FF9500" stroke-width="1.5" opacity="0.2"/>',
-      '  <circle cx="20" cy="20" r="14" fill="none" stroke="#FF9500" stroke-width="1.5" opacity="0.4"/>',
-      '  <circle cx="20" cy="20" r="9" fill="#FF9500" stroke="#fff" stroke-width="2" filter="url(#replay-glow)"/>',
+      '  <circle cx="20" cy="20" r="17" fill="none" stroke="#FF9500" stroke-width="1.5" opacity="0.12"/>',
+      '  <circle cx="20" cy="20" r="13" fill="none" stroke="#FF9500" stroke-width="2" opacity="0.28"/>',
+      '  <circle cx="20" cy="20" r="7" fill="#FF9500" stroke="#fff" stroke-width="2.5" filter="url(#replay-shadow)"/>',
+      '  <circle cx="20" cy="20" r="2.5" fill="#fff" opacity="0.95"/>',
       arrow,
       '</svg>'
     ].join('\n');
@@ -353,11 +355,28 @@ class TrailPlayer {
     const p0 = positions[idx];
     const p1 = positions[Math.min(idx + 1, positions.length - 1)];
 
+    // 优先使用 GPS 原始 speed（停车时 GPS 通常上报 0，位移推算反而会因漂移误差放大成非零）；
+    // 钳制非负避免 GPS 负值显示成负数；原始 speed 缺失时才用位移推算兜底
+    let speed = 0;
+    if (p0.speed != null) {
+      speed = Math.max(0, p0.speed);
+    } else if (p1.speed != null) {
+      speed = Math.max(0, p1.speed);
+    } else {
+      const dtMs = (p1.time || 0) - (p0.time || 0);
+      if (dtMs > 0) {
+        speed = calcDistance(
+          { lat: p0.lat, lng: p0.lng },
+          { lat: p1.lat, lng: p1.lng }
+        ) / (dtMs / 1000); // m/s，距离恒非负
+      }
+    }
+
     return {
       lat: p0.lat + (p1.lat - p0.lat) * progress,
       lng: p0.lng + (p1.lng - p0.lng) * progress,
       time: (p0.time || 0) + ((p1.time || 0) - (p0.time || 0)) * progress,
-      speed: p0.speed != null ? p0.speed : (p1.speed || 0),
+      speed,
       heading: p0.heading != null ? p0.heading : (p1.heading || 0)
     };
   }
@@ -412,6 +431,7 @@ class TrailPlayer {
       progress: this.getProgress(),
       currentSpeed: point.speed || 0,
       currentHeading: point.heading || 0,
+      currentPoint: point,
       distance: this._totalDistance
     };
   }

@@ -188,8 +188,9 @@ App.prototype._updateStatusBar = function (force) {
 /* ── 跟随模式切换 ─────────────────────────────────── */
 
 App.prototype._toggleFollowMode = function () {
-  if (this._isReplaying) {
-    Toast.show(' 回放中不可切换跟随模式');
+  // 仅回放「播放中」锁定跟随按钮；回放暂停时解锁，允许自由切换地图跟随
+  if (this._isReplaying && this._replayPlayer && this._replayPlayer.isPlaying) {
+    Toast.show(' 回放播放中不可切换跟随模式');
     return;
   }
   if (!this.myPosition) {

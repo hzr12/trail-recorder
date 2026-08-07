@@ -274,6 +274,11 @@ class App {
       replayStopBtn.addEventListener('click', () => this._stopReplay());
     }
 
+    const replayFollowBtn = document.getElementById('replay-follow-btn');
+    if (replayFollowBtn) {
+      replayFollowBtn.addEventListener('click', () => this._toggleReplayFollow());
+    }
+
     document.querySelectorAll('.speed-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
         const speed = parseFloat(btn.dataset.speed);
@@ -925,9 +930,12 @@ class App {
 
     if (this._replayPlayer.isPlaying) {
       this._replayPlayer.pause();
-      // 暂停即解锁追踪模式：地图不再跟随回放点，用户可自由拖动浏览
+      // 暂停即解锁追踪：地图不再跟随回放点，用户可自由拖动浏览
       this._replayFollowMode = false;
       this._replayLastPanPoint = null;
+      // 解锁 GPS 状态栏的跟随按钮：恢复为可操作的定位跟随，刷新按钮状态
+      this._followMode = false;
+      this._updateStatusBar(true);
     } else {
       // 继续播放时恢复地图跟随
       this._replayFollowMode = true;
@@ -935,6 +943,24 @@ class App {
     }
 
     this._updateReplayUI();
+  }
+
+  /**
+   * 切换回放跟随模式：开启时地图中心跟随回放点移动，关闭时自由浏览
+   */
+  _toggleReplayFollow() {
+    if (!this._replayPlayer) return;
+    this._replayFollowMode = !this._replayFollowMode;
+    // 开启跟随时，立即把地图中心对齐到当前回放点
+    if (this._replayFollowMode) {
+      const info = this._replayPlayer.getCurrentInfo();
+      if (info && info.currentPoint) {
+        this._replayLastPanPoint = null;
+        this._panToReplayPoint(info.currentPoint);
+      }
+    }
+    this._updateReplayUI();
+    Toast.show(this._replayFollowMode ? ' 已开启轨迹跟随' : ' 已关闭轨迹跟随（可自由浏览）');
   }
 
   _setReplaySpeed(speed) {
@@ -1026,6 +1052,13 @@ class App {
       }
     }
 
+    const followBtn = document.getElementById('replay-follow-btn');
+    if (followBtn) {
+      const on = !!this._replayFollowMode;
+      followBtn.classList.toggle('active', on);
+      followBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+
     document.querySelectorAll('.speed-btn').forEach((btn) => {
       btn.classList.toggle('active', parseFloat(btn.dataset.speed) === this._replaySpeed);
     });
@@ -1038,7 +1071,8 @@ class App {
     if (!infoEl || !this._replayPlayer) return;
 
     const info = this._replayPlayer.getCurrentInfo();
-    const speedKmh = (info.currentSpeed || 0) * 3.6;
+    // 钳制到非负：GPS 可能上报负速度，避免回放面板显示负数
+    const speedKmh = Math.max(0, info.currentSpeed || 0) * 3.6;
     const direction = bearingToDir(info.currentHeading || 0);
     const elapsed = TrailPlayer.formatDuration(info.elapsedMs);
     const remaining = TrailPlayer.formatDuration(info.remainingMs);
