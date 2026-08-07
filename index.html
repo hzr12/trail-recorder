@@ -8,6 +8,11 @@
   <meta name="theme-color" content="#0F172A">
   <meta name="apple-mobile-web-app-title" content="途刻">
   <title>途刻</title>
+  <!-- 预热外部连接：提前建立与腾讯地图/Chart.js CDN 的 TCP+TLS 握手，减少首屏等待 -->
+  <link rel="preconnect" href="https://map.qq.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="dns-prefetch" href="https://map.qq.com">
+  <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
   <link rel="icon" type="image/svg+xml" href="favicon.svg?v=20260805">
   <link rel="apple-touch-icon" href="favicon.svg?v=20260805">
   <link rel="stylesheet" href="css/fonts.css?t=20260805v9">
