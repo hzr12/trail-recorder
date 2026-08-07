@@ -44,9 +44,6 @@ class MapManager {
     this._lastTrailCount = 0;
     this._lastTrailAnchor = null;
     this._lastTrailInput = null;
-    // 回放期间锁定轨迹线重绘：腾讯地图 Polyline 无 zIndex，层级由创建顺序决定，
-    // 若回放中 clearTrail + 重建 polyline，新线会盖住回放的橙色已播路径
-    this._replayActive = false;
 
     this.trailMarkers = [];
 
@@ -288,7 +285,13 @@ class MapManager {
       } else {
         this.locationMarker.setIcon(this._createLocationIcon());
       }
+      // getPosition() 在 marker 初始化/挂载过渡期可能返回 null，加防护避免 TypeError
       const cur = this.locationMarker.getPosition();
+      if (!cur) {
+        this._stopLocationAnim();
+        this.locationMarker.setPosition(latLng);
+        return;
+      }
       const jumpDist = calcDistance(
         { lat: cur.lat, lng: cur.lng },
         target
@@ -417,19 +420,10 @@ class MapManager {
   }
 
   /**
-   * 回放期间锁定轨迹线重绘（轨迹线由回放视觉体系呈现，避免重建 polyline 盖住回放已播路径）
-   * @param {boolean} active
-   */
-  setReplayActive(active) {
-    this._replayActive = !!active;
-  }
-
-  /**
    * 更新历史轨迹线（按速度分段着色）
    */
   setTrail(positions) {
     if (!this.map) return;
-    if (this._replayActive) return; // 回放中禁止重绘轨迹线
     if (!Array.isArray(positions) || positions.length < 2) {
       this.clearTrail();
       return;
@@ -521,11 +515,16 @@ class MapManager {
   }
 
   _flushSegment(path, clr) {
+    // 兜底：速度等级表与色板 key 若不一致，避免 new qq.maps.Color(undefined,...) 崩溃
+    if (!clr || typeof clr.r !== 'number') {
+      clr = { r: 0, g: 212, b: 170, a: 0.85 };
+    }
     const poly = new qq.maps.Polyline({
       path,
       strokeColor: new qq.maps.Color(clr.r, clr.g, clr.b, clr.a),
       strokeWeight: 3.5,
-      map: this.map
+      map: this.map,
+      zIndex: 10 // 记录轨迹线置于回放路径（zIndex 100+）之下，支持并行显示
     });
     this.trailPolylines.push(poly);
   }
@@ -669,7 +668,7 @@ class MapManager {
   }
 
   refreshTrailColors(positions) {
-    if (!this.map || this._replayActive) return;
+    if (!this.map) return;
     if (!Array.isArray(positions) || positions.length < 2) return;
     if (this._themeRefreshRaf) {
       cancelAnimationFrame(this._themeRefreshRaf);

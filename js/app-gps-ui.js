@@ -160,10 +160,11 @@ App.prototype._updateStatusBar = function (force) {
   if (!stale && this._lastAltitude != null) {
     line2Parts.push(`<span class="gps-altitude">${Math.round(this._lastAltitude)}m</span>`);
   }
-  if (!stale && this._lastHeading != null) {
+  if (!stale && Number.isFinite(this._lastHeading)) {
     const dir = bearingToDir(this._lastHeading);
     const arrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
-    const arrow = arrows[Math.round(this._lastHeading / 45) % 8];
+    // 负 heading（GPS 未知方向）时索引归一化到 [0,8)，避免 arrows[负索引] 显示 undefined
+    const arrow = arrows[((Math.round(this._lastHeading / 45) % 8) + 8) % 8];
     line2Parts.push(`<span class="gps-heading">${arrow} ${dir} ${Math.round(this._lastHeading)}°</span>`);
   }
   if (this._batteryLevel != null) {

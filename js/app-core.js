@@ -688,7 +688,8 @@ class App {
 
       this._recordFix(pos, convPos, false, true);
 
-      if (this.trail.isRecording && !this.trail.isPaused && !this._trailLoading && !this._isReplaying) {
+      // 回放期间允许记录继续采集（并行模式）：记录轨迹线与回放路径分属不同 zIndex 层，互不遮挡
+      if (this.trail.isRecording && !this.trail.isPaused && !this._trailLoading) {
         const added = this.trail.addPoint({
           lat: convPos.lat,
           lng: convPos.lng,
@@ -837,11 +838,7 @@ class App {
       return;
     }
 
-    if (this.trail.isRecording) {
-      Toast.show(' 记录中无法回放，请先停止记录');
-      return;
-    }
-
+    // 并行模式：允许记录中回放当前已采集的轨迹（回放与记录互不干扰）
     const positions = this._getTrailPositions();
     if (!positions || positions.length < 2) {
       Toast.show(' 轨迹点数不足，无法回放');
@@ -856,8 +853,6 @@ class App {
     this._isReplaying = true;
     document.body.classList.add('replay-mode');
     this._replayFollowMode = true;
-    // 锁定轨迹线重绘，避免回放期间切主题/平滑等操作重建 polyline 盖住已播路径
-    this.mapManager.setReplayActive(true);
 
     if (this._replayPlayer) {
       this._replayPlayer.destroy();
@@ -899,8 +894,6 @@ class App {
   _stopReplay() {
     this._isReplaying = false;
     document.body.classList.remove('replay-mode');
-    // 解锁轨迹线重绘
-    this.mapManager.setReplayActive(false);
 
     if (this._replayPlayer) {
       this._replayPlayer.destroy();
@@ -1131,26 +1124,16 @@ class App {
         this._stopReplay();
       }
 
-      // 若正在记录，先停止记录，避免后续 clear/positions 覆盖破坏正在采集的轨迹
-      if (this.trail.isRecording) {
-        this._stopTrailRecording();
-      }
-
       // 切换到回放 Tab
       this._setTab('replay');
 
-      // 加载轨迹到地图
-      this.trail.clear();
-      this.trail.positions = data.positions;
-      this.trail.lastPos = data.positions[data.positions.length - 1];
-      this.mapManager.setTrail(this._getTrailPositions());
-      this._updateTrailUI();
-
+      // 回放使用独立数据源，不写入 this.trail：
+      // 若正在记录，记录轨迹继续在后台采集/显示，回放轨迹与记录轨迹互不污染、并行共存
       Toast.show(` 已加载「${data.name}」（${data.positions.length} 点）`);
 
       // 自动开始回放
       setTimeout(() => {
-        this._startReplay(this._getTrailPositions(), data.name);
+        this._startReplay(data.positions, data.name);
       }, 300);
     });
   }
@@ -1182,11 +1165,16 @@ class App {
         Toast.show(' 轨迹数据不足');
         return;
       }
-      this.trail.clear();
-      this.trail.positions = data.positions;
-      this.trail.lastPos = data.positions[data.positions.length - 1];
-      this.mapManager.setTrail(this._getTrailPositions());
+      // 历史轨迹仅加载显示到地图，不污染 trail 容器：
+      // 若正在记录，记录数据保持独立（并行），加载查看不影响采集
+      this.mapManager.setTrail(data.positions);
       this.mapManager.setTrailMarkers(TrailAnalysis.analyzeKeyPoints(data.positions));
+      // 未记录时同步到 trail 容器，保留「回放当前轨迹」能力；记录中则跳过避免覆盖记录数据
+      if (!this.trail.isRecording) {
+        this.trail.clear();
+        this.trail.positions = data.positions;
+        this.trail.lastPos = data.positions[data.positions.length - 1];
+      }
       this._updateTrailUI();
       this._setTab('record');
       Toast.show(` 已加载「${data.name}」（${data.positions.length} 点）`);
@@ -2389,7 +2377,8 @@ class App {
         }
       }
 
-      if (this.trail.isRecording && !this._trailLoading && !this._isReplaying) {
+      // 回放期间允许记录继续采集（并行模式）
+      if (this.trail.isRecording && !this._trailLoading) {
         const added = this.trail.addPoint({
           lat: convPos.lat,
           lng: convPos.lng,

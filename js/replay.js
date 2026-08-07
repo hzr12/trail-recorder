@@ -15,7 +15,12 @@ class TrailPlayer {
    * @param {Function} [callbacks.onFrame] - 每帧回调 (currentPoint, index)
    */
   constructor(positions, mapManager, callbacks = {}) {
-    this.positions = positions;
+    // 复制数组快照：若回放源是当前记录的 trail.positions，记录继续 addPoint 会原地扩展数组，
+    // 快照保证回放期间点数固定，不随记录变化而混乱
+    // 同时过滤非法坐标点（lat/lng 非有限数），避免插值输出 NaN/null 污染回放
+    this.positions = Array.isArray(positions)
+      ? positions.filter((p) => p && Number.isFinite(p.lat) && Number.isFinite(p.lng))
+      : [];
     this.mapManager = mapManager;
     this.callbacks = callbacks;
 
@@ -104,7 +109,8 @@ class TrailPlayer {
         strokeColor: new qq.maps.Color(0, 212, 170, 0.3),
         strokeWeight: 4,
         map: this.mapManager.map,
-        clickable: false
+        clickable: false,
+        zIndex: 100 // 回放完整路径置顶，避免被记录轨迹线遮挡
       });
     }
 
@@ -157,7 +163,8 @@ class TrailPlayer {
         strokeColor: new qq.maps.Color(255, 149, 0, 0.9),
         strokeWeight: 4,
         map: this.mapManager.map,
-        clickable: false
+        clickable: false,
+        zIndex: 101 // 已播路径最高层级，始终盖在记录轨迹之上
       });
     } else if (this._playedPathPolyline) {
       const playedPath = pathPoints.map(p => new qq.maps.LatLng(p.lat, p.lng));
@@ -239,7 +246,10 @@ class TrailPlayer {
   }
 
   seekToProgress(progress) {
-    const clampedProgress = Math.max(0, Math.min(1, progress));
+    // 非有限值（NaN/Infinity）一律按 0 处理，避免污染内部状态
+    const clampedProgress = Number.isFinite(progress)
+      ? Math.max(0, Math.min(1, progress))
+      : 0;
     this._playbackTime = clampedProgress * this._totalDuration;
     this._accumulatedTime = this._playbackTime;
     this._currentIndex = this._findIndexAtTime(this._playbackTime);
