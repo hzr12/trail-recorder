@@ -1478,6 +1478,17 @@ class App {
    */
   _showTrailItemMenu(anchorBtn, id, isReplay) {
     this._closeTrailItemMenu();
+
+    // 全屏透明遮罩：拦截点击，避免误触被遮挡的轨迹操作
+    const backdrop = document.createElement('div');
+    backdrop.className = 'trail-menu-backdrop';
+    backdrop.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._closeTrailItemMenu();
+    });
+    document.body.appendChild(backdrop);
+    this._trailMenuBackdrop = backdrop;
+
     const menu = document.createElement('div');
     menu.className = 'trail-item-menu';
     const items = [
@@ -1492,13 +1503,32 @@ class App {
       .join('');
     document.body.appendChild(menu);
 
-    // 定位在触发按钮下方（fixed，避免被列表 overflow 裁剪）
+    // 自适应定位（fixed，避免被列表 overflow 裁剪）
     const rect = anchorBtn.getBoundingClientRect();
     const mw = menu.offsetWidth;
-    let left = rect.right - mw;
-    if (left < 8) left = 8;
+    const mh = menu.offsetHeight;
+    const gap = 6;
+    const margin = 8;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    // 水平：优先右对齐触发按钮，并钳制在视口内
+    let left = Math.min(rect.right - mw, vw - mw - margin);
+    left = Math.max(margin, left);
+
+    // 垂直：下方空间足够则向下弹出，否则翻转到上方；上下都不足则贴边
+    let top;
+    const below = vh - rect.bottom;
+    const above = rect.top;
+    if (below >= mh + gap + margin) {
+      top = rect.bottom + gap;
+    } else if (above >= mh + gap + margin) {
+      top = rect.top - mh - gap;
+    } else {
+      top = Math.max(margin, Math.min(vh - mh - margin, rect.bottom - mh / 2));
+    }
     menu.style.left = `${left}px`;
-    menu.style.top = `${rect.bottom + 4}px`;
+    menu.style.top = `${top}px`;
 
     this._trailMenu = menu;
     this._trailMenuClickHandler = (e) => {
@@ -1508,12 +1538,7 @@ class App {
       this._closeTrailItemMenu();
       if (item && item.fn) item.fn();
     };
-    this._trailMenuDocHandler = (e) => {
-      if (menu && !menu.contains(e.target)) this._closeTrailItemMenu();
-    };
     menu.addEventListener('click', this._trailMenuClickHandler);
-    // 等当前事件冒泡结束后再挂 document 监听，避免立即关闭
-    setTimeout(() => document.addEventListener('click', this._trailMenuDocHandler), 0);
   }
 
   _closeTrailItemMenu() {
@@ -1521,13 +1546,13 @@ class App {
       this._trailMenu.remove();
       this._trailMenu = null;
     }
+    if (this._trailMenuBackdrop) {
+      this._trailMenuBackdrop.remove();
+      this._trailMenuBackdrop = null;
+    }
     if (this._trailMenuClickHandler) {
       // handler 随元素移除自动失效，无需额外清理
       this._trailMenuClickHandler = null;
-    }
-    if (this._trailMenuDocHandler) {
-      document.removeEventListener('click', this._trailMenuDocHandler);
-      this._trailMenuDocHandler = null;
     }
   }
 
