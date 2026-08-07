@@ -133,6 +133,13 @@
     width: 14px;
     height: 14px;
   }
+  /* 扩大点击热区到 ≥40px，避免移动端误触/难以命中 */
+  .theme-toggle::after {
+    content: '';
+    position: absolute;
+    inset: -6px;
+    border-radius: 50%;
+  }
 }
 
 /* ---------- 主色选择�?---------- */

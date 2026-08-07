@@ -139,7 +139,8 @@ App.prototype._updateStatusBar = function (force) {
   const watchingIcon = isTracking ? ' <span class="gps-tracking">◉</span>' : '';
   const staleIcon = stale ? ' <span class="gps-stale"> 已过期</span>' : '';
   const degradedIcon = isDowngraded ? ' <span class="gps-degraded"> 低精度</span>' : '';
-  const followIcon = this._followMode ? ' <span class="gps-follow"> 跟随中</span>' : '';
+  // 跟随模式独立为按钮，避免整条状态栏误触切换
+  const followIcon = ` <button class="gps-follow-toggle${this._followMode ? ' active' : ''}" title="切换地图跟随">${this._followMode ? '跟随中' : '跟随'}</button>`;
 
   let gnssHtml = '';
   if (this.gpsManager.hasGnssPlugin) {

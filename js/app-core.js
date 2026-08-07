@@ -285,8 +285,10 @@ class App {
     this._statusEl = document.getElementById('gps-status');
     this._gnssBarEl = document.getElementById('gnss-bar');
 
-    // GPS 状态条点击切换跟随模式
-    this._statusEl.addEventListener('click', () => this._toggleFollowMode());
+    // GPS 状态条：仅点击跟随按钮切换跟随模式，避免整条误触
+    this._statusEl.addEventListener('click', (e) => {
+      if (e.target.closest('.gps-follow-toggle')) this._toggleFollowMode();
+    });
 
     let pressTimer = null;
     let isLongPress = false;
