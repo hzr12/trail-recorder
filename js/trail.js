@@ -92,6 +92,15 @@ class Trail {
       if (dist <= jitterThreshold) {
         return false;
       }
+      // 漂移鬼点过滤：上报速度显示静止（<0.5 m/s），但位移却异常大（超过精度抖动阈值的数倍），
+      // 说明是 GPS 静止漂移而非真实移动，丢弃该点避免轨迹出现「分叉尾巴」
+      const speed = pt.speed;
+      if (typeof speed === 'number' && speed >= 0 && speed < CONFIG.TRAIL_STATIONARY_SPEED) {
+        if (dist > jitterThreshold * 4) {
+          if (CONFIG.DEBUG) console.warn('[Trail] 丢弃静止漂移点:', dist.toFixed(1) + 'm', speed + 'm/s');
+          return false;
+        }
+      }
     }
     this.positions.push(pt);
     this.lastPos = pt;

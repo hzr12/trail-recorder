@@ -96,7 +96,6 @@ class App {
     this._replaySegments = [];
     this._replayCurrentIndex = 0;
     this._replayFollowMode = true;
-    this._replayLastPanPoint = null;
     this._onlyFav = false;
     this._replayOnlyFav = false;
     this._searchKeyword = '';
@@ -595,7 +594,8 @@ class App {
       }, (location, error) => {
         if (error || !location) return;
         const now = Date.now();
-        if (now - this._lastBgNativeTime < 30000) return;
+        // 有电时 5s/次上报后台位置
+        if (now - this._lastBgNativeTime < 5000) return;
         this._lastBgNativeTime = now;
         this._processBackgroundPosition({
           lat: location.latitude,
@@ -637,7 +637,8 @@ class App {
   }
 
   _fallbackBackgroundLocate() {
-    const interval = this.gpsManager.isPowerSaving ? 60000 : 15000;
+    // 省电模式 20s/次，有电时 5s/次
+    const interval = this.gpsManager.isPowerSaving ? 20000 : 5000;
     this._backgroundLocate();
     if (this._bgLocateInterval) clearInterval(this._bgLocateInterval);
     this._bgLocateInterval = setInterval(() => {
@@ -855,7 +856,8 @@ class App {
     this._isReplaying = true;
     document.body.classList.add('replay-mode');
     this._replayFollowMode = true;
-    this._replayLastPanPoint = null;
+    // 锁定轨迹线重绘，避免回放期间切主题/平滑等操作重建 polyline 盖住已播路径
+    this.mapManager.setReplayActive(true);
 
     if (this._replayPlayer) {
       this._replayPlayer.destroy();
@@ -897,7 +899,8 @@ class App {
   _stopReplay() {
     this._isReplaying = false;
     document.body.classList.remove('replay-mode');
-    this._replayLastPanPoint = null;
+    // 解锁轨迹线重绘
+    this.mapManager.setReplayActive(false);
 
     if (this._replayPlayer) {
       this._replayPlayer.destroy();
@@ -932,7 +935,6 @@ class App {
       this._replayPlayer.pause();
       // 暂停即解锁追踪：地图不再跟随回放点，用户可自由拖动浏览
       this._replayFollowMode = false;
-      this._replayLastPanPoint = null;
       // 解锁 GPS 状态栏的跟随按钮：恢复为可操作的定位跟随，刷新按钮状态
       this._followMode = false;
       this._updateStatusBar(true);
@@ -955,7 +957,6 @@ class App {
     if (this._replayFollowMode) {
       const info = this._replayPlayer.getCurrentInfo();
       if (info && info.currentPoint) {
-        this._replayLastPanPoint = null;
         this._panToReplayPoint(info.currentPoint);
       }
     }
@@ -996,44 +997,18 @@ class App {
   }
 
   /**
-   * 跟随模式平滑移动地图中心。
-   * 避免每帧调用带动画的 panTo（会互相打断导致地图抖动）：
-   * 仅在屏幕像素位移超过阈值时用无动画的 setCenter 对齐一次。
+   * 持续追踪：地图中心每帧跟随回放点（无动画 setCenter，相邻帧位移小则视觉平滑连续）。
+   * 不使用带动画的 panTo（每帧调用会互相打断导致地图抖动）。
    */
   _panToReplayPoint(point) {
     const map = this.mapManager.map;
-    const pt = new qq.maps.LatLng(point.lat, point.lng);
-    const last = this._replayLastPanPoint;
-    if (!last) {
-      this._replayLastPanPoint = { lat: point.lat, lng: point.lng };
-      map.setCenter(pt);
-      return;
-    }
-    try {
-      const proj = map.getProjection();
-      if (!proj) {
-        this._replayLastPanPoint = { lat: point.lat, lng: point.lng };
-        map.setCenter(pt);
-        return;
-      }
-      const p0 = proj.fromLatLngToPoint(new qq.maps.LatLng(last.lat, last.lng));
-      const p1 = proj.fromLatLngToPoint(pt);
-      const dx = p1.x - p0.x;
-      const dy = p1.y - p0.y;
-      if (Math.hypot(dx, dy) >= 30) {
-        this._replayLastPanPoint = { lat: point.lat, lng: point.lng };
-        map.setCenter(pt);
-      }
-    } catch (e) {
-      this._replayLastPanPoint = { lat: point.lat, lng: point.lng };
-      map.setCenter(pt);
-    }
+    if (!map) return;
+    map.setCenter(new qq.maps.LatLng(point.lat, point.lng));
   }
 
   _onReplayComplete() {
     // 回放自然结束：同步解锁追踪模式，地图恢复自由浏览
     this._replayFollowMode = false;
-    this._replayLastPanPoint = null;
     this._updateReplayUI();
     Toast.show(' 回放完成');
   }

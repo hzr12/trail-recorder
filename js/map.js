@@ -44,6 +44,9 @@ class MapManager {
     this._lastTrailCount = 0;
     this._lastTrailAnchor = null;
     this._lastTrailInput = null;
+    // 回放期间锁定轨迹线重绘：腾讯地图 Polyline 无 zIndex，层级由创建顺序决定，
+    // 若回放中 clearTrail + 重建 polyline，新线会盖住回放的橙色已播路径
+    this._replayActive = false;
 
     this.trailMarkers = [];
 
@@ -414,10 +417,19 @@ class MapManager {
   }
 
   /**
+   * 回放期间锁定轨迹线重绘（轨迹线由回放视觉体系呈现，避免重建 polyline 盖住回放已播路径）
+   * @param {boolean} active
+   */
+  setReplayActive(active) {
+    this._replayActive = !!active;
+  }
+
+  /**
    * 更新历史轨迹线（按速度分段着色）
    */
   setTrail(positions) {
     if (!this.map) return;
+    if (this._replayActive) return; // 回放中禁止重绘轨迹线
     if (!Array.isArray(positions) || positions.length < 2) {
       this.clearTrail();
       return;
@@ -657,7 +669,8 @@ class MapManager {
   }
 
   refreshTrailColors(positions) {
-    if (!this.map || !Array.isArray(positions) || positions.length < 2) return;
+    if (!this.map || this._replayActive) return;
+    if (!Array.isArray(positions) || positions.length < 2) return;
     if (this._themeRefreshRaf) {
       cancelAnimationFrame(this._themeRefreshRaf);
       this._themeRefreshRaf = null;
