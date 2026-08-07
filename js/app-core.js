@@ -1225,13 +1225,62 @@ class App {
       }
       const safeName = (data.name || '轨迹').replace(/[\\/:*?"<>|]/g, '_');
       const dateStr = new Date().toISOString().slice(0, 10);
-      const a = document.createElement('a');
-      a.href = dataUrl;
-      a.download = `途刻-${safeName}-${dateStr}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      Toast.show('轨迹图片已导出');
+      const filename = `途刻-${safeName}-${dateStr}.png`;
+      // dataURL → Blob：移动端/Capacitor 中 a[download] 会被忽略，改用 toBlob + 原生分享/Blob URL
+      this._downloadDataUrl(dataUrl, filename);
+    });
+  }
+
+  /**
+   * 下载 dataURL 图片（兼容 web 与 Capacitor 原生环境）
+   * 原生：写入缓存目录并调起系统分享；web：Blob URL + a[download]
+   */
+  _downloadDataUrl(dataUrl, filename) {
+    // dataURL → Blob（兼容含中文的 SVG dataURI 与 PNG base64）
+    const fetchBlob = () =>
+      fetch(dataUrl).then((r) => r.blob()).catch(() => null);
+
+    fetchBlob().then((blob) => {
+      if (!blob) {
+        Toast.show('导出失败，请重试');
+        return;
+      }
+      if (typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform()) {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64 = String(reader.result || '').split(',')[1] || '';
+          Capacitor.Plugins.Filesystem.writeFile({
+            path: filename,
+            data: base64,
+            directory: 'CACHE'
+          }).then((result) => {
+            return Capacitor.Plugins.Share.share({
+              title: '途刻轨迹图片',
+              text: filename,
+              url: result.uri,
+              dialogTitle: '分享或保存轨迹图片'
+            });
+          }).then(() => {
+            Toast.show('轨迹图片已导出');
+          }).catch((e) => {
+            console.warn('[Export] 原生分享失败:', e && e.message);
+            Toast.show('导出失败，请重试');
+          });
+        };
+        reader.onerror = () => Toast.show('导出失败，请重试');
+        reader.readAsDataURL(blob);
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        Toast.show('轨迹图片已导出');
+      }
     });
   }
 
