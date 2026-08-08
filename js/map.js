@@ -674,14 +674,18 @@ class MapManager {
       cancelAnimationFrame(this._themeRefreshRaf);
       this._themeRefreshRaf = null;
     }
-    const centerIdx = this._findVisibleCenterIndex(positions);
     this.clearTrail();
+    // 短轨迹：清空后在同一帧内同步重绘，避免逐帧重建造成的闪烁
+    if (positions.length <= 3000) {
+      this._renderTrailRange(positions, 0, positions.length);
+      return;
+    }
+    // 超长轨迹：从可见中心向外快速分批补全（目标 ~250ms 完成）
+    const centerIdx = this._findVisibleCenterIndex(positions);
     this._themeRefreshQueue = {
       positions,
       left: centerIdx,
       right: centerIdx + 1,
-      startTime: Date.now(),
-      timeBudget: 60000,
       done: false,
     };
     this._processThemeRefreshBatch();
@@ -721,18 +725,16 @@ class MapManager {
     const q = this._themeRefreshQueue;
     if (!q || q.done) return;
 
-    const elapsed = Date.now() - q.startTime;
     const totalPoints = q.positions.length;
-
-    const remainingTime = Math.max(1, q.timeBudget - elapsed);
     const remainingPoints = (q.left > 0 ? q.left : 0) + (totalPoints - q.right);
-    if (remainingPoints <= 0 || elapsed >= q.timeBudget) {
+    if (remainingPoints <= 0) {
       this._renderRemainingTrail(q);
       this._finishThemeRefresh(q);
       return;
     }
 
-    const batchSize = Math.max(10, Math.ceil(remainingPoints / (remainingTime / 16)));
+    // 每帧画足量，目标 ~15 帧（≈250ms）内完成全部重绘，避免长时间闪烁
+    const batchSize = Math.max(250, Math.ceil(totalPoints / 15));
 
     const leftEnd = Math.max(0, q.left - batchSize);
     if (leftEnd < q.left) {

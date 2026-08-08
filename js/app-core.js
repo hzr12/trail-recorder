@@ -969,6 +969,14 @@ class App {
       this._replayPlayer = null;
     }
 
+    // 清除地图上残留的普通轨迹线（如加载/清洗历史轨迹留下的 zIndex 10 旧线）。
+    // 回放有独立的完整路径视觉体系（zIndex 100+），若旧线数据与回放数据不一致
+    //（典型场景：先加载轨迹再清洗，地图旧线是清洗前数据），会与回放路径叠加显示成"双轨迹"。
+    // 并行记录模式除外：记录轨迹线继续在后台增量绘制，与回放路径分属不同 zIndex 层。
+    if (!(this.trail.isRecording && !this.trail.isPaused)) {
+      this.mapManager.clearTrail();
+    }
+
     this._replayPlayer = new TrailPlayer(positions, this.mapManager, {
       onProgress: (progress) => this._onReplayProgress(progress),
       onComplete: () => this._onReplayComplete(),
