@@ -5,6 +5,15 @@
  * 支持单次定位 + 持续追踪
  */
 
+/** 角度转弧度系数（多次使用，避免重复 Math.PI / 180） */
+const DEG2RAD = Math.PI / 180;
+/** 纬度方向的米/度近似系数（赤道约 111111m/°），经度方向需乘 cos(lat) */
+const M_PER_DEG = 111111;
+/** 2×2 协方差 S 求逆的奇异保护阈值（det 低于此值视为奇异，退化处理） */
+const S_DET_EPSILON = 1e-9;
+/** RTS 时间回环防御：段内出现 dt<=0 时钳制的极小时间窗（秒） */
+const RTS_MIN_DT = 1e-6;
+
 /**
  * 二维卡尔曼滤波器 — 2D 恒速模型（位置+速度矢量），局部 ENU 米坐标
  * 以首次定位为参考点，lat/lng → 米滤波 → 逆变换输出
@@ -64,7 +73,7 @@ class KalmanFilter {
   init(lat, lng, time) {
     this._refLat = lat;
     this._refLng = lng;
-    this._cosLat = Math.cos(lat * Math.PI / 180);
+    this._cosLat = Math.cos(lat * DEG2RAD);
     this._x = 0;
     this._y = 0;
     this._vx = 0;
@@ -132,14 +141,14 @@ class KalmanFilter {
     }
 
     // 坐标正变换：lat/lng → 局部米
-    let mx = (zLng - this._refLng) * 111111 * this._cosLat;
-    let my = (zLat - this._refLat) * 111111;
+    let mx = (zLng - this._refLng) * M_PER_DEG * this._cosLat;
+    let my = (zLat - this._refLat) * M_PER_DEG;
 
     // 距参考点超 3km → 重新锚定（x/y 平移，速度不变）
     if (Math.hypot(mx, my) > 3000) {
       this._reanchor();
-      mx = (zLng - this._refLng) * 111111 * this._cosLat;
-      my = (zLat - this._refLat) * 111111;
+      mx = (zLng - this._refLng) * M_PER_DEG * this._cosLat;
+      my = (zLat - this._refLat) * M_PER_DEG;
     }
 
     // 动态 q（m/s²）：精度好时跟手（响应快），精度差时平滑（抑制噪声）
@@ -194,6 +203,13 @@ class KalmanFilter {
     const s00 = this._Ppred[0] + r, s01 = this._Ppred[1],
           s10 = this._Ppred[4], s11 = this._Ppred[5] + r;
     const det = s00 * s11 - s01 * s10;
+    // 数值稳定性：det 过小 → S 奇异（GPS 精度极高且滤波器极度自信时 P→0 的极端数值退化）。
+    // 直接做 s/det 会得到 Infinity/NaN 污染状态并剧烈震荡。退化时重置并接受测量（安全回退）。
+    if (!(Math.abs(det) > S_DET_EPSILON)) {
+      this.init(zLat, zLng, time);
+      this._lastFiltered = { lat: zLat, lng: zLng };
+      return { lat: zLat, lng: zLng };
+    }
     const si00 = s11 / det, si01 = -s01 / det, si10 = -s10 / det, si11 = s00 / det;
     // K = P⁻·Hᵀ·S⁻¹（4×2，取 P 前两列 × S⁻¹）
     const k00 = (this._Ppred[0] * si00 + this._Ppred[1] * si10);
@@ -255,8 +271,8 @@ class KalmanFilter {
 
     // 逆变换：米 → lat/lng
     const filtered = {
-      lat: this._refLat + this._y / 111111,
-      lng: this._refLng + this._x / (111111 * this._cosLat)
+      lat: this._refLat + this._y / M_PER_DEG,
+      lng: this._refLng + this._x / (M_PER_DEG * this._cosLat)
     };
     this._lastFiltered = filtered;
     return filtered;
@@ -269,13 +285,16 @@ class KalmanFilter {
    * 可让滤波器对后续速度变化更敏感（更快收敛），又不至于完全重置丢失历史。
    */
   _reanchor() {
-    const curLat = this._refLat + this._y / 111111;
-    const curLng = this._refLng + this._x / (111111 * this._cosLat);
+    // 当前估计位置成为新参考点（x/y 平移，速度不变）
+    const curLat = this._refLat + this._y / M_PER_DEG;
+    const curLng = this._refLng + this._x / (M_PER_DEG * this._cosLat);
     this._refLat = curLat;
     this._refLng = curLng;
-    this._cosLat = Math.cos(curLat * Math.PI / 180);
+    this._cosLat = Math.cos(curLat * DEG2RAD);
     this._x = 0;
     this._y = 0;
+    // 触发重锚说明已移动较长距离，期间速度可能已变化：
+    // 适度放大速度不确定度（×2），让滤波器对后续速度变化更敏感，又不至于完全重置
     this._P[10] *= 2; // vx 协方差放大 ×2
     this._P[15] *= 2; // vy 协方差放大 ×2
   }
@@ -316,8 +335,8 @@ class KalmanFilter {
         const prev = fixes[i - 1];
         const dt = (f.time - prev.time) / 1000;
         const ref = seg[0];
-        const mx = (f.lng - ref.lng) * 111111 * Math.cos(ref.lat * Math.PI / 180);
-        const my = (f.lat - ref.lat) * 111111;
+        const mx = (f.lng - ref.lng) * M_PER_DEG * Math.cos(ref.lat * DEG2RAD);
+        const my = (f.lat - ref.lat) * M_PER_DEG;
         const breakSeg = dt <= 0 || dt > 60 || (f.accuracy || 0) > 200 || Math.hypot(mx, my) > 3000;
         if (breakSeg) { segments.push(seg); seg = []; }
       }
@@ -340,14 +359,14 @@ class KalmanFilter {
       return [{ lat: f.lat, lng: f.lng, time: f.time, ts: f.ts }];
     }
     const refLat = fixes[0].lat, refLng = fixes[0].lng;
-    const cosLat = Math.cos(refLat * Math.PI / 180);
+    const cosLat = Math.cos(refLat * DEG2RAD);
 
     // 测量 → 局部米（扁平 Float64Array，缓存友好）
     const zx = new Float64Array(n);
     const zy = new Float64Array(n);
     for (let i = 0; i < n; i++) {
-      zx[i] = (fixes[i].lng - refLng) * 111111 * cosLat;
-      zy[i] = (fixes[i].lat - refLat) * 111111;
+      zx[i] = (fixes[i].lng - refLng) * M_PER_DEG * cosLat;
+      zy[i] = (fixes[i].lat - refLat) * M_PER_DEG;
     }
 
     // ── 前向滤波，扁平存储每步状态与协方差（一次分配，消除逐点 GC）──
@@ -366,8 +385,13 @@ class KalmanFilter {
     let lastTime = fixes[0].time;
 
     for (let i = 1; i < n; i++) {
-      const dt = (fixes[i].time - lastTime) / 1000;
+      let dt = (fixes[i].time - lastTime) / 1000;
       lastTime = fixes[i].time;
+      // 时间回环防御：smoothTrail 已按 dt<=0 分段，段内理论上恒有 dt>0；
+      // 但系统时间微调/异常数据仍可能产生负 dt（时间倒流），导致状态转移矩阵
+      // F 物理意义错误、平滑结果炸裂。钳制到极小正值：状态几乎不转移、结果≈测量，
+      // 避免溢出/炸裂（正常路径 dt>0 完全不受影响）。
+      if (!(dt > RTS_MIN_DT)) dt = RTS_MIN_DT;
       // 动态 q（与 update() 完全一致）
       const accClamped = Math.max(Math.min(fixes[i].accuracy || 10, 100), 1);
       const speedFactor = Math.min(12, Math.max(1, (fixes[i].speed || 0) / 0.5));
@@ -417,6 +441,13 @@ class KalmanFilter {
       const r = sigma * sigma;
       const s00 = Ppred[0] + r, s01 = Ppred[1], s10 = Ppred[4], s11 = Ppred[5] + r;
       const det = s00 * s11 - s01 * s10;
+      // 数值稳定性：S 奇异（det→0）时直接求逆溢出。退化时跳过卡尔曼增益（K=0），
+      // 位置保持预测值、协方差保持预测值，不炸裂不污染后续段（正常路径不受影响）。
+      if (!(Math.abs(det) > S_DET_EPSILON)) {
+        xf[p4] = px0; xf[p4 + 1] = px1; xf[p4 + 2] = px2; xf[p4 + 3] = px3;
+        Pf.set(Ppred, i * 16);
+        continue;
+      }
       const si00 = s11 / det, si01 = -s01 / det, si10 = -s10 / det, si11 = s00 / det;
       const k00 = Ppred[0] * si00 + Ppred[1] * si10;
       const k01 = Ppred[0] * si01 + Ppred[1] * si11;
@@ -492,7 +523,9 @@ class KalmanFilter {
     const C = new Float64Array(16);    // C = A·inv(P_p[k+1])
     const invW = new Float64Array(16); // 求逆结果工作区
     for (let k = n - 2; k >= 0; k--) {
-      const dt = (fixes[k + 1].time - fixes[k].time) / 1000;
+      // 时间回环防御（与前向一致）：负 dt 会让 Fᵀ 物理意义错误，钳制到极小正值
+      let dt = (fixes[k + 1].time - fixes[k].time) / 1000;
+      if (!(dt > RTS_MIN_DT)) dt = RTS_MIN_DT;
       const po = k * 16;
       // A = P_f[k]·Fᵀ：这是「列变换」，A[i][j] 取同一行 i 的列元素：
       //   A[i][0] = Pk[i][0] + dt·Pk[i][2]（列 0 的 Fᵀ 形如 [1,0,dt,0]ᵀ）
@@ -535,8 +568,8 @@ class KalmanFilter {
     for (let i = 0; i < n; i++) {
       const p4 = i * 4;
       out[i] = {
-        lat: refLat + xs[p4 + 1] / 111111,
-        lng: refLng + xs[p4] / (111111 * cosLat),
+        lat: refLat + xs[p4 + 1] / M_PER_DEG,
+        lng: refLng + xs[p4] / (M_PER_DEG * cosLat),
         time: fixes[i].time,
         ts: fixes[i].ts
       };
