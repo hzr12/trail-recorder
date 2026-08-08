@@ -30,6 +30,7 @@ class TrailPlayer {
     this._rafId = null;
 
     this._currentIndex = 0;
+    this._lastIndex = 0;   // 线性探测游标：上次查到的段起点索引，用于利用回放帧间时间局部性
     this._playbackTime = 0;
     this._lastFrameTime = 0;
     this._accumulatedTime = 0;
@@ -299,6 +300,7 @@ class TrailPlayer {
     if (!this.positions || this.positions.length < 2) return;
     if (this._currentIndex >= this.positions.length - 1) {
       this._currentIndex = 0;
+      this._lastIndex = 0;
       this._playbackTime = 0;
       this._accumulatedTime = 0;
       // 重播需重置 marker 平滑动画状态，否则 marker 会从终点平滑飞回起点
@@ -333,6 +335,7 @@ class TrailPlayer {
       this._rafId = null;
     }
     this._currentIndex = 0;
+    this._lastIndex = 0;
     this._playbackTime = 0;
     this._accumulatedTime = 0;
     this._markerDisplayPos = null;
@@ -420,9 +423,43 @@ class TrailPlayer {
 
   _findIndexAtTime(timeMs) {
     if (this._hasTimestamps) {
-      // 二分查找：segStartTimes 为递增的累计时间偏移表，定位最后一个 ≤ timeMs 的段起点
+      // 线性+二分混合查找：segStartTimes 为递增的累计时间偏移表，定位最后一个 ≤ timeMs 的段起点。
+      // 回放/seek 的查询具备强时间局部性（相邻帧 timeMs 通常只前进很小步长），从 _lastIndex
+      // 出发线性探测通常 1~3 次比较即命中（O(1)）；探测 miss（如 seek 大跳/时间回退超上限）时
+      // 回退到二分兜底，保证最坏情况仍为 O(log n)。
       const times = this._segStartTimes;
       const n = this.positions.length;
+      const MAX_LINEAR_STEPS = 32;
+
+      const last = this._lastIndex;
+      if (last >= 0 && last < n) {
+        let idx = last;
+        if (timeMs >= times[idx]) {
+          // 时间前进：向后线性探测，跳过所有 ≤ timeMs 的段起点
+          let steps = 0;
+          while (idx + 1 < n && times[idx + 1] <= timeMs && steps < MAX_LINEAR_STEPS) {
+            idx++;
+            steps++;
+          }
+          if (idx + 1 >= n || timeMs < times[idx + 1]) {
+            this._lastIndex = idx;
+            return idx;
+          }
+        } else {
+          // 时间回退（seek 后退）：向前线性探测
+          let steps = 0;
+          while (idx > 0 && times[idx] > timeMs && steps < MAX_LINEAR_STEPS) {
+            idx--;
+            steps++;
+          }
+          if (times[idx] <= timeMs) {
+            this._lastIndex = idx;
+            return idx;
+          }
+        }
+      }
+
+      // 兜底：二分查找最后一个 ≤ timeMs 的段起点
       let lo = 0, hi = n - 1;
       while (lo < hi) {
         const mid = (lo + hi + 1) >> 1;
@@ -432,8 +469,10 @@ class TrailPlayer {
           hi = mid - 1;
         }
       }
+      this._lastIndex = lo;
       return lo;
     } else {
+      // 无时间戳：固定 2000ms/段，O(1) 定位，无需混合
       const segDuration = 2000;
       return Math.min(
         this.positions.length - 1,
@@ -452,19 +491,10 @@ class TrailPlayer {
     let progress = 0;
 
     if (this._hasTimestamps) {
-      // 二分定位当前段（segStartTimes[i] ≤ timeMs < segStartTimes[i+1]）
+      // 复用 _findIndexAtTime（线性+二分混合）：回放帧/seek 中它刚被调用过，
+      // _lastIndex 已定位到正确段，此处线性探测 0 步直接命中，避免二次二分
+      idx = Math.min(this._findIndexAtTime(timeMs), positions.length - 2);
       const times = this._segStartTimes;
-      const n = positions.length;
-      let lo = 0, hi = n - 1;
-      while (lo < hi) {
-        const mid = (lo + hi + 1) >> 1;
-        if (times[mid] <= timeMs) {
-          lo = mid;
-        } else {
-          hi = mid - 1;
-        }
-      }
-      idx = Math.min(lo, n - 2);
       const segStart = times[idx];
       const segEnd = times[idx + 1];
       const segDuration = Math.max(1, segEnd - segStart);
