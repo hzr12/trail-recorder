@@ -31,6 +31,7 @@ class KalmanFilter {
     this._cosLat = 1;     // cos(refLat)，经度→米换算系数
     this._lastTime = 0;
     this._initialized = false;
+    this._lastFiltered = null;   // 最近一次滤波输出缓存（精度差时冻结用）
 
     // Huber Loss 鲁棒更新：0 表示禁用（纯最小二乘）。
     // |残差|/σ ≤ k 的点正常更新；超过的点残差收缩到 k·σ（M-估计），抑制 GPS 粗差/漂移点。
@@ -71,6 +72,7 @@ class KalmanFilter {
     this._setInitP(0);   // 新轨迹速度未知 → 速度方差 0（原地填充，避免 GC）
     this._lastTime = time;
     this._initialized = true;
+    this._lastFiltered = { lat, lng };
   }
 
   /**
@@ -104,10 +106,20 @@ class KalmanFilter {
    * @returns {{lat: number, lng: number}} 滤波后坐标
    */
   update(zLat, zLng, accuracy, time, speed) {
-    if (!this._initialized || accuracy > 200) {
-      // 精度太差或未初始化 → 直接接受测量值
+    if (!this._initialized) {
+      // 未初始化 → 以测量为初始状态
       this.init(zLat, zLng, time);
+      this._lastFiltered = { lat: zLat, lng: zLng };
       return { lat: zLat, lng: zLng };
+    }
+    if (accuracy > 200) {
+      // 精度极差（地下/信号遮挡）：测量坐标不可信，保持上次滤波输出（冻结），
+      // 避免「init 重置 + 接受跳变测量」导致的轨迹被突然拉回又回去。
+      // 实时显示位置暂停，但 _rawFixes 仍记录原始测量，结束记录后 RTS 离线平滑
+      // 会用未来测量修正这段轨迹，最终落库的是修正后的路径。
+      // 更新时间戳，避免信号恢复时 dt 过大触发重置、再次跳变。
+      this._lastTime = time;
+      return this._lastFiltered || { lat: zLat, lng: zLng };
     }
 
     const dt = (time - this._lastTime) / 1000; // 秒
@@ -242,10 +254,12 @@ class KalmanFilter {
     }
 
     // 逆变换：米 → lat/lng
-    return {
+    const filtered = {
       lat: this._refLat + this._y / 111111,
       lng: this._refLng + this._x / (111111 * this._cosLat)
     };
+    this._lastFiltered = filtered;
+    return filtered;
   }
 
   /**
@@ -274,6 +288,7 @@ class KalmanFilter {
     this._vx = 0;
     this._vy = 0;
     this._setInitP(0);
+    this._lastFiltered = null;
   }
 
   /**
@@ -1323,16 +1338,18 @@ class GPSManager {
         }
 
         // ── 2D 卡尔曼滤波实时平滑 ──
-        if (this._useFilter && pos.accuracy > 0 && pos.accuracy < 200) {
+        if (this._useFilter && pos.accuracy > 0) {
           // 用收到时刻而非 position.timestamp：maximumAge 缓存/重复 fix 的旧时间戳
           // 会使 dt ≤ 0 触发滤波器重置，平滑被静默关闭
           const ts = now;
           const acc = pos.accuracy || 10;
+          // 精度差（>200m，地下/遮挡）也进 update()：内部改为冻结在最后可信位置，
+          // 不再重置+接受跳变测量（避免轨迹拉回又回去）。RTS 后处理修正地下段。
           const filtered = this._filter.update(pos.lat, pos.lng, acc, ts, pos.speed);
           pos.lat = filtered.lat;
           pos.lng = filtered.lng;
         } else {
-          // 精度太差或滤波关闭 → 重置滤波器
+          // 无精度信息或滤波关闭 → 重置滤波器
           this._filter.reset();
         }
 

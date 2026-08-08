@@ -497,6 +497,24 @@ class MapManager {
   }
 
   /**
+   * 运行时鬼点清洗：剔除 GPS 跳变尖刺（信号遮挡/多路径导致坐标瞬移的点）。
+   * 复用 TrailAnalysis.filterOutliers 判据（相对前后位移均超预期阈值），只读不落库。
+   * 若缺依赖/数据异常则原样返回，保证渲染流程不中断。
+   */
+  _cleanSpikes(positions) {
+    if (!Array.isArray(positions) || positions.length < 4) return positions;
+    if (typeof TrailAnalysis === 'undefined' || typeof TrailAnalysis.filterOutliers !== 'function') {
+      return positions;
+    }
+    try {
+      const cleaned = TrailAnalysis.filterOutliers(positions);
+      return cleaned && cleaned.length >= 2 ? cleaned : positions;
+    } catch (e) {
+      return positions;
+    }
+  }
+
+  /**
    * 更新历史轨迹线（按速度分段着色）
    */
   setTrail(positions) {
@@ -511,6 +529,10 @@ class MapManager {
     // 增量场景保持原数组以维持增量锚点（抽稀会生成新数组导致每次全量重绘回归）。
     const incremental = positions === this._lastTrailInput;
     if (!incremental) {
+      // 运行时鬼点清洗：剔除 GPS 跳变尖刺（信号遮挡/多路径导致坐标瞬移的点）。
+      // 仅全量路径清洗（历史加载/平滑切换），增量记录不洗以维持锚点。
+      // 只读清洗不落库，不污染存储数据。
+      positions = this._cleanSpikes(positions);
       const limit = this._getZoomLimit();
       if (positions.length > limit) {
         positions = this._decimateTrail(positions, limit);
@@ -775,8 +797,11 @@ class MapManager {
       this._themeRefreshRaf = null;
     }
     this.clearTrail();
-    // 视觉抽稀：超大轨迹先按 zoom 自适应上限抽稀，减少批量重绘的开销
-    const limit = this._getZoomLimit();
+    // 视觉抽稀：主题切换是低频全量重绘，为保持与正常显示（setTrail 增量场景全量点）几何完全一致，
+    // 抽稀上限固定取 _getZoomLimit() 的最大值 20000（即最高 zoom 的显示密度）。
+    // 若沿用 _getZoomLimit()（zoom 较小时仅 2000 点），弯折密集区的点会被抽掉，
+    // 导致"切换主题后线段弯折位置/角度与切换前不同"。仅超大轨迹（>20000 点）才抽稀保性能。
+    const limit = 20000;
     if (positions.length > limit) {
       positions = this._decimateTrail(positions, limit);
     }
@@ -885,15 +910,21 @@ class MapManager {
         batchPath.push(new qq.maps.LatLng(p1.lat, p1.lng));
         batchKey = key;
       } else if (key === batchKey) {
-        batchPath.push(new qq.maps.LatLng(p1.lat, p1.lng));
+        // 与 setTrail 一致：对 >10m 的长段做细分插值，保证主题切换重绘的
+        // 线段顶点密度与正常渲染完全相同（避免形态差异）
+        const interpolated = this._subdivideSegment(p0, p1);
+        for (const pt of interpolated) {
+          batchPath.push(new qq.maps.LatLng(pt.lat, pt.lng));
+        }
       } else {
         if (batchPath.length >= 2) {
           this._flushSegment(batchPath, this._speedColorMap[batchKey]);
         }
-        batchPath = [
-          new qq.maps.LatLng(p0.lat, p0.lng),
-          new qq.maps.LatLng(p1.lat, p1.lng)
-        ];
+        const interpolated = this._subdivideSegment(p0, p1);
+        batchPath = [new qq.maps.LatLng(p0.lat, p0.lng)];
+        for (const pt of interpolated) {
+          batchPath.push(new qq.maps.LatLng(pt.lat, pt.lng));
+        }
         batchKey = key;
       }
     }

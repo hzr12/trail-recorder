@@ -2837,7 +2837,32 @@ class App {
     this._theme = this._theme === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', this._theme);
     this.mapManager.setTheme(this._theme);
-    const positions = this._getTrailPositions();
+    if (this._isReplaying && this._replayPlayer) {
+      // 回放中切主题：只刷新 TrailPlayer 的 zIndex 100/101（已播+未播预览）色板。
+      // 不要刷新 zIndex 10 地图轨迹层——回放期间地图层要么已被 _startReplay clearTrail 清空
+      //（非并行回放），要么是并行记录轨迹（并行回放时保留原位）。若用 _replayPlayer.positions
+      // 去 refreshTrailColors，会把回放轨迹又画一层到 zIndex 10，与回放路径叠加成"双轨迹"。
+      if (typeof this._replayPlayer.refreshColors === 'function') {
+        this._replayPlayer.refreshColors();
+      }
+      this._updateChartTheme();
+      try {
+        localStorage.setItem('trailcraft_theme', this._theme);
+      } catch (e) {}
+      this._updateThemeBtn();
+      Toast.show(this._theme === 'light' ? ' 已切换为浅色主题' : ' 已切换为深色主题');
+      return;
+    }
+    // 非回放状态：刷新地图当前实际显示的轨迹色板。
+    // 必须用 mapManager._lastTrailInput（setTrail 最后一次收到的数组），
+    // 不能用 _getTrailPositions()：后者返回滑动平滑后的会话轨迹，而地图可能正显示
+    // 历史加载的原始轨迹（_loadTrailFromList 把 data.positions 塞进 trail.positions 后，
+    // _getTrailPositions() 会对历史数据做平滑）→ 主题切换后轨迹形状被拉直/偏移，
+    // 与回放（原始数据）形成"两条不同轨迹"。用 _lastTrailInput 保证重绘形状与切换前逐点一致。
+    const trailInput = this.mapManager._lastTrailInput;
+    const positions = trailInput && trailInput.length >= 2
+      ? trailInput
+      : this._getTrailPositions();
     if (positions && positions.length >= 2) {
       this.mapManager.refreshTrailColors(positions);
     }

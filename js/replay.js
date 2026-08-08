@@ -21,6 +21,19 @@ class TrailPlayer {
     this.positions = Array.isArray(positions)
       ? positions.filter((p) => p && Number.isFinite(p.lat) && Number.isFinite(p.lng))
       : [];
+    // 运行时鬼点清洗：剔除 GPS 跳变尖刺（锐角"被拉回"异常点）。
+    // 复用 TrailAnalysis.filterOutliers（相对前后位移均超预期阈值），只读不落库。
+    // 与地图 setTrail 的全量路径清洗保持一致，回放与地图显示同一份无尖刺数据。
+    if (this.positions.length >= 4
+      && typeof TrailAnalysis !== 'undefined'
+      && typeof TrailAnalysis.filterOutliers === 'function') {
+      try {
+        const cleaned = TrailAnalysis.filterOutliers(this.positions);
+        if (cleaned && cleaned.length >= 2) {
+          this.positions = cleaned;
+        }
+      } catch (e) {}
+    }
     this.mapManager = mapManager;
     this.callbacks = callbacks;
 
@@ -363,6 +376,32 @@ class TrailPlayer {
     this._markerTargetPos = null;
     this._markerLastAnimTime = 0;
     this._updateMarker(this.positions[0]);
+    this._updatePlayedPath();
+  }
+
+  /**
+   * 主题切换后调用：重建已播/未播 polyline 以套用新色板（_speedColorMap 引用换掉后旧 polyline 颜色陈旧）
+   */
+  refreshColors() {
+    // 清掉 keySig 强制下次 _updatePlayedPath 全量重建（不再走增量分支），保证新颜色立即生效
+    this._playedPathKeySig = undefined;
+    this._clearPlayedPolylines();
+    this._clearReplayPathPolylines();
+    if (this._renderPositions && this._renderPositions.length >= 2) {
+      this._replayPathPolylines = this._buildSpeedSegments(this._renderPositions)
+        .filter(s => s.pts.length >= 2)
+        .map((s) => {
+          const c = this.mapManager._speedColorMap[s.key] || { r: 0, g: 212, b: 170, a: 0.9 };
+          return new qq.maps.Polyline({
+            path: s.pts.map(p => new qq.maps.LatLng(p.lat, p.lng)),
+            strokeColor: new qq.maps.Color(c.r, c.g, c.b, Math.round(c.a * 0.35 * 100) / 100),
+            strokeWeight: 4,
+            map: this.mapManager.map,
+            clickable: false,
+            zIndex: 100
+          });
+        });
+    }
     this._updatePlayedPath();
     if (this.callbacks.onProgress) {
       this.callbacks.onProgress(0);
