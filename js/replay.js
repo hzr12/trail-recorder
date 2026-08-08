@@ -423,52 +423,117 @@ class TrailPlayer {
 
   _findIndexAtTime(timeMs) {
     if (this._hasTimestamps) {
-      // 线性+二分混合查找：segStartTimes 为递增的累计时间偏移表，定位最后一个 ≤ timeMs 的段起点。
-      // 回放/seek 的查询具备强时间局部性（相邻帧 timeMs 通常只前进很小步长），从 _lastIndex
-      // 出发线性探测通常 1~3 次比较即命中（O(1)）；探测 miss（如 seek 大跳/时间回退超上限）时
-      // 回退到二分兜底，保证最坏情况仍为 O(log n)。
       const times = this._segStartTimes;
       const n = this.positions.length;
-      const MAX_LINEAR_STEPS = 32;
+      const HEAD_LINEAR = 64;         // 头部线性区段数
+      const TAIL_LINEAR = 64;         // 尾部线性区段数
+      const MAX_LINEAR_STEPS = 32;    // 头/尾区远距 seek 粗定位判定阈值
+      const GALLOP_CAP = 256;         // 中间区指数探测步长上限，超过转全局二分
 
+      const headBound = times[Math.min(HEAD_LINEAR, n - 1)];
+      const tailBound = times[Math.max(0, n - 1 - TAIL_LINEAR)];
+
+      // ── 两头强制线性 ──────────────────────────────────────────────
+      // 目标落在头部/尾部线性区：纯线性扫描（无步数上限，区域自身 ≤64 段天然有界）。
+      // 起始/收尾段常伴随大量重复/密集时间戳（静止漂移），线性比二分更稳、更快；
+      // 且回放收尾线性推进可精确到达 n-1，杜绝提前停止。
+      // 若游标从远处 seek 而来（线性步数会超过区域宽度），先二分粗定位再精扫。
+      if (timeMs <= headBound) {
+        let start = this._lastIndex;
+        if (start > HEAD_LINEAR + MAX_LINEAR_STEPS) {
+          start = this._binarySearch(timeMs);
+        }
+        let idx = Math.min(Math.max(start, 0), n - 1);
+        if (timeMs >= times[idx]) {
+          while (idx + 1 < n && times[idx + 1] <= timeMs) idx++;
+        } else {
+          while (idx > 0 && times[idx] > timeMs) idx--;
+        }
+        this._lastIndex = idx;
+        return idx;
+      }
+
+      if (timeMs >= tailBound) {
+        let start = this._lastIndex;
+        if (start < n - 1 - TAIL_LINEAR - MAX_LINEAR_STEPS) {
+          start = this._binarySearch(timeMs);
+        }
+        let idx = Math.min(Math.max(start, 0), n - 1);
+        if (timeMs >= times[idx]) {
+          while (idx + 1 < n && times[idx + 1] <= timeMs) idx++;
+        } else {
+          while (idx > 0 && times[idx] > timeMs) idx--;
+        }
+        this._lastIndex = idx;
+        return idx;
+      }
+
+      // ── 中间区：指数探测（galloping）+ 二分兜底 ──────────────────────
+      // 从 _lastIndex 出发，步长 1,2,4,8… 指数增长试探，利用帧间时间局部性：
+      // 顺播（times[last+1] > timeMs）gap=1 微路径 0 次比较直接命中；
+      // 跳转/回退落在探测区间内时二分收窄；距离过远（gap 超 GALLOP_CAP）直接全局二分，最坏 O(log n)。
       const last = this._lastIndex;
       if (last >= 0 && last < n) {
-        let idx = last;
-        if (timeMs >= times[idx]) {
-          // 时间前进：向后线性探测，跳过所有 ≤ timeMs 的段起点
-          let steps = 0;
-          while (idx + 1 < n && times[idx + 1] <= timeMs && steps < MAX_LINEAR_STEPS) {
-            idx++;
-            steps++;
+        if (timeMs >= times[last]) {
+          // 时间前进：指数探测上界 hi（已确认 times[hi] <= timeMs）
+          let hi = last, gap = 1;
+          while (hi + gap < n && times[hi + gap] <= timeMs && gap <= GALLOP_CAP) {
+            hi += gap;
+            gap *= 2;
           }
-          if (idx + 1 >= n || timeMs < times[idx + 1]) {
-            this._lastIndex = idx;
-            return idx;
+          if (gap > GALLOP_CAP) {
+            // 距离过远（seek 大跳）：全局二分兜底
+            const lo = this._binarySearch(timeMs);
+            this._lastIndex = lo;
+            return lo;
           }
+          if (gap === 1) {
+            // 顺播微路径：times[hi+1] 已确认 > timeMs 或越界，hi 即答案（0 次比较）
+            this._lastIndex = hi;
+            return hi;
+          }
+          // 探测区间 [hi, min(hi+gap, n-1)] 内二分收窄
+          let lo = hi;
+          let r = Math.min(hi + gap, n - 1);
+          while (lo < r) {
+            const mid = (lo + r + 1) >> 1;
+            if (times[mid] <= timeMs) lo = mid; else r = mid - 1;
+          }
+          this._lastIndex = lo;
+          return lo;
         } else {
-          // 时间回退（seek 后退）：向前线性探测
-          let steps = 0;
-          while (idx > 0 && times[idx] > timeMs && steps < MAX_LINEAR_STEPS) {
-            idx--;
-            steps++;
+          // 时间回退：指数探测下界 lo（times[lo] 恒 > timeMs）
+          let lo = last, gap = 1;
+          while (lo - gap >= 0 && times[lo - gap] > timeMs && gap <= GALLOP_CAP) {
+            lo -= gap;
+            gap *= 2;
           }
-          if (times[idx] <= timeMs) {
-            this._lastIndex = idx;
-            return idx;
+          if (gap > GALLOP_CAP) {
+            // 距离过远（seek 回退大跳）：全局二分兜底
+            const r = this._binarySearch(timeMs);
+            this._lastIndex = r;
+            return r;
           }
+          if (gap === 1) {
+            // 顺播回退微路径：times[lo-1] 已确认 ≤ timeMs 或越界，答案是 lo-1（0 次比较）
+            const r = Math.max(0, lo - 1);
+            this._lastIndex = r;
+            return r;
+          }
+          // 探测区间 [max(0, lo-gap), lo] 内二分收窄（times[lo] > timeMs，结果必 < lo）
+          let a = Math.max(0, lo - gap);
+          let b = lo;
+          while (a < b) {
+            const mid = (a + b + 1) >> 1;
+            if (times[mid] <= timeMs) a = mid; else b = mid - 1;
+          }
+          this._lastIndex = a;
+          return a;
         }
       }
 
-      // 兜底：二分查找最后一个 ≤ timeMs 的段起点
-      let lo = 0, hi = n - 1;
-      while (lo < hi) {
-        const mid = (lo + hi + 1) >> 1;
-        if (times[mid] <= timeMs) {
-          lo = mid;
-        } else {
-          hi = mid - 1;
-        }
-      }
+      // 二分兜底（游标无效/未初始化）
+      const lo = this._binarySearch(timeMs);
       this._lastIndex = lo;
       return lo;
     } else {
@@ -479,6 +544,22 @@ class TrailPlayer {
         Math.floor(timeMs / segDuration)
       );
     }
+  }
+
+  // 二分查找最后一个 ≤ timeMs 的段起点（中间区兜底 + 头/尾区远距粗定位复用）
+  _binarySearch(timeMs) {
+    const times = this._segStartTimes;
+    const n = this.positions.length;
+    let lo = 0, hi = n - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (times[mid] <= timeMs) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return lo;
   }
 
   _interpolateAtTime(timeMs) {
