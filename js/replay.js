@@ -44,12 +44,13 @@ class TrailPlayer {
     this._markerHeading = null;
 
     this._hasTimestamps = this._checkTimestamps();
-    this._totalDuration = this._calcTotalDuration();
-    this._totalDistance = this._calcTotalDistance();
 
     // 预计算每段的累计起始时间偏移表（构造时一次 O(n)，供 _findIndexAtTime / _interpolateAtTime
     // 二分查找，避免回放每帧线性扫描全量点（大数据量轨迹 O(n)/帧 → O(log n)/帧））
     this._segStartTimes = this._buildSegStartTimes();
+    // 总时长必须与分段累计表完全一致（见 _calcTotalDuration 注释），否则二分到不了末索引
+    this._totalDuration = this._calcTotalDuration();
+    this._totalDistance = this._calcTotalDistance();
 
     // 回放视觉抽稀：超大数据量轨迹对「路径绘制」抽稀，显著降低每帧 slice/分段/建 polyline 开销；
     // marker 位置插值仍用全量 positions（保证精确），仅路径线用抽稀点。
@@ -98,6 +99,14 @@ class TrailPlayer {
   _calcTotalDuration() {
     if (!this._hasTimestamps) {
       return this.positions.length * 2000;
+    }
+    // 优先取分段累计表末值，保证 _totalDuration 与 _segStartTimes 完全一致：
+    // 若用 last - first 独立计算，当末点 time 缺失（被 || 0 归零）时总时长会被算成
+    // 极小值，而累计表末值仍是真实总时长，导致 _findIndexAtTime(_totalDuration)
+    // 二分到达不了末索引 → 回放提前停止且末尾留下浅色未播段。
+    // 取累计表末值后必有 times[n-1] <= _totalDuration，二分恒可达 n-1。
+    if (this._segStartTimes && this._segStartTimes.length) {
+      return Math.max(100, this._segStartTimes[this._segStartTimes.length - 1]);
     }
     const first = this.positions[0].time || 0;
     const last = this.positions[this.positions.length - 1].time || 0;
