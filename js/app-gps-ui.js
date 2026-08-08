@@ -117,9 +117,8 @@ App.prototype._updateStatusBar = function (force) {
     dotClass = 'gps-dot online';
   }
 
-  const watchingIcon = isTracking ? ' <span class="gps-tracking">◉</span>' : '';
-  const staleIcon = stale ? ' <span class="gps-stale"> 已过期</span>' : '';
-  const degradedIcon = isDowngraded ? ' <span class="gps-degraded"> 低精度</span>' : '';
+  // 降级/过期改图标+title，追踪并入圆点 tracking 动画，去除冗余文字
+  const degradedIcon = isDowngraded ? ' <span class="gps-state-icon warn" title="低精度定位">⚠</span>' : '';
   // 跟随模式独立为按钮，避免整条状态栏误触切换
   const followIcon = ` <button class="gps-follow-toggle${this._followMode ? ' active' : ''}" title="切换地图跟随">${this._followMode ? '跟随中' : '跟随'}</button>`;
 
@@ -171,13 +170,13 @@ App.prototype._updateStatusBar = function (force) {
     const pct = Math.round(this._batteryLevel * 100);
     const timeStr = this._getBatteryTimeStr ? this._getBatteryTimeStr() : null;
     const label = this._batteryCharging ? '充电中' : (timeStr ? `约${timeStr}` : '');
-    line2Parts.push(`<span class="gps-battery" title="电量 ${pct}%">${pct}%${label ? ' ' + label : ''}</span>`);
+    line2Parts.push(`<span class="gps-battery" title="电量 ${pct}%${label ? '，' + label : ''}">${pct}%</span>`);
   }
-  const line2 = line2Parts.length ? line2Parts.join(' ｜ ') : '<span style="opacity:0.5">位置待更新</span>';
-  const line3 = this._weatherHtml ? `<div class="gps-line2">${this._weatherHtml}</div>` : '';
+  const line2 = line2Parts.length ? line2Parts.join('<span class="gps-sep">│</span>') : '<span style="opacity:0.5">位置待更新</span>';
+  const line3 = this._weatherHtml ? `<div class="gps-line3">${this._weatherHtml}</div>` : '';
 
   this._statusEl.innerHTML =
-    `<div class="gps-line1"><span class="${dotClass}"></span><span class="gps-online">◉ 已定位</span>${degradedIcon}${watchingIcon}${followIcon} <span class="gps-elapsed">(${elapsed})</span>${staleIcon}</div>` +
+    `<div class="gps-line1"><span class="${dotClass}" title="${stale ? '定位过期' : isTracking ? '持续追踪中' : '已定位'}"></span><span class="gps-online">◉ 已定位</span>${degradedIcon}${followIcon}<span class="gps-elapsed">(${elapsed})</span></div>` +
     `<div class="gps-line2">${line2}</div>` +
     line3;
 

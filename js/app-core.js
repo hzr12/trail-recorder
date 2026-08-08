@@ -2781,11 +2781,19 @@ class App {
           const sunset = daily.sunset[0].slice(11);
           sunText = ` 日出${sunrise} 日落${sunset}`;
         }
-        // 更新时间：Open-Meteo current.time 为本地时区 ISO 时间（timezone=auto），取 HH:MM
-        const updateText = cur.time && /T\d{2}:\d{2}/.test(cur.time)
-          ? ` 更新${cur.time.slice(11, 16)}`
-          : '';
-        this._weatherHtml = `<span class="gps-weather">${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}${sunText}${updateText}</span>`;
+        // 更新时间：Open-Meteo current.time 为本地时区 ISO 时间（timezone=auto），取 HH:MM；缺失则用本地时间兜底，保证常驻
+        let updateText;
+        if (cur.time && /T\d{2}:\d{2}/.test(cur.time)) {
+          updateText = cur.time.slice(11, 16);
+        } else {
+          const d = new Date();
+          updateText = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        }
+        // 日出日落等完整信息移入 title 悬停，常态只显示关键信息；更新时间独立胶囊醒目常驻
+        const weatherTitle = `${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}${sunText}`;
+        this._weatherHtml =
+          `<span class="gps-weather" title="${weatherTitle}">${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}</span>` +
+          `<span class="gps-weather-update" title="天气更新时间">🕐 更新${updateText}</span>`;
         this._updateStatusBar(true);
       });
   }
@@ -2813,16 +2821,23 @@ class App {
         if (astro?.sunrise && astro?.sunset) {
           sunText = ` 日出${astro.sunrise} 日落${astro.sunset}`;
         }
-        // 更新时间：wttr.in localObsDateTime 如 "2026-08-07 02:30 PM"，转 24 小时制 HH:MM
+        // 更新时间：wttr.in localObsDateTime 如 "2026-08-07 02:30 PM"，转 24 小时制 HH:MM；缺失则用本地时间兜底，保证常驻
         let updateText = '';
         const obs = String(cc.localObsDateTime || '');
         const m = obs.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
         if (m) {
           let h = parseInt(m[1], 10) % 12;
           if (/pm/i.test(m[3])) h += 12;
-          updateText = ` 更新${String(h).padStart(2, '0')}:${m[2]}`;
+          updateText = `${String(h).padStart(2, '0')}:${m[2]}`;
+        } else {
+          const d = new Date();
+          updateText = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
         }
-        this._weatherHtml = `<span class="gps-weather">${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}${sunText}${updateText}</span>`;
+        // 日出日落等完整信息移入 title 悬停，常态只显示关键信息；更新时间独立胶囊醒目常驻
+        const weatherTitle = `${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}${sunText}`;
+        this._weatherHtml =
+          `<span class="gps-weather" title="${weatherTitle}">${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}</span>` +
+          `<span class="gps-weather-update" title="天气更新时间">🕐 更新${updateText}</span>`;
         this._updateStatusBar(true);
       });
   }

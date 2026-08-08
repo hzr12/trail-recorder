@@ -101,12 +101,6 @@
   color: var(--accent-1);
 }
 
-.gps-stale {
-  color: var(--danger);
-  font-family: var(--font-sans);
-  font-weight: normal;
-}
-
 /* 跟随模式标签 */
 .gps-follow {
   color: var(--accent-1);
@@ -142,24 +136,42 @@
   background: rgba(0, 212, 170, 0.1);
 }
 
-/* GPS 降级（低精度）模式 */
-.gps-degraded {
-  color: var(--warning);
-  font-family: var(--font-sans);
-  font-weight: normal;
-  font-size: 10px;
-}
-
 .gps-elapsed {
   color: var(--text-tertiary);
   font-family: var(--font-sans);
   font-weight: 400;
 }
 
-.gps-speed, .gps-altitude, .gps-heading {
+.gps-speed, .gps-altitude, .gps-heading, .gps-battery {
   color: var(--text-tertiary);
   font-family: var(--font-sans);
   font-weight: 400;
+}
+
+/* 第 2 行分隔符 */
+.gps-sep {
+  opacity: 0.4;
+  margin: 0 1px;
+}
+
+/* 状态图标（降级等低频状态） */
+.gps-state-icon {
+  font-size: 11px;
+  line-height: 1;
+}
+.gps-state-icon.warn {
+  color: var(--warning);
+}
+
+/* 第 3 行：天气独立常驻（更新时间醒目胶囊） */
+.gps-line3 {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 100%;
+  font-size: 11px;
 }
 
 .gps-weather {
@@ -167,9 +179,25 @@
   font-family: var(--font-sans);
   font-weight: 500;
   background: var(--bg-input);
-  padding: 2px 8px;
+  padding: 1px 8px;
   border-radius: var(--radius-full);
   border: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+
+/* 更新时间：独立突出胶囊，常驻可见 */
+.gps-weather-update {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent-1);
+  font-weight: 500;
+  font-family: var(--font-mono);
+  background: var(--bg-input);
+  border: 1px solid rgba(0, 212, 170, 0.35);
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
 }
 
 /* 信号强度指示 */
@@ -237,13 +265,3 @@
   border-radius: var(--radius-sm);
   background: var(--bg-input);
 }
-.gps-tracking {
-  color: var(--accent-1);
-  animation: trackingBlink 1.5s ease-in-out infinite;
-}
-
-@keyframes trackingBlink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
-
