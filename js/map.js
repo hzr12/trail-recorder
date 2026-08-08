@@ -736,13 +736,13 @@ class MapManager {
 
     const leftEnd = Math.max(0, q.left - batchSize);
     if (leftEnd < q.left) {
-      this._renderTrailRange(q.positions, leftEnd, q.left + 1, q);
+      this._renderTrailRange(q.positions, leftEnd, q.left + 1);
       q.left = leftEnd;
     }
 
     const rightEnd = Math.min(totalPoints, q.right + batchSize);
     if (rightEnd > q.right) {
-      this._renderTrailRange(q.positions, q.right, rightEnd, q);
+      this._renderTrailRange(q.positions, q.right, rightEnd);
       q.right = rightEnd;
     }
 
@@ -754,7 +754,7 @@ class MapManager {
     this._themeRefreshRaf = requestAnimationFrame(() => this._processThemeRefreshBatch());
   }
 
-  _renderTrailRange(positions, from, to, q) {
+  _renderTrailRange(positions, from, to) {
     if (from >= to) return;
     const start = Math.max(1, from);
     const end = Math.min(positions.length, to);
@@ -797,10 +797,10 @@ class MapManager {
 
   _renderRemainingTrail(q) {
     if (q.left > 0) {
-      this._renderTrailRange(q.positions, 0, q.left + 1, q);
+      this._renderTrailRange(q.positions, 0, q.left + 1);
     }
     if (q.right < q.positions.length) {
-      this._renderTrailRange(q.positions, q.right, q.positions.length, q);
+      this._renderTrailRange(q.positions, q.right, q.positions.length);
     }
   }
 
@@ -1023,15 +1023,31 @@ class MapManager {
     const key = `${z}/${x}/${y}`;
     if (this._tileCache && this._tileCache.get(key)) return this._tileCache.get(key);
     const task = (async () => {
-      // 主源：webrd01-04 节点（scale=2 → scale=1 两级降级，各子域负载均衡）
-      for (const scale of [2, 1]) {
+      // 主源：腾讯地图矢量瓦片 realtimerender（rt0-rt3 节点，GCJ-02 与轨迹同坐标系，与应用显示底图一致）
+      // 备源：腾讯地图 tile 接口（rt0-rt3 节点）；各子域负载均衡
+      // 兜底：高德 webrd01-04 节点（scale=2 → scale=1 两级降级）
+      // 注意：腾讯瓦片使用 TMS 坐标（y 轴从南向北），入参 y 为标准 XYZ（y 向下），
+      //       请求前必须翻转：yTms = (1 << z) - 1 - y。否则会请求到南半球无数据区，
+      //       服务端返回 1712 字节单色占位图。maptilesv2 接口实测不可用，不作为备源。
+      //       高德为标准 XYZ（y 向下），不翻转。
+      const yTms = (1 << z) - 1 - y;
+      const sources = [
+        (sub) => [`https://rt${sub}.map.gtimg.com/realtimerender?z=${z}&x=${x}&y=${yTms}&type=vector&style=0`],
+        (sub) => [`https://rt${sub}.map.gtimg.com/tile?z=${z}&x=${x}&y=${yTms}&styleid=1`],
+        (sub) => [
+          `https://webrd0${sub + 1}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=2&style=8&x=${x}&y=${y}&z=${z}`,
+          `https://webrd0${sub + 1}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x=${x}&y=${y}&z=${z}`
+        ]
+      ];
+      for (const makeUrls of sources) {
         for (let i = 0; i < 4; i++) {
           const sub = (x + y + i) % 4;
-          try {
-            const url = `https://webrd0${sub + 1}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=${scale}&style=8&x=${x}&y=${y}&z=${z}`;
-            const img = await this._fetchTileImage(url, 5000);
-            if (!this._isPlaceholderTile(img)) return img;
-          } catch (_) {}
+          for (const url of makeUrls(sub)) {
+            try {
+              const img = await this._fetchTileImage(url, 5000);
+              if (!this._isPlaceholderTile(img)) return img;
+            } catch (_) {}
+          }
         }
       }
       throw new Error('tile fetch failed');

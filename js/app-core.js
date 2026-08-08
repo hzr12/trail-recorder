@@ -2228,7 +2228,7 @@ class App {
       const toX = (lng) => originX + (lng - minLng) * cosLat * scale;
       const toY = (lat) => originY + (maxLat - lat) * scale;
 
-      // ── 地图底图：高德瓦片（普通道路图 style=8，GCJ-02 与腾讯同坐标系） ──
+      // ── 地图底图：腾讯地图瓦片（realtimerender 矢量渲染，GCJ-02 与轨迹同坐标系，与应用显示底图一致） ──
       // Web Mercator 投影（0~1 世界坐标）
       const mercX = (lng) => (lng + 180) / 360;
       const mercY = (lat) => {
