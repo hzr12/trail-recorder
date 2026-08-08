@@ -414,6 +414,10 @@ class App {
     if (batchMerge) {
       batchMerge.addEventListener('click', () => this._mergeSelectedTrails());
     }
+    const batchDelete = document.getElementById('batch-delete');
+    if (batchDelete) {
+      batchDelete.addEventListener('click', () => this._deleteSelectedTrails());
+    }
     const batchClear = document.getElementById('batch-clear');
     if (batchClear) {
       batchClear.addEventListener('click', () => this._toggleMultiSelect(false));
@@ -1835,6 +1839,8 @@ class App {
     if (countEl) countEl.textContent = total > 0 ? `已选 ${total} 条` : '未选择';
     bar.querySelector('.batch-export').disabled = total === 0;
     bar.querySelector('.batch-merge').disabled = total < 2;
+    const deleteBtn = bar.querySelector('.batch-delete');
+    if (deleteBtn) deleteBtn.disabled = total === 0;
     const invertBtn = bar.querySelector('.batch-invert');
     if (invertBtn) invertBtn.disabled = total === 0;
     bar.querySelector('.batch-clear').disabled = total === 0;
@@ -2014,6 +2020,81 @@ class App {
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); doMerge(); }
       if (e.key === 'Escape') close();
+    });
+  }
+
+  _deleteSelectedTrails() {
+    const ids = Array.from(new Set([...this._historySelected, ...this._replaySelected]));
+    if (ids.length === 0) return;
+    Storage.loadTrailsByIds(ids).then((trails) => {
+      if (!trails || trails.length === 0) {
+        Toast.show('没有可删除的轨迹');
+        return;
+      }
+      // 确认对话框
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay show';
+      overlay.innerHTML = `
+        <div class="modal-box">
+          <div class="modal-header">
+            <span class="modal-title">批量删除</span>
+            <button class="modal-close batch-delete-cancel">✕</button>
+          </div>
+          <div class="confirm-body">
+            <div class="confirm-text">确定删除选中的 ${trails.length} 条轨迹？</div>
+            <div class="confirm-detail">删除后可在 5 秒内撤销。该操作不可恢复，请谨慎操作。</div>
+          </div>
+          <div class="confirm-actions">
+            <button class="btn-sm batch-delete-cancel">取消</button>
+            <button class="btn-sm btn-danger" id="batch-delete-confirm-btn">确认删除</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+
+      const close = () => {
+        overlay.classList.remove('show');
+        setTimeout(() => overlay.remove(), 300);
+      };
+      const onCancel = (e) => {
+        e.stopPropagation();
+        close();
+      };
+      overlay.querySelectorAll('.batch-delete-cancel').forEach((b) => b.addEventListener('click', onCancel));
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) close();
+      });
+
+      overlay.querySelector('#batch-delete-confirm-btn').addEventListener('click', () => {
+        const btn = overlay.querySelector('#batch-delete-confirm-btn');
+        btn.disabled = true;
+        btn.textContent = '删除中…';
+        Promise.all(ids.map((id) => Storage.deleteTrail(id).catch(() => false))).then((results) => {
+          close();
+          const okCount = results.filter((r) => r).length;
+          if (okCount === 0) {
+            Toast.show('删除失败，请重试');
+            return;
+          }
+          this._invalidateTrailCache();
+          const msg = okCount === ids.length ? `已删除 ${okCount} 条轨迹` : `已删除 ${okCount}/${ids.length} 条轨迹`;
+          Toast.showUndo(msg, () => {
+            // 撤销：重新保存被删轨迹（逐条恢复，失败静默）
+            return Promise.all(
+              trails.filter((t) => t.positions && t.positions.length > 0)
+                .map((t) => Storage.saveTrailToList(t.positions, t.name, t.favorite).catch(() => null))
+            ).then(() => {
+              this._invalidateTrailCache();
+              this._renderTrailList();
+              this._renderReplayTrailList();
+              this._syncBatchToolbar();
+            });
+          });
+          this._toggleMultiSelect(false);
+          this._renderTrailList();
+          this._renderReplayTrailList();
+          this._syncBatchToolbar();
+        });
+      });
     });
   }
 

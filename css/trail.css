@@ -399,6 +399,17 @@
   background: var(--accent-1-hover, var(--accent-1));
 }
 
+.batch-delete {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.batch-delete:hover:not(:disabled) {
+  background: var(--danger-hover, var(--danger));
+  filter: brightness(1.1);
+}
+
 .batch-invert {
   color: var(--accent-2);
   border-color: rgba(0, 163, 255, 0.35);

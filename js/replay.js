@@ -47,7 +47,38 @@ class TrailPlayer {
     this._totalDuration = this._calcTotalDuration();
     this._totalDistance = this._calcTotalDistance();
 
+    // 预计算每段的累计起始时间偏移表（构造时一次 O(n)，供 _findIndexAtTime / _interpolateAtTime
+    // 二分查找，避免回放每帧线性扫描全量点（大数据量轨迹 O(n)/帧 → O(log n)/帧））
+    this._segStartTimes = this._buildSegStartTimes();
+
+    // 回放视觉抽稀：超大数据量轨迹对「路径绘制」抽稀，显著降低每帧 slice/分段/建 polyline 开销；
+    // marker 位置插值仍用全量 positions（保证精确），仅路径线用抽稀点。
+    if (this.mapManager && this.positions.length > 4000) {
+      this._renderPositions = this.mapManager._decimateTrail(this.positions, 4000);
+    } else {
+      this._renderPositions = this.positions;
+    }
+    this._renderCount = this._renderPositions.length;
+
     this._setupMapMarkers();
+  }
+
+  _buildSegStartTimes() {
+    const positions = this.positions;
+    if (!this._hasTimestamps) return null;
+    const n = positions.length;
+    const baseTime = positions[0].time || 0;
+    const times = new Array(n);
+    times[0] = 0;
+    let acc = 0;
+    for (let i = 0; i < n - 1; i++) {
+      const segStart = (positions[i].time || baseTime) - baseTime;
+      const segEnd = (positions[i + 1].time || baseTime) - baseTime;
+      const segDuration = Math.max(1, segEnd - segStart);
+      acc += segDuration;
+      times[i + 1] = acc;
+    }
+    return times;
   }
 
   _checkTimestamps() {
@@ -101,21 +132,40 @@ class TrailPlayer {
     this._markerDisplayPos = { lat: this.positions[0].lat, lng: this.positions[0].lng };
     this._markerTargetPos = { lat: this.positions[0].lat, lng: this.positions[0].lng };
 
-    if (this.positions.length >= 2) {
-      const path = this.positions.map(
-        p => new qq.maps.LatLng(p.lat, p.lng)
-      );
-      this._replayPathPolyline = new qq.maps.Polyline({
-        path,
-        strokeColor: new qq.maps.Color(0, 212, 170, 0.3),
-        strokeWeight: 4,
-        map: this.mapManager.map,
-        clickable: false,
-        zIndex: 100 // 回放完整路径置顶，避免被记录轨迹线遮挡
-      });
+    // 未播放路径：按速度等级分段淡色预览（速度分级一目了然，已播放部分会以全色覆盖其上）
+    if (this._renderPositions.length >= 2) {
+      this._replayPathPolylines = this._buildSpeedSegments(this._renderPositions)
+        .filter(s => s.pts.length >= 2)
+        .map((s) => {
+          const c = this.mapManager._speedColorMap[s.key] || { r: 0, g: 212, b: 170, a: 0.9 };
+          return new qq.maps.Polyline({
+            path: s.pts.map(p => new qq.maps.LatLng(p.lat, p.lng)),
+            strokeColor: new qq.maps.Color(c.r, c.g, c.b, Math.round(c.a * 0.35 * 100) / 100),
+            strokeWeight: 4,
+            map: this.mapManager.map,
+            clickable: false,
+            zIndex: 100 // 回放完整路径置顶，避免被记录轨迹线遮挡
+          });
+        });
     }
 
     this._updatePlayedPath();
+  }
+
+  // 按速度等级分段：把点数组切分为 [{key, pts}]，供未播预览与已播路径共用
+  _buildSpeedSegments(pathPoints) {
+    const segments = [];
+    let curSeg = null;
+    for (let i = 1; i < pathPoints.length; i++) {
+      const speed = this.mapManager._segmentSpeed(pathPoints[i - 1], pathPoints[i]);
+      const key = this.mapManager._speedColorKey(speed);
+      if (!curSeg || curSeg.key !== key) {
+        curSeg = { key, pts: [pathPoints[i - 1]] };
+        segments.push(curSeg);
+      }
+      curSeg.pts.push(pathPoints[i]);
+    }
+    return segments;
   }
 
   _createReplayIcon(heading) {
@@ -150,11 +200,19 @@ class TrailPlayer {
 
   _updatePlayedPath() {
     if (!this.mapManager.map) return;
-    if (this.positions.length < 2) return;
+    if (this._renderPositions.length < 2) return;
+
+    // 全量索引 → 抽稀绘制索引（保持首尾对齐）
+    const totalIdx = this._currentIndex;
+    const totalN = this.positions.length;
+    const renderN = this._renderPositions.length;
+    const renderIdx = totalN > 1
+      ? Math.min(renderN - 1, Math.max(0, Math.round((totalIdx / (totalN - 1)) * (renderN - 1))))
+      : 0;
 
     const currentPoint = this._interpolateAtTime(this._playbackTime);
-    const pathPoints = this.positions.slice(0, this._currentIndex + 1);
-    if (this._currentIndex < this.positions.length - 1 && currentPoint) {
+    const pathPoints = this._renderPositions.slice(0, renderIdx + 1);
+    if (renderIdx < renderN - 1 && currentPoint) {
       pathPoints.push(currentPoint);
     }
     if (pathPoints.length < 2) {
@@ -163,17 +221,7 @@ class TrailPlayer {
     }
 
     // 按速度等级分段构建已播路径：段边界处拆分为多条 polyline 并分别着色
-    const segments = [];
-    let curSeg = null;
-    for (let i = 1; i < pathPoints.length; i++) {
-      const speed = this.mapManager._segmentSpeed(pathPoints[i - 1], pathPoints[i]);
-      const key = this.mapManager._speedColorKey(speed);
-      if (!curSeg || curSeg.key !== key) {
-        curSeg = { key, pts: [pathPoints[i - 1]] };
-        segments.push(curSeg);
-      }
-      curSeg.pts.push(pathPoints[i]);
-    }
+    const segments = this._buildSpeedSegments(pathPoints);
 
     // 用分段 key 序列做增量判断：绝大多数帧分段序列不变（仅最后一个分段在变长），
     // 此时只需对末段 setPath 增量更新，避免每帧重建全部 polyline 造成卡顿。
@@ -221,6 +269,15 @@ class TrailPlayer {
         pl.setMap(null);
       }
       this._playedPathPolylines = [];
+    }
+  }
+
+  _clearReplayPathPolylines() {
+    if (this._replayPathPolylines) {
+      for (const pl of this._replayPathPolylines) {
+        pl.setMap(null);
+      }
+      this._replayPathPolylines = [];
     }
   }
 
@@ -280,10 +337,7 @@ class TrailPlayer {
       this._replayMarker.setMap(null);
       this._replayMarker = null;
     }
-    if (this._replayPathPolyline) {
-      this._replayPathPolyline.setMap(null);
-      this._replayPathPolyline = null;
-    }
+    this._clearReplayPathPolylines();
     this._clearPlayedPolylines();
   }
 
@@ -352,18 +406,19 @@ class TrailPlayer {
 
   _findIndexAtTime(timeMs) {
     if (this._hasTimestamps) {
-      const baseTime = this.positions[0].time || 0;
-      let accumulated = 0;
-      for (let i = 0; i < this.positions.length - 1; i++) {
-        const segStart = (this.positions[i].time || baseTime) - baseTime;
-        const segEnd = (this.positions[i + 1].time || baseTime) - baseTime;
-        const segDuration = Math.max(1, segEnd - segStart);
-        if (timeMs <= segEnd) {
-          return i;
+      // 二分查找：segStartTimes 为递增的累计时间偏移表，定位最后一个 ≤ timeMs 的段起点
+      const times = this._segStartTimes;
+      const n = this.positions.length;
+      let lo = 0, hi = n - 1;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (times[mid] <= timeMs) {
+          lo = mid;
+        } else {
+          hi = mid - 1;
         }
-        accumulated += segDuration;
       }
-      return this.positions.length - 1;
+      return lo;
     } else {
       const segDuration = 2000;
       return Math.min(
@@ -383,22 +438,23 @@ class TrailPlayer {
     let progress = 0;
 
     if (this._hasTimestamps) {
-      const baseTime = positions[0].time || 0;
-      let accumulated = 0;
-      for (let i = 0; i < positions.length - 1; i++) {
-        const segStart = (positions[i].time || baseTime) - baseTime;
-        const segEnd = (positions[i + 1].time || baseTime) - baseTime;
-        const segDuration = Math.max(1, segEnd - segStart);
-
-        if (timeMs >= segStart && timeMs <= segEnd) {
-          idx = i;
-          progress = (timeMs - segStart) / segDuration;
-          break;
+      // 二分定位当前段（segStartTimes[i] ≤ timeMs < segStartTimes[i+1]）
+      const times = this._segStartTimes;
+      const n = positions.length;
+      let lo = 0, hi = n - 1;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (times[mid] <= timeMs) {
+          lo = mid;
+        } else {
+          hi = mid - 1;
         }
-        accumulated += segDuration;
-        idx = i;
-        progress = 1;
       }
+      idx = Math.min(lo, n - 2);
+      const segStart = times[idx];
+      const segEnd = times[idx + 1];
+      const segDuration = Math.max(1, segEnd - segStart);
+      progress = Math.min(1, Math.max(0, (timeMs - segStart) / segDuration));
     } else {
       const segDuration = 2000;
       idx = Math.min(
