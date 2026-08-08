@@ -184,7 +184,14 @@ class TrailPlayer {
       if (lastSeg && lastSeg.pts.length >= 2 && this._playedPathPolylines.length > 0) {
         const pl = this._playedPathPolylines[this._playedPathPolylines.length - 1];
         const ll = new qq.maps.LatLng(lastSeg.pts[lastSeg.pts.length - 1].lat, lastSeg.pts[lastSeg.pts.length - 1].lng);
-        pl.setPath([...pl.getPath(), ll]);
+        // 腾讯地图 getPath() 返回 MVCArray（非普通数组，不支持展开运算符），
+        // 用其 push() 增量追加顶点；MVCArray.push 会自动触发 polyline 重绘。
+        const path = pl.getPath();
+        if (path && typeof path.push === 'function') {
+          path.push(ll);
+        } else if (Array.isArray(path)) {
+          pl.setPath([...path, ll]);
+        }
       }
       return;
     }
