@@ -74,7 +74,12 @@ class TrailPlayer {
     for (let i = 0; i < n - 1; i++) {
       const segStart = (positions[i].time || baseTime) - baseTime;
       const segEnd = (positions[i + 1].time || baseTime) - baseTime;
-      const segDuration = Math.max(1, segEnd - segStart);
+      // 注意不能用 max(1, ...) 钳制：清洗后轨迹可能出现重复/极小时间戳的相邻点，
+      // 钳制会让累计时间膨胀超过 _calcTotalDuration（last - first），
+      // 导致二分查找 _findIndexAtTime(_totalDuration) 到达不了末索引，
+      // 回放提前停止且末尾留下未播放的浅色路径段。0 时长段会让 times 允许相等，
+      // 二分（找最后一个 ≤ timeMs）与插值（progress 归 1）仍正确。
+      const segDuration = Math.max(0, segEnd - segStart);
       acc += segDuration;
       times[i + 1] = acc;
     }
