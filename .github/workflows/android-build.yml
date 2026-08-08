@@ -145,7 +145,14 @@ jobs:
           ./gradlew assembleDebug --no-daemon
 
       - name: 签名 APK
+        env:
+          TUJIE_STORE_PASS: ${{ secrets.TUJIE_STORE_PASS }}
+          TUJIE_KEY_PASS: ${{ secrets.TUJIE_KEY_PASS }}
         run: |
+          if [ -z "$TUJIE_STORE_PASS" ] || [ -z "$TUJIE_KEY_PASS" ]; then
+            echo "::error::GitHub Secrets 缺失（TUJIE_STORE_PASS / TUJIE_KEY_PASS），请先在仓库 Settings → Secrets and variables → Actions 中配置，否则无法签名。"
+            exit 1
+          fi
           KEYSTORE="native/tujie.keystore"
           APK="native/android/app/build/outputs/apk/debug/app-debug.apk"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
@@ -164,8 +171,8 @@ jobs:
           "${ANDROID_HOME}/build-tools/${BT_DIR}/apksigner" sign \
             --ks "$KEYSTORE" \
             --ks-key-alias tujie \
-            --ks-pass pass:tujie123 \
-            --key-pass pass:tujie123 \
+            --ks-pass "pass:${TUJIE_STORE_PASS}" \
+            --key-pass "pass:${TUJIE_KEY_PASS}" \
             "$APK_SIGNED"
           echo "签名完成: $APK_SIGNED"
 
@@ -212,7 +219,9 @@ jobs:
             - 深色/浅色主题
 
             ### 安装
-            下载 APK 直接安装到 Android 设备（已签名，小米等设备可直接安装）。
+            下载 APK 安装到 Android 设备（已签名）。若系统提示「纯净模式/应用验证」，
+            请到 设置 → 安全 → 关闭纯净模式与应用安全验证 后再安装，或使用电脑执行
+            `adb install -r 途刻.apk` 绕过系统验证。
           files: native/android/app/build/outputs/apk/debug/tujie-*.apk
           generate_release_notes: true
 
