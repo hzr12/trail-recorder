@@ -260,6 +260,19 @@ class MapManager {
   }
 
   /**
+   * 批量 WGS84 → GCJ02（同步手写算法）
+   * 用于停止记录后的 RTS 离线平滑后处理：整段轨迹点量较大，
+   * 逐点调用 convertor 网络 API（每次 2s 超时）不现实，手写算法同步、零网络开销，
+   * 精度与官方转换偏差 < 1m，对离线轨迹修正足够。
+   * @param {Array<{lat:number,lng:number}>} points
+   * @returns {Array<{lat:number,lng:number}>}
+   */
+  batchWgs84ToGcj02(points) {
+    if (!points || !points.length) return [];
+    return points.map(p => this._wgs84Gcj02(p));
+  }
+
+  /**
    * 创建我的位置标记图标（蓝色实心圆点）
    */
   _createLocationIcon(heading) {

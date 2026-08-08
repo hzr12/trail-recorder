@@ -226,9 +226,23 @@ class TrailPlayer {
       : 0;
 
     const currentPoint = this._interpolateAtTime(this._playbackTime);
-    const pathPoints = this._renderPositions.slice(0, renderIdx + 1);
-    if (renderIdx < renderN - 1 && currentPoint) {
-      pathPoints.push(currentPoint);
+    // 强制让 pathPoints 包含 _renderPositions[renderIdx+1]（下一个抽稀点）：
+    // 消除"已播路径与未播预览在当前位置附近的几何分叉"。
+    // 根因：抽稀索引 renderIdx 按位置均匀，但 _currentIndex 按时间累计（GPS 采样通常非均匀），
+    // 两者不对齐 → currentPoint 基于全量 positions 插值，与 _renderPositions[renderIdx+1]
+    // 是不同全量位置的点 → 已播路径末段与未播预览下一段起点几何偏移 ~step/2 个采样点距离
+    // （50000→4000 抽稀时偏移 ~130m，地图上肉眼明显为两条线平行分叉）。
+    // 把 _renderPositions[renderIdx+1] 也纳入 pathPoints，两条线在该位置完全重合，
+    // 几何偏移消除。currentPoint 仍单独显示在 marker（与 path 几何解耦）。
+    const pathPoints = this._renderPositions.slice(0, renderIdx + 2);
+
+    // 末段覆盖：已无下一个抽稀点（renderIdx === renderN-1）时，把 currentPoint
+    // 作为已播终点追加，确保 onComplete 后已播路径覆盖到当前位置
+    if (renderIdx + 2 >= renderN && currentPoint) {
+      const tail = pathPoints[pathPoints.length - 1];
+      if (currentPoint.lat !== tail.lat || currentPoint.lng !== tail.lng) {
+        pathPoints.push(currentPoint);
+      }
     }
     if (pathPoints.length < 2) {
       this._clearPlayedPolylines();
@@ -246,14 +260,21 @@ class TrailPlayer {
       const lastSeg = segments[segments.length - 1];
       if (lastSeg && lastSeg.pts.length >= 2 && this._playedPathPolylines.length > 0) {
         const pl = this._playedPathPolylines[this._playedPathPolylines.length - 1];
-        const ll = new qq.maps.LatLng(lastSeg.pts[lastSeg.pts.length - 1].lat, lastSeg.pts[lastSeg.pts.length - 1].lng);
         // 腾讯地图 getPath() 返回 MVCArray（非普通数组，不支持展开运算符），
         // 用其 push() 增量追加顶点；MVCArray.push 会自动触发 polyline 重绘。
         const path = pl.getPath();
         if (path && typeof path.push === 'function') {
-          path.push(ll);
+          // 末段可能一次增长多个点（抽稀轨迹 _currentIndex 每帧跳多个索引）：
+          // 必须把「path 尚未包含的新增点」全部补齐，否则路径缺中间点，
+          // 浅色预览段会从缺口露出形成"浅色段残留"。
+          // path 当前长度 = 上次已渲染点数；lastSeg.pts[0] 为段起点（重建时已入 path），
+          // 从 curLen 起追加到 pts.length-1 即可完整覆盖。
+          const curLen = typeof path.getLength === 'function' ? path.getLength() : 0;
+          for (let i = curLen; i < lastSeg.pts.length; i++) {
+            path.push(new qq.maps.LatLng(lastSeg.pts[i].lat, lastSeg.pts[i].lng));
+          }
         } else if (Array.isArray(path)) {
-          pl.setPath([...path, ll]);
+          pl.setPath([...path, ...lastSeg.pts.slice(path.length)]);
         }
       }
       return;
@@ -411,6 +432,15 @@ class TrailPlayer {
     }
 
     if (this._playbackTime >= this._totalDuration) {
+      // 回放完成：强制末帧状态并重画完整已播路径。
+      // 中间帧可能因抽稀映射/增量分支/时间戳异常使已播路径未精确覆盖到末点，
+      // 导致"回放结束后末端仍残留浅色预览段"。结束帧强制 totalIdx=n-1 触发
+      // _updatePlayedPath 全量重建（renderIdx=renderN-1 时 pathPoints 含全部渲染点，
+      // 覆盖浅色预览全路径），并让 marker 精确落在末点。
+      this._currentIndex = this.positions.length - 1;
+      this._playbackTime = this._totalDuration;
+      this._updateMarker(this._interpolateAtTime(this._totalDuration));
+      this._updatePlayedPath();
       this.isPlaying = false;
       if (this.callbacks.onComplete) {
         this.callbacks.onComplete();
@@ -600,7 +630,10 @@ class TrailPlayer {
     //   仅靠单一来源无法可靠判定，取两者较小值 < 阈值则归零。
     const dispSpeed = (() => {
       const dtMs = (p1.time || 0) - (p0.time || 0);
-      if (dtMs <= 0) return null;
+      // 时间窗过小（清洗后剔除中间点、时间戳密集/重复的相邻点，dtMs 可能仅 1ms）时，
+      // 位移速度推算会爆炸：如 5m 位移 + 1ms 间隔 → 5000 m/s，造成回放中"一闪而过的不实速度"。
+      // 位移速度只有在足够长的时间窗内才有意义，不足则放弃该来源、退用 GPS 上报速度。
+      if (dtMs < 250) return null;
       const d = calcDistance(
         { lat: p0.lat, lng: p0.lng },
         { lat: p1.lat, lng: p1.lng }

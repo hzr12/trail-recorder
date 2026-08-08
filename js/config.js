@@ -87,6 +87,13 @@ const CONFIG = {
   GPS_MAX_INTERVAL: 60000,
   GPS_MOVE_THRESHOLD: 0.5,
 
+  // Huber Loss 鲁棒滤波「基准阈值」（标准化残差，无量纲）：0 禁用（纯最小二乘）。
+  // |残差|/σ 超过该值的测量被降权（M-估计），抑制 GPS 粗差/漂移点。
+  // 实际生效阈值由 KalmanFilter._huberKFor() 按「速度+精度」启发式在此基准上自动缩放
+  // （低速静止漂移压狠、高速机动放宽、精度差收紧），用户无需手动调参。
+  // 默认 2.0 ≈ 2σ 截断。
+  GPS_HUBER_K: 2.0,
+
   // ----- 存储引擎 -----
   TRAIL_STORAGE_ENGINE: 'auto',
 
