@@ -140,8 +140,9 @@ App.prototype._updateStatusBar = function (force) {
     const lvl = LEVELS.find(l => qInfo.score >= l.min) || LEVELS[LEVELS.length - 1];
     const srcTag = qInfo.source === 'gnss' ? 'GNSS' : 'Web';
     const tip = `信号质量评分（${srcTag}${qInfo.breakdown ? '：' + qInfo.breakdown : ''}）：${qInfo.score} 分`;
+    // 按 n 升序生成：从左到右 s1→s4（矮→高），亮格=当前档，与 accuracy fallback 一致
     signalHtml = `<span class="gps-signal" title="${tip}">` +
-      LEVELS.map(l => `<span class="signal-bar s${l.n}${lvl.n >= l.n ? ' on' : ''}"></span>`).join('') +
+      [1, 2, 3, 4].map(n => `<span class="signal-bar s${n}${lvl.n >= n ? ' on' : ''}"></span>`).join('') +
       `</span>`;
   } else if (this._lastAccuracy != null) {
     let bars;
