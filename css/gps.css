@@ -27,8 +27,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  white-space: nowrap;
+  gap: 5px;
+  flex-wrap: wrap;
   max-width: 100%;
 }
 
@@ -184,20 +184,10 @@
   border: 1px solid var(--border-color);
   white-space: nowrap;
 }
-
-/* 更新时间：独立突出胶囊，常驻可见 */
-.gps-weather-update {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
+.gps-weather .upd {
   color: var(--accent-1);
-  font-weight: 500;
   font-family: var(--font-mono);
-  background: var(--bg-input);
-  border: 1px solid rgba(0, 212, 170, 0.35);
-  padding: 1px 8px;
-  border-radius: var(--radius-full);
-  white-space: nowrap;
+  margin-left: 4px;
 }
 
 /* 信号强度指示 */
@@ -326,89 +316,4 @@
   border: 1px solid var(--warning);
 }
 
-/* 底部独立卫星 bar：与上方 panel-body 用分割条隔开 */
-.gnss-bar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 6px 8px;
-  padding: 8px 12px 10px;
-  margin: 6px 12px 8px;
-  font-family: var(--font-mono);
-  color: var(--text-secondary);
-  background: var(--bg-input);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  min-height: 18px;
-  text-align: center;
-  word-break: break-word;
-}
 
-.gnss-bar:empty {
-  display: none; /* 没有原生 GNSS 插件时（web/ios）整个 bar 隐藏 */
-}
-
-.gnss-bar .gnss-indicator {
-  font-size: 12px;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-}
-
-/* ---------- 卫星天顶图面板（仿速度曲线可折叠结构） ---------- */
-.satellite-section {
-  margin: 6px 12px 8px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--bg-input);
-  overflow: hidden;
-}
-.satellite-section.hidden {
-  display: none;
-}
-.satellite-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  cursor: pointer;
-  user-select: none;
-}
-.satellite-title {
-  font-size: 12px;
-  font-weight: normal;
-  color: var(--text-primary);
-}
-.satellite-info {
-  flex: 1;
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--text-secondary);
-  text-align: right;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.satellite-toggle {
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  padding: 2px;
-  cursor: pointer;
-  transition: transform 0.2s;
-}
-.satellite-toggle.collapsed {
-  transform: rotate(-90deg);
-}
-.satellite-body {
-  display: flex;
-  justify-content: center;
-  padding: 2px 0 10px;
-}
-.satellite-body.collapsed {
-  display: none;
-}
-#satellite-canvas {
-  border-radius: var(--radius-sm);
-}

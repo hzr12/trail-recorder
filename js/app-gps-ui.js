@@ -96,8 +96,6 @@ App.prototype._updateStatusBar = function (force) {
   if (!this._statusEl) return;
   if (!this.myPosition) {
     this._statusEl.innerHTML = '<div class="gps-line1"><span class="gps-dot"></span><span class="gps-offline">⊙ 未定位，点击 GPS 按钮定位</span></div>';
-    if (this._gnssBarEl) this._gnssBarEl.innerHTML = '';
-    if (this._updateSatelliteSky) this._updateSatelliteSky();
     return;
   }
   const now = Date.now();
@@ -122,7 +120,7 @@ App.prototype._updateStatusBar = function (force) {
   const degradedIcon = isDowngraded ? ' <span class="gps-state-icon warn" title="低精度定位">⚠</span>' : '';
   // GNSS 弱信号省电徽章（常驻；进入/退出由 onWeakSignalChange 各弹一次 Toast）
   const weakBadge = this.gpsManager.isWeakSignal
-    ? ' <span class="gnss-weak-badge" title="GNSS 信号弱，已自动降低定位频率省电">⚠ 信号弱·省电中</span>'
+    ? ' <span class="gnss-weak-badge" title="GNSS 信号弱，已自动降低定位频率省电">⚠ 信号弱</span>'
     : '';
   // 定位源两态标识：GNSS（原生芯片接管）/ Web（浏览器定位顶上）
   // 桌面端（无 GNSS 插件）Web 源按 accuracy 标注近似精度等级，直观感知定位可信度
@@ -136,36 +134,13 @@ App.prototype._updateStatusBar = function (force) {
     sourceLabel += acc > 500 ? '·≈城市级' : `·±${acc}m`;
     sourceTitle += `，当前精度 ±${acc}m`;
   }
-  const sourceBadge = ` <span class="gps-source ${isGnssSource ? 'gnss' : 'web'}" title="${sourceTitle}">${sourceLabel}</span>`;
+  const sourceBadge = `<span class="gps-source ${isGnssSource ? 'gnss' : 'web'}" title="${sourceTitle}">${sourceLabel}</span>`;
   // GNSS 芯片航向/速度徽章（仅原生接管且有 VTG 数据时显示；Web 源无原生航向）
   const vtgInfo = (isGnssSource && this.gpsManager.speedSource === 'gnss')
     ? ` <span class="gps-vtg" title="GNSS 芯片航向/速度（优先于浏览器定位数据）">↗${Math.round(this.gpsManager.vtgTrack || 0)}° ${this.gpsManager.vtgSpeedKmh != null ? this.gpsManager.vtgSpeedKmh.toFixed(1) : '--'}km/h·GNSS</span>`
     : '';
   // 跟随模式独立为按钮，避免整条状态栏误触切换
   const followIcon = ` <button class="gps-follow-toggle${this._followMode ? ' active' : ''}" title="切换地图跟随">${this._followMode ? '跟随中' : '跟随'}</button>`;
-
-  let gnssHtml = '';
-  if (this.gpsManager.hasGnssPlugin) {
-    if (this.gpsManager.gnssVisibleCount > 0) {
-      const used = this.gpsManager.gnssUsedCount;
-      const visible = this.gpsManager.gnssVisibleCount;
-      const snr = this.gpsManager.gnssAvgSnr;
-      const dop = this.gpsManager.fusedDop;
-      const pdop = this.gpsManager.pdop;
-      const hdop = this.gpsManager.hdop;
-      const vdop = this.gpsManager.vdop;
-      const dopTitle = `参与定位 ${used}/${visible}, 平均信噪比 ${snr.toFixed(0)}dB-Hz` +
-        (dop != null ? `, 综合精度因子(PDOP) ${dop.value}·${dop.label}` +
-          ` [PDOP:${pdop != null ? pdop.toFixed(1) : '--'} HDOP:${hdop != null ? hdop.toFixed(1) : '--'} VDOP:${vdop != null ? vdop.toFixed(1) : '--'}]` : '');
-      const dopHtml = dop != null
-        ? ` <span class="gps-dop ${dop.quality}" title="综合精度因子（PDOP=√(HDOP²+VDOP²)）">精度因子:${dop.value}·${dop.label}</span>`
-        : '';
-      gnssHtml = `<span class="gnss-indicator" title="${dopTitle}">` +
-        ` 定位:${used} 可见:${visible} 信噪比:${snr.toFixed(0)}dB${dopHtml}</span>`;
-    } else {
-      gnssHtml = `<span class="gnss-indicator" style="opacity:0.5"> 等待卫星...</span>`;
-    }
-  }
 
   // 信号质量评分（GNSS：SNR/HDOP/卫星数/星座融合；Web：accuracy 降级分）恒有值；
   // 连评分都算不出（从未定位）时回退 accuracy 信号条
@@ -178,13 +153,13 @@ App.prototype._updateStatusBar = function (force) {
           : { t: '差', c: 'poor' };
     const srcTag = qInfo.source === 'gnss' ? 'GNSS' : 'Web';
     const tip = `信号质量评分（${srcTag}${qInfo.breakdown ? '：' + qInfo.breakdown : ''}）：${qInfo.score} 分`;
-    signalHtml = `<span class="gps-signal-score ${lvl.c}" title="${tip}">质${qInfo.score}·${lvl.t}</span>`;
+    signalHtml = `<span class="gps-signal-score ${lvl.c}" title="${tip}">质量·${lvl.t}(${qInfo.score})</span>`;
   } else if (this._lastAccuracy != null) {
-    let bars, label;
-    if (this._lastAccuracy <= 10) { bars = 4; label = '极好'; }
-    else if (this._lastAccuracy <= 30) { bars = 3; label = '良好'; }
-    else if (this._lastAccuracy <= 100) { bars = 2; label = '一般'; }
-    else { bars = 1; label = '弱'; }
+    let bars;
+    if (this._lastAccuracy <= 10) { bars = 4; }
+    else if (this._lastAccuracy <= 30) { bars = 3; }
+    else if (this._lastAccuracy <= 100) { bars = 2; }
+    else { bars = 1; }
     signalHtml = `<span class="gps-signal" title="精度 ±${Math.round(this._lastAccuracy)}m">` +
       `<span class="signal-bar s1${bars >= 1 ? ' on' : ''}"></span>` +
       `<span class="signal-bar s2${bars >= 2 ? ' on' : ''}"></span>` +
@@ -194,8 +169,9 @@ App.prototype._updateStatusBar = function (force) {
   }
 
   const line2Parts = [];
+  if (sourceBadge) line2Parts.push(sourceBadge);
   if (signalHtml) line2Parts.push(signalHtml);
-  if (!stale && this._lastSpeed != null) {
+  if (!stale && this._lastSpeed != null && this._lastSpeed * 3.6 > 0.1) {
     const kmh = this._lastSpeed * 3.6;
     line2Parts.push(`<span class="gps-speed">${kmh.toFixed(1)}km/h</span>`);
   }
@@ -215,18 +191,15 @@ App.prototype._updateStatusBar = function (force) {
     const label = this._batteryCharging ? '充电中' : (timeStr ? `约${timeStr}` : '');
     line2Parts.push(`<span class="gps-battery" title="电量 ${pct}%${label ? '，' + label : ''}">${pct}%</span>`);
   }
-  const line2 = line2Parts.length ? line2Parts.join('<span class="gps-sep">│</span>') : '<span style="opacity:0.5">位置待更新</span>';
+  const line2 = line2Parts.length
+    ? line2Parts.join('<span class="gps-sep">│</span>')
+    : `<span style="opacity:0.5">位置待更新</span>`;
   const line3 = this._weatherHtml ? `<div class="gps-line3">${this._weatherHtml}</div>` : '';
 
   this._statusEl.innerHTML =
-    `<div class="gps-line1"><span class="${dotClass}" title="${stale ? '定位过期' : isTracking ? '持续追踪中' : '已定位'}"></span><span class="gps-online">◉ 已定位</span>${degradedIcon}${weakBadge}${sourceBadge}${vtgInfo}${followIcon}<span class="gps-elapsed">(${elapsed})</span></div>` +
+    `<div class="gps-line1"><span class="${dotClass}" title="${stale ? '定位过期' : isTracking ? '持续追踪中' : '已定位'}"></span><span class="gps-online">已定位</span>${degradedIcon}${weakBadge}${vtgInfo}${followIcon} <span class="gps-elapsed">(${elapsed})</span></div>` +
     `<div class="gps-line2">${line2}</div>` +
     line3;
-
-  if (this._gnssBarEl) {
-    this._gnssBarEl.innerHTML = gnssHtml || '';
-  }
-  this._updateSatelliteSky();
 };
 
 /* ── 跟随模式切换 ─────────────────────────────────── */
@@ -251,161 +224,4 @@ App.prototype._toggleFollowMode = function () {
   this._updateStatusBar(true);
 };
 
-/* ── 卫星天顶图（Canvas 2D 手绘极坐标，不依赖 Chart.js）────────── */
 
-// 天顶图直径：撑满面板宽但封顶 260，窄屏最小 180
-App.prototype._satSkySize = function () {
-  const body = document.getElementById('satellite-body');
-  const parentW = body ? body.clientWidth : 260;
-  return Math.max(180, Math.min(260, parentW - 24));
-};
-
-// 显示面板并绑定折叠交互（只绑一次）
-App.prototype._showSatelliteSky = function () {
-  const section = document.getElementById('satellite-section');
-  if (!section) return;
-  section.classList.remove('hidden');
-  if (this._satToggleBound) return;
-  const header = document.getElementById('satellite-header');
-  const body = document.getElementById('satellite-body');
-  const toggle = document.getElementById('satellite-toggle');
-  if (header && body && toggle) {
-    this._satToggleBound = true;
-    header.onclick = () => {
-      body.classList.toggle('collapsed');
-      toggle.classList.toggle('collapsed');
-    };
-  }
-};
-
-/**
- * 更新卫星天顶图（自节流 ~1s，配合 GNSS 事件 1s/次）。
- * 无原生 GNSS 插件或无可见卫星 → 整块面板隐藏。
- */
-App.prototype._updateSatelliteSky = function () {
-  const canvas = document.getElementById('satellite-canvas');
-  const section = document.getElementById('satellite-section');
-  if (!canvas || !section) return;
-  const sats = this.gpsManager.gnssSatellites;
-  if (!this.gpsManager.hasGnssPlugin || sats.length === 0) {
-    section.classList.add('hidden');
-    return;
-  }
-  const now = Date.now();
-  if (this._lastSatSkyUpdate && now - this._lastSatSkyUpdate < 1000) return;
-  this._lastSatSkyUpdate = now;
-  this._showSatelliteSky();
-
-  // 图例：按星座统计可见卫星数（放 satellite-info 行）
-  const infoEl = document.getElementById('satellite-info');
-  if (infoEl) {
-    const c = this.gpsManager.gnssConstellationStats;
-    const parts = [];
-    if (c.gps) parts.push(`GPS ${c.gps}`);
-    if (c.beidou) parts.push(`北斗 ${c.beidou}`);
-    if (c.glonass) parts.push(`GLONASS ${c.glonass}`);
-    if (c.galileo) parts.push(`GALILEO ${c.galileo}`);
-    if (c.other) parts.push(`其他 ${c.other}`);
-    infoEl.textContent = parts.join(' · ') || '可见 0 颗';
-  }
-
-  const size = this._satSkySize();
-  if (this._satSkySizeCached !== size) {
-    this._satSkySizeCached = size;
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = size * dpr;
-    canvas.height = size * dpr;
-    canvas.style.width = size + 'px';
-    canvas.style.height = size + 'px';
-  }
-  const ctx = canvas.getContext('2d');
-  const dpr = window.devicePixelRatio || 1;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, size, size);
-
-  // 主题感知配色（dark/light 均读当前 data-theme）
-  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
-  const bg = isDark ? 'rgba(15,23,42,0.88)' : 'rgba(255,255,255,0.88)';
-  const grid = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)';
-  const text = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
-  const cx = size / 2;
-  const cy = size / 2;
-  const R = size / 2 - 16;
-
-  // 背景圆
-  ctx.fillStyle = bg;
-  ctx.beginPath();
-  ctx.arc(cx, cy, R, 0, Math.PI * 2);
-  ctx.fill();
-
-  // 同心网格：外圈=地平线(0°)、45°、天顶(90°)
-  ctx.strokeStyle = grid;
-  ctx.lineWidth = 1;
-  for (const elev of [0, 45, 90]) {
-    ctx.beginPath();
-    ctx.arc(cx, cy, elev === 90 ? 0.5 : (R * (90 - elev) / 90), 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  // 方位十字线
-  ctx.beginPath();
-  ctx.moveTo(cx - R, cy);
-  ctx.lineTo(cx + R, cy);
-  ctx.moveTo(cx, cy - R);
-  ctx.lineTo(cx, cy + R);
-  ctx.stroke();
-  // 方位标注 N/E/S/W（正北向上）
-  ctx.fillStyle = text;
-  ctx.font = '9px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('N', cx, cy - R - 8);
-  ctx.fillText('E', cx + R + 9, cy);
-  ctx.fillText('S', cx, cy + R + 9);
-  ctx.fillText('W', cx - R - 9, cy);
-
-  // 卫星散点：r = R·(90-仰角)/90；x = cx + r·sin(azimuth)，y = cy - r·cos(azimuth)
-  // 颜色按 cn0DbHz：<20 红、20-30 黄、>30 绿；usedInFix 加白色描边
-  // 星座形状：GPS □ / 北斗 ● / GLONASS △ / GALILEO ✕
-  for (const s of sats) {
-    if (s.elevation == null || s.azimuth == null) continue;
-    const r = R * (90 - s.elevation) / 90;
-    const rad = s.azimuth * Math.PI / 180;
-    const x = cx + r * Math.sin(rad);
-    const y = cy - r * Math.cos(rad);
-    const cno = s.cn0DbHz;
-    let color = '#f44336';
-    if (cno >= 30) color = '#4caf50';
-    else if (cno >= 20) color = '#ffc107';
-    ctx.fillStyle = color;
-    ctx.strokeStyle = s.usedInFix ? '#ffffff' : color;
-    ctx.lineWidth = 1.2;
-    switch (s.constellation) {
-      case 'GPS':
-        ctx.fillRect(x - 3, y - 3, 6, 6); // □
-        break;
-      case 'GLONASS':
-        ctx.beginPath(); // △
-        ctx.moveTo(x, y - 4.5);
-        ctx.lineTo(x + 4, y + 3.5);
-        ctx.lineTo(x - 4, y + 3.5);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        break;
-      case 'GALILEO':
-        ctx.beginPath(); // ✕
-        ctx.moveTo(x - 4, y - 4);
-        ctx.lineTo(x + 4, y + 4);
-        ctx.moveTo(x + 4, y - 4);
-        ctx.lineTo(x - 4, y + 4);
-        ctx.stroke();
-        break;
-      default: // 北斗/其他 ●
-        ctx.beginPath();
-        ctx.arc(x, y, 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        break;
-    }
-  }
-};

@@ -40,10 +40,6 @@ class App {
       Toast.show(' 电量恢复，已自动恢复追踪');
       this._startWatching();
     };
-    // GNSS 卫星数据更新 → 刷新卫星天顶图（内部自带节流，不干扰状态栏 2s 节流）
-    this.gpsManager.onSatellitesChange = () => {
-      if (this._updateSatelliteSky) this._updateSatelliteSky();
-    };
     this.myPosition = null;
     this.myPositionTime = null;
     this._statusEl = null;
@@ -303,7 +299,6 @@ class App {
     });
 
     this._statusEl = document.getElementById('gps-status');
-    this._gnssBarEl = document.getElementById('gnss-bar');
 
     // GPS 状态条：仅点击跟随按钮切换跟随模式，避免整条误触
     this._statusEl.addEventListener('click', (e) => {
@@ -2991,8 +2986,7 @@ class App {
         // 日出日落等完整信息移入 title 悬停，常态只显示关键信息；更新时间独立胶囊醒目常驻
         const weatherTitle = `${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}${sunText}`;
         this._weatherHtml =
-          `<span class="gps-weather" title="${weatherTitle}">${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}</span>` +
-          `<span class="gps-weather-update" title="天气更新时间">🕐 更新${updateText}</span>`;
+          `<span class="gps-weather" title="${weatherTitle}">${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}<span class="upd">· 更新${updateText}</span></span>`;
         this._updateStatusBar(true);
       });
   }
@@ -3035,8 +3029,7 @@ class App {
         // 日出日落等完整信息移入 title 悬停，常态只显示关键信息；更新时间独立胶囊醒目常驻
         const weatherTitle = `${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}${sunText}`;
         this._weatherHtml =
-          `<span class="gps-weather" title="${weatherTitle}">${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}</span>` +
-          `<span class="gps-weather-update" title="天气更新时间">🕐 更新${updateText}</span>`;
+          `<span class="gps-weather" title="${weatherTitle}">${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}<span class="upd">· 更新${updateText}</span></span>`;
         this._updateStatusBar(true);
       });
   }
