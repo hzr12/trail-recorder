@@ -645,6 +645,7 @@ class GPSManager {
     this.onPowerSavingChange = null; // 省电模式变更回调 (isOn: boolean) => void
     this.onCriticalBattery = null;   // 低电量自动停止回调 () => void
     this.onRestoreTracking = null;   // 电量恢复自动恢复追踪回调 () => void
+    this.onWeakSignalChange = null;  // GNSS 弱信号状态变更回调 (weak: boolean) => void
 
     // GPS 超时降级状态
     this._consecutiveTimeouts = 0;  // 连续超时次数
@@ -664,6 +665,22 @@ class GPSManager {
     this._gnssStatusHandle = null; // gnssStatus 事件监听器句柄
     this._gnssNmeaHandle = null;   // nmeaSentence 事件监听器句柄
     this._gnssPollId = null;       // GNSS 轮询兜底定时器
+    this._lastVtg = null;          // 最近一条 $GPVTG 航向/速度（VTG 优先源）
+    this._utcOffsetMs = 0;         // 设备时钟校准偏移（RMC UTC - 本地时钟，±12h 过滤）
+    this._lastUtcReceivedAt = 0;   // 上次采纳 UTC 的时间（防旧 NMEA 回灌）
+
+    // GNSS NMEA 增强（定位源接管 / GGA 海拔 / GSA DOP / RMC 交叉验证）
+    this._lastRmc = null;          // $GPRMC：定位有效性 + 速度/航向交叉源 + 经纬度
+    this._lastGga = null;          // $GPGGA：海拔 MSL + 大地水准面分离 + 经纬度
+    this._lastGsa = null;          // $G?GSA：PDOP/HDOP/VDOP
+    this._gpsSource = 'fallback';  // 定位源状态：native（原生主导）| browser（浏览器顶上）| fallback（无插件）
+    this._sourceNativeCnt = 0;     // 切 native 持续计数（滞回防抖）
+    this._sourceBrowserCnt = 0;    // 切 browser 持续计数（滞回防抖）
+    this._lastSourceEvalAt = 0;    // evaluateSource 节流时间戳（NMEA 高频到达时限制评估频率）
+    this._nativeLat = null;        // 最近可信原生坐标纬度（坐标交叉校验用）
+    this._nativeLng = null;        // 最近可信原生坐标经度
+    this._coordConflictStreak = 0; // 原生 vs 浏览器偏差连续超阈计数
+    this._nativeCoordTrusted = true; // 原生坐标是否可信（连续超阈后置 false，恢复后回到 true）
 
     // GPS 漂移滤波器
     this._useFilter = true;           // 是否启用滤波
@@ -689,6 +706,11 @@ class GPSManager {
     this._gpsPowerSavingInterval = 20000;   // 省电模式间隔
     this._gpsBackgroundInterval = 15000;    // 后台定位间隔
     this._bestPendingPosition = null;       // 节流窗口内精度最优的位置缓存
+
+    // GNSS 弱信号降级状态机（独立于 powerSaving，不关闭 GNSS 监听以便监测恢复）
+    this._weakSignal = false;          // 是否处于弱信号省电降级
+    this._weakCnt = 0;                 // 弱信号持续计数（GNSS 事件约 1s/次）
+    this._strongCnt = 0;               // 强信号持续计数（滞回恢复）
   }
 
   /**
@@ -706,6 +728,8 @@ class GPSManager {
     else base = CONFIG.GPS_ADAPTIVE_K / s;              // 移动 → K/速度
     let interval = Math.min(Math.max(base, CONFIG.GPS_MIN_INTERVAL), CONFIG.GPS_MAX_INTERVAL);
     if (this._powerSaving) interval = Math.max(interval, this._gpsPowerSavingInterval);
+    // 弱信号降级：心跳间隔拉长至 GPS_WEAK_SIGNAL_INTERVAL（省电），恢复后自动回落
+    if (this._weakSignal) interval = Math.max(interval, CONFIG.GPS_WEAK_SIGNAL_INTERVAL);
     this._gpsMinInterval = Math.round(interval);
   }
 
@@ -840,6 +864,13 @@ class GPSManager {
   }
 
   /**
+   * 是否处于 GNSS 弱信号省电降级
+   */
+  get isWeakSignal() {
+    return this._weakSignal;
+  }
+
+  /**
    * 获取当前节流间隔（毫秒）
    */
   get currentInterval() {
@@ -925,13 +956,14 @@ class GPSManager {
       // 如果先 start 后 addListener，第一批卫星事件会被丢弃（竞态条件）
       const gnssHandler = (event) => {
         if (event && event.satellites) {
-          this._gnssSatellites = event.satellites;
+          this._handleGnssSatellites(event.satellites);
           if (CONFIG.DEBUG) console.log('[GPS] GNSS 事件收到，卫星数:', event.satellites.length);
         }
       };
       const nmeaHandler = (nmea) => {
-        if (nmea) {
-          if (CONFIG.DEBUG) console.log('[GPS] NMEA:', nmea.sentence?.substring(0, 20) + '...');
+        if (nmea && nmea.sentence) {
+          if (CONFIG.DEBUG) console.log('[GPS] NMEA:', nmea.sentence.substring(0, 20) + '...');
+          this._parseNmea(nmea.sentence);
         }
       };
 
@@ -1021,7 +1053,7 @@ class GPSManager {
           return;
         }
         if (data && data.satellites && data.satellites.length > 0) {
-          this._gnssSatellites = data.satellites;
+          this._handleGnssSatellites(data.satellites);
           if (CONFIG.DEBUG) console.log('[GPS] GNSS 轮询兜底：收到卫星数:', data.satellites.length);
           this._stopGnssPollFallback();
         }
@@ -1063,6 +1095,311 @@ class GPSManager {
       try { this._gnssPlugin?.removeAllListeners?.(); } catch (_) {}
     }
     this._gnssNmeaHandle = null;
+    this._clearNmeaCache();
+    this._utcOffsetMs = 0;
+    this._lastUtcReceivedAt = 0;
+    // 复位定位源状态（含坐标交叉校验）
+    this._gpsSource = 'fallback';
+    this._sourceNativeCnt = 0;
+    this._sourceBrowserCnt = 0;
+    this._lastSourceEvalAt = 0;
+    this._nativeLat = null;
+    this._nativeLng = null;
+    this._coordConflictStreak = 0;
+    this._nativeCoordTrusted = true;
+  }
+
+  /* ── GNSS NMEA 解析（VTG 航向/速度 + RMC/GGA UTC 时钟校准）── */
+
+  /**
+   * 解析单条 NMEA 语句，只保留最新状态（零内存增长）。
+   * - $GPVTG: 真航向 + 对地速度 → _lastVtg（VTG 优先源）
+   * - $GPRMC: 定位有效性 + 速度/航向 + 经纬度 → _lastRmc（交叉验证源）
+   * - $GPGGA: UTC 时间 + 海拔 MSL + 大地水准面分离 + 经纬度 → _lastGga
+   * - $G?GSA: PDOP/HDOP/VDOP → _lastGsa
+   */
+  _parseNmea(sentence) {
+    if (!sentence || typeof sentence !== 'string') return;
+    const parts = sentence.split(',');
+    if (parts.length < 2) return;
+    // 语句类型：$GPVTG / $GNVTG → "VTG"（去掉 $ 与 2 位 talker 前缀 GP/GN/GL/GA/GB）
+    const type = parts[0].replace(/^\$/, '').slice(2);
+    if (type === 'VTG') {
+      // $GPVTG,<真航向>,T,<磁航向>,M,<节>,N,<km/h>,K,<模式>
+      const track = parseFloat(parts[1]);
+      let kmh = parseFloat(parts[7]);
+      // 部分芯片无 km/h 字段时用节换算（1 节 = 1.852 km/h）
+      if (isNaN(kmh)) {
+        const knots = parseFloat(parts[5]);
+        kmh = isNaN(knots) ? NaN : knots * 1.852;
+      }
+      this._lastVtg = {
+        trackTrue: isNaN(track) ? null : track,
+        speedKmh: isNaN(kmh) ? null : kmh,
+        receivedAt: Date.now()
+      };
+    } else if (type === 'RMC') {
+      // $GPRMC,<hhmmss>,<A/V>,<纬度>,<N/S>,<经度>,<E/W>,<节>,<航向>,<日期>,...
+      const valid = parts[2] === 'A';
+      if (valid) {
+        const utcMs = this._nmeaUtcToMs(parts[1], parts[9]);
+        if (utcMs != null) this._applyUtcOffset(utcMs);
+      }
+      const lat = this._nmeaCoordToDecimal(parts[3], parts[4]);
+      const lng = this._nmeaCoordToDecimal(parts[5], parts[6]);
+      const knots = parseFloat(parts[7]);
+      const trackTrue = parseFloat(parts[8]);
+      this._lastRmc = {
+        valid: valid,
+        lat: lat,
+        lng: lng,
+        speedKmh: isNaN(knots) ? null : knots * 1.852,
+        trackTrue: isNaN(trackTrue) ? null : trackTrue,
+        receivedAt: Date.now()
+      };
+      if (valid && lat != null && lng != null) this._updateNativeCoord(lat, lng);
+    } else if (type === 'GGA') {
+      // $GPGGA,<hhmmss>,<纬度>,<N/S>,<经度>,<E/W>,<定位状态>,<卫星数>,<HDOP>,<海拔>,M,<分离>,M,...
+      const utcMs = this._nmeaUtcToMs(parts[1], null);
+      if (utcMs != null) this._applyUtcOffset(utcMs);
+      const altMsl = parseFloat(parts[9]);
+      const geoidSep = parseFloat(parts[11]);
+      const fixQuality = parseInt(parts[6], 10);
+      const lat = this._nmeaCoordToDecimal(parts[2], parts[3]);
+      const lng = this._nmeaCoordToDecimal(parts[4], parts[5]);
+      this._lastGga = {
+        altitudeMsl: isNaN(altMsl) ? null : altMsl,
+        geoidSep: isNaN(geoidSep) ? null : geoidSep,
+        lat: lat,
+        lng: lng,
+        fixValid: Number.isInteger(fixQuality) && fixQuality > 0,
+        receivedAt: Date.now()
+      };
+      if (lat != null && lng != null && fixQuality > 0) this._updateNativeCoord(lat, lng);
+    } else if (type === 'GSA') {
+      // $GPGSA,<模式>,<fix>,<sv1..sv12>,<PDOP>,<HDOP>,<VDOP>
+      const pdop = parseFloat(parts[15]);
+      const hdop = parseFloat(parts[16]);
+      const vdop = parseFloat(parts[17]);
+      this._lastGsa = {
+        pdop: isNaN(pdop) ? null : pdop,
+        hdop: isNaN(hdop) ? null : hdop,
+        vdop: isNaN(vdop) ? null : vdop,
+        receivedAt: Date.now()
+      };
+    }
+    // 数据更新 → 重估定位源（节流：最多每 1s 一次，避免高频 NMEA 反复评估）
+    this._maybeEvaluateSource();
+  }
+
+  /**
+   * NMEA 度分坐标（ddmm.mmmmm / dddmm.mmmmm + 半球）→ 十进制经纬度
+   * @param {string} coordStr 如 "2307.1234"
+   * @param {string} hemi 半球 N/S/E/W（空/无效 → null）
+   * @returns {number|null}
+   */
+  _nmeaCoordToDecimal(coordStr, hemi) {
+    if (!coordStr || !hemi || coordStr.length < 4) return null;
+    const val = parseFloat(coordStr);
+    if (isNaN(val)) return null;
+    const sign = (hemi === 'S' || hemi === 'W') ? -1 : 1;
+    // NMEA 度分坐标：纬度 ddmm.mmmm（2 位度），经度 dddmm.mmmm（3 位度）。
+    // 以小数点前整数位数判断（>=5 位 → 经度取 3 位度，否则纬度取 2 位度）
+    const dotIdx = coordStr.indexOf('.');
+    if (dotIdx < 0) return null;
+    const degLen = dotIdx >= 5 ? 3 : 2;
+    const deg = parseFloat(coordStr.slice(0, degLen));
+    const min = parseFloat(coordStr.slice(degLen));
+    if (isNaN(deg) || isNaN(min) || min >= 60) return null;
+    const abs = deg + min / 60;
+    if (abs > 180) return null; // 越界脏数据拦截
+    return sign * abs;
+  }
+
+  /**
+   * 原生坐标更新：解析出可信原生经纬度时记录，并供浏览器点做交叉校验。
+   * @param {number} lat
+   * @param {number} lng
+   */
+  _updateNativeCoord(lat, lng) {
+    this._nativeLat = lat;
+    this._nativeLng = lng;
+  }
+
+  /**
+   * 定位源评估入口（NMEA/卫星数据更新时调用，节流最多每 1s 一次）。
+   * 仅在 GNSS 监听激活时评估；无插件/未激活保持 fallback。
+   */
+  _maybeEvaluateSource() {
+    if (!this._gnssListeningStarted || !this._gnssPlugin) return;
+    const now = Date.now();
+    if (now - this._lastSourceEvalAt < 1000) return;
+    this._lastSourceEvalAt = now;
+    this.evaluateSource();
+  }
+
+  /**
+   * 定位源三态评估（native / browser / fallback）+ 滞回防抖。
+   * 决策依据：参与定位卫星数 + HDOP + RMC 定位有效性。
+   * - native：used ≥ GPS_TAKEOVER_MIN_SATS 且（HDOP ≤ 阈值，HDOP 缺失时以 RMC 状态 A 佐证）
+   * - browser：有插件但信号差 / RMC=V / 原生数据过期
+   * - fallback：无 GNSS 插件（web 端，零回归）
+   * 对外 gpsSource 归并两态：native → 'GNSS'，browser/fallback → 'Web'
+   */
+  evaluateSource() {
+    if (!this._gnssPlugin || !this._gnssListeningStarted) {
+      if (this._gpsSource !== 'fallback') {
+        this._gpsSource = 'fallback';
+        this._sourceNativeCnt = 0;
+        this._sourceBrowserCnt = 0;
+      }
+      return;
+    }
+    const used = this.gnssUsedCount;
+    const hdop = this.hdop;
+    const rmcValid = this.rmcPositionValid;
+    // 信号好：卫星数达标，且 HDOP 在阈值内（HDOP 缺失但有 RMC 有效定位时放行）
+    const gnssGood = used >= CONFIG.GPS_TAKEOVER_MIN_SATS &&
+      (hdop == null ? rmcValid : hdop <= CONFIG.GPS_TAKEOVER_HDOP);
+    const hold = Math.max(1, Math.round(CONFIG.GPS_SOURCE_HOLD_MS / 1000));
+    if (gnssGood) {
+      this._sourceBrowserCnt = 0;
+      if (this._gpsSource === 'native') return;
+      if (++this._sourceNativeCnt >= hold) this._enterNativeSource();
+    } else {
+      this._sourceNativeCnt = 0;
+      if (this._gpsSource === 'browser') return;
+      if (++this._sourceBrowserCnt >= hold) this._enterBrowserSource();
+    }
+  }
+
+  /**
+   * 进入 native（原生 GNSS 主导）。
+   * 浏览器 watch 保留高精度（轨迹点仍由浏览器提供，坐标质量不能崩），
+   * 仅放宽缓存窗口（允许系统复用最多 30s 旧点，减轻 GPS 芯片唤醒）——
+   * 不做 enableHighAccuracy:false，否则 Android 会退回网络定位导致坐标崩坏。
+   */
+  _enterNativeSource() {
+    const changed = this._gpsSource !== 'native';
+    this._gpsSource = 'native';
+    this._sourceNativeCnt = 0;
+    this._sourceBrowserCnt = 0;
+    if (changed && this.isWatching && !this._powerSaving && !this._downgraded) {
+      this.stopWatching();
+      this.startWatching({
+        enableHighAccuracy: true,
+        timeout: CONFIG.GPS_LOW_ACCURACY_TIMEOUT,
+        maximumAge: CONFIG.GPS_NATIVE_FALLBACK_MAX_AGE
+      });
+    }
+    if (CONFIG.DEBUG) console.log('[GPS] 定位源 → native（原生 GNSS 主导）');
+  }
+
+  /**
+   * 进入 browser（浏览器定位顶上）。
+   * 清空过期原生派生缓存强制回退浏览器 coords，并切回高精度 + 短缓存让浏览器混合定位顶上。
+   */
+  _enterBrowserSource() {
+    const changed = this._gpsSource !== 'browser';
+    this._gpsSource = 'browser';
+    this._sourceNativeCnt = 0;
+    this._sourceBrowserCnt = 0;
+    this._clearNmeaCache();
+    if (changed && this.isWatching && !this._powerSaving && !this._downgraded) {
+      this.stopWatching();
+      this.startWatching({
+        enableHighAccuracy: true,
+        timeout: CONFIG.GPS_WATCH_TIMEOUT,
+        maximumAge: 2000
+      });
+    }
+    if (CONFIG.DEBUG) console.log('[GPS] 定位源 → browser（浏览器定位顶上）');
+  }
+
+  /**
+   * 清空全部 NMEA 派生缓存（源切换到 browser / 停止监听时强制回退浏览器 coords）
+   */
+  _clearNmeaCache() {
+    this._lastVtg = null;
+    this._lastRmc = null;
+    this._lastGga = null;
+    this._lastGsa = null;
+  }
+
+  /**
+   * 原生坐标 vs 浏览器坐标交叉校验（更严：阈值 + 连续超阈防抖）。
+   * 仅记录原生坐标信任状态，不替代浏览器点。
+   * @param {number} browserLat
+   * @param {number} browserLng
+   */
+  _checkNativeCoordConflict(browserLat, browserLng) {
+    if (this._nativeLat == null || this._nativeLng == null) return;
+    const dist = calcDistance(
+      { lat: this._nativeLat, lng: this._nativeLng },
+      { lat: browserLat, lng: browserLng }
+    );
+    if (dist > CONFIG.NMEA_COORD_CONFLICT_M) {
+      this._coordConflictStreak++;
+      if (this._coordConflictStreak >= CONFIG.NMEA_COORD_CONFLICT_STREAK && this._nativeCoordTrusted) {
+        this._nativeCoordTrusted = false;
+        if (CONFIG.DEBUG) console.warn(`[GPS] 原生坐标与浏览器偏差连续 ${this._coordConflictStreak} 次 > ${CONFIG.NMEA_COORD_CONFLICT_M}m，判定原生坐标不可信`);
+      }
+    } else {
+      // 偏差回到阈值内：计数回落，降至 0 恢复信任
+      this._coordConflictStreak = Math.max(0, this._coordConflictStreak - 1);
+      if (this._coordConflictStreak === 0 && !this._nativeCoordTrusted) {
+        this._nativeCoordTrusted = true;
+        if (CONFIG.DEBUG) console.log('[GPS] 原生坐标与浏览器偏差恢复正常，恢复信任');
+      }
+    }
+  }
+
+  /**
+   * NMEA 时间(hhmmss.ss) + 日期(ddmmyy) → UTC 毫秒时间戳
+   * @param {string} timeStr
+   * @param {string|null} dateStr 缺省时用设备当日 UTC 日期兜底
+   * @returns {number|null}
+   */
+  _nmeaUtcToMs(timeStr, dateStr) {
+    if (!timeStr || timeStr.length < 6) return null;
+    const h = parseInt(timeStr.slice(0, 2), 10);
+    const m = parseInt(timeStr.slice(2, 4), 10);
+    const s = parseFloat(timeStr.slice(4));
+    if (isNaN(h) || isNaN(m) || isNaN(s) || h > 23 || m > 59 || s >= 60) return null;
+    let utcDay;
+    if (dateStr && dateStr.length === 6) {
+      const dd = parseInt(dateStr.slice(0, 2), 10);
+      const mm = parseInt(dateStr.slice(2, 4), 10);
+      const yy = parseInt(dateStr.slice(4, 6), 10);
+      const year = yy >= 70 ? 1900 + yy : 2000 + yy;
+      utcDay = Date.UTC(year, mm - 1, dd);
+      // Date.UTC 会自动进位（如 2 月 30 日 → 3 月 2 日），显式校验拦截脏日期
+      const check = new Date(utcDay);
+      if (check.getUTCFullYear() !== year || check.getUTCMonth() !== mm - 1 || check.getUTCDate() !== dd) return null;
+    } else {
+      // GGA 兜底：设备当日 UTC 日期（跨日误差会被 _applyUtcOffset 的 ±12h 过滤）
+      const now = new Date();
+      utcDay = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    }
+    return utcDay + (h * 3600 + m * 60 + s) * 1000;
+  }
+
+  /**
+   * 设备时钟校准：offset = GNSS UTC - 本地时钟。
+   * ±12h 过滤脏 UTC；已校准后新 UTC 相对校准时钟漂移须在窗口内（防旧语句回灌）。
+   */
+  _applyUtcOffset(realUtcMs) {
+    const now = Date.now();
+    // 同一批推送的多条语句只采纳第一条（RMC 优先于 GGA）
+    if (now - this._lastUtcReceivedAt < 100) return;
+    const offset = realUtcMs - now;
+    if (Math.abs(offset) > 12 * 3600 * 1000) return;
+    if (this._lastUtcReceivedAt > 0) {
+      const calibratedNow = now + this._utcOffsetMs;
+      if (Math.abs(realUtcMs - calibratedNow) > CONFIG.NMEA_UTC_MAX_AGE_MS) return;
+    }
+    this._lastUtcReceivedAt = now;
+    this._utcOffsetMs = offset;
   }
 
   /**
@@ -1083,6 +1420,117 @@ class GPSManager {
     this._gnssListeningStarted = false;
     this._gnssSatellites = [];
     this._gnssInitError = null;
+    // 弱信号状态机依赖 GNSS 监听，监听已关闭 → 复位
+    this._resetWeakSignalState();
+  }
+
+  /**
+   * GNSS 卫星数据统一处理入口（事件监听 + 轮询兜底共用）：
+   * 更新 _gnssSatellites 并驱动弱信号状态机
+   * @param {Array} satellites GnssSatelliteInfo[]
+   */
+  _handleGnssSatellites(satellites) {
+    this._gnssSatellites = satellites || [];
+    // 弱信号状态机仅在 GNSS 激活且无初始化错误时运行（异常状态不得误判弱信号）
+    if (!this._gnssListeningStarted || this._gnssInitError) return;
+    this._evaluateWeakSignal();
+    // 卫星状态变化 → 重估定位源（节流内置）
+    this._maybeEvaluateSource();
+  }
+
+  /**
+   * GNSS 弱信号状态机评估（约 1s/次）
+   * - 进入：参与定位卫星数 < GNSS_WEAK_USED_MAX 且 平均信噪比 < GNSS_WEAK_SNR_MAX，
+   *         持续 GNSS_WEAK_HOLD_MS → 进入弱信号省电降级
+   * - 恢复：参与定位卫星数 >= GNSS_RECOVER_USED_MIN 且 平均信噪比 >= GNSS_RECOVER_SNR_MIN，
+   *         持续 GNSS_RECOVER_HOLD_MS → 退出降级（滞回带防抖）
+   * - 任一条件不满足 → 对应计数平滑回落（减 1），防止单次抖动立刻触发
+   */
+  _evaluateWeakSignal() {
+    // 省电模式已强制低功耗（通常已关闭 GNSS 监听），弱信号状态机无额外价值 → 保持复位
+    if (this._powerSaving) {
+      this._resetWeakSignalState();
+      return;
+    }
+    const used = this.gnssUsedCount;
+    const snr = this.gnssAvgSnr;
+    if (this._weakSignal) {
+      if (used >= CONFIG.GNSS_RECOVER_USED_MIN && snr >= CONFIG.GNSS_RECOVER_SNR_MIN) {
+        this._strongCnt++;
+      } else {
+        this._strongCnt = Math.max(0, this._strongCnt - 1);
+      }
+      if (this._strongCnt >= Math.max(1, Math.round(CONFIG.GNSS_RECOVER_HOLD_MS / 1000))) {
+        this._exitWeakSignal();
+      }
+    } else {
+      if (used < CONFIG.GNSS_WEAK_USED_MAX && snr < CONFIG.GNSS_WEAK_SNR_MAX) {
+        this._weakCnt++;
+      } else {
+        this._weakCnt = Math.max(0, this._weakCnt - 1);
+      }
+      if (this._weakCnt >= Math.max(1, Math.round(CONFIG.GNSS_WEAK_HOLD_MS / 1000))) {
+        this._enterWeakSignal();
+      }
+    }
+  }
+
+  /**
+   * 进入弱信号省电降级：放宽定位节流（心跳间隔拉长至 GPS_WEAK_SIGNAL_INTERVAL），
+   * 可选降精度（GPS_WEAK_SIGNAL_LOW_ACCURACY=true 时重启 watch）。
+   * 不关闭 GNSS 监听——需要它监测信号恢复。
+   */
+  _enterWeakSignal() {
+    if (this._weakSignal) return;
+    this._weakSignal = true;
+    this._weakCnt = 0;
+    this._strongCnt = 0;
+    if (CONFIG.DEBUG) console.warn(`[GPS] GNSS 弱信号（卫星<${CONFIG.GNSS_WEAK_USED_MAX} 且 信噪比<${CONFIG.GNSS_WEAK_SNR_MAX}dB 持续 ${CONFIG.GNSS_WEAK_HOLD_MS / 1000}s），进入省电降级`);
+    // 放宽节流：立即生效（覆盖当前窗口），后续由 _updateAdaptiveInterval 的弱信号钳制维持
+    if (this._gpsMinInterval < CONFIG.GPS_WEAK_SIGNAL_INTERVAL) {
+      this._gpsMinInterval = CONFIG.GPS_WEAK_SIGNAL_INTERVAL;
+    }
+    // 可选降精度（默认关）：重启 watchPosition，最省电但有短暂失锁风险
+    if (CONFIG.GPS_WEAK_SIGNAL_LOW_ACCURACY && this.isWatching) {
+      this.stopWatching();
+      this.startWatching({ enableHighAccuracy: false, timeout: CONFIG.GPS_WATCH_TIMEOUT, maximumAge: 15000 });
+    }
+    if (this.onWeakSignalChange) this.onWeakSignalChange(true);
+  }
+
+  /**
+   * 退出弱信号降级：恢复正常自适应节流，可选恢复高精度 watch
+   */
+  _exitWeakSignal() {
+    if (!this._weakSignal) return;
+    this._weakSignal = false;
+    this._weakCnt = 0;
+    this._strongCnt = 0;
+    if (CONFIG.DEBUG) console.log(`[GPS] GNSS 信号恢复（卫星>=${CONFIG.GNSS_RECOVER_USED_MIN} 且 信噪比>=${CONFIG.GNSS_RECOVER_SNR_MIN}dB 持续 ${CONFIG.GNSS_RECOVER_HOLD_MS / 1000}s），退出省电降级`);
+    // 恢复节流：按当前速度重新计算正常间隔
+    this._updateAdaptiveInterval(this.currentPosition ? this.currentPosition.speed : 0);
+    if (CONFIG.GPS_WEAK_SIGNAL_LOW_ACCURACY && this.isWatching) {
+      this.stopWatching();
+      this.startWatching({ enableHighAccuracy: true, timeout: CONFIG.GPS_WATCH_TIMEOUT, maximumAge: 2000 });
+    }
+    if (this.onWeakSignalChange) this.onWeakSignalChange(false);
+  }
+
+  /**
+   * 复位弱信号状态（stopGnss / destroy / 省电模式开启时调用）。
+   * 静默复位，不触发 onWeakSignalChange（避免误导性"信号恢复"提示）。
+   * @param {boolean} [restoreWatch] 若因降精度重启过 watch，是否恢复高精度（默认 true）
+   */
+  _resetWeakSignalState(restoreWatch) {
+    const wasWeak = this._weakSignal;
+    this._weakSignal = false;
+    this._weakCnt = 0;
+    this._strongCnt = 0;
+    if (wasWeak && restoreWatch !== false && CONFIG.GPS_WEAK_SIGNAL_LOW_ACCURACY && this.isWatching) {
+      this._updateAdaptiveInterval(this.currentPosition ? this.currentPosition.speed : 0);
+      this.stopWatching();
+      this.startWatching({ enableHighAccuracy: true, timeout: CONFIG.GPS_WATCH_TIMEOUT, maximumAge: 2000 });
+    }
   }
 
   /**
@@ -1244,13 +1692,14 @@ class GPSManager {
         // 成功回调
         (position) => {
           clearTimeout(fallbackTimer);
+          this._checkNativeCoordConflict(position.coords.latitude, position.coords.longitude);
           const pos = {
             lat: position.coords.latitude,
             lng: position.coords.longitude,
             accuracy: position.coords.accuracy,
-            altitude: position.coords.altitude,
-            speed: position.coords.speed,
-            heading: position.coords.heading,
+            altitude: this._resolveAltitude(position.coords.altitude),
+            speed: this._resolveSpeed(position.coords.speed),
+            heading: this._resolveHeading(position.coords.heading),
             timestamp: position.timestamp
           };
           this.currentPosition = pos;
@@ -1316,14 +1765,17 @@ class GPSManager {
       (position) => {
         const now = Date.now();
 
+        // 原生/浏览器坐标交叉校验（仅记录信任状态，不替代坐标）
+        this._checkNativeCoordConflict(position.coords.latitude, position.coords.longitude);
+
         // 构造统一位置对象
         const buildPos = () => ({
           lat: position.coords.latitude,
           lng: position.coords.longitude,
           accuracy: position.coords.accuracy,
-          altitude: position.coords.altitude,
-          speed: position.coords.speed,
-          heading: position.coords.heading,
+          altitude: this._resolveAltitude(position.coords.altitude),
+          speed: this._resolveSpeed(position.coords.speed),
+          heading: this._resolveHeading(position.coords.heading),
           timestamp: position.timestamp
         });
 
@@ -1600,5 +2052,203 @@ class GPSManager {
       }
     }
     return stats;
+  }
+
+  /**
+   * 经 GNSS 校准的当前 UTC 毫秒时间戳（无 NMEA 时 = Date.now()，零回归）
+   */
+  get calibratedNow() {
+    return Date.now() + this._utcOffsetMs;
+  }
+
+  /**
+   * $GPVTG 真航向（度），过期/缺失返回 null
+   */
+  get vtgTrack() {
+    if (!this._lastVtg) return null;
+    if (Date.now() - this._lastVtg.receivedAt > CONFIG.NMEA_VTG_MAX_AGE_MS) return null;
+    return this._lastVtg.trackTrue;
+  }
+
+  /**
+   * $GPVTG 对地速度（km/h），过期/缺失返回 null
+   */
+  get vtgSpeedKmh() {
+    if (!this._lastVtg) return null;
+    if (Date.now() - this._lastVtg.receivedAt > CONFIG.NMEA_VTG_MAX_AGE_MS) return null;
+    return this._lastVtg.speedKmh;
+  }
+
+  /**
+   * $GPRMC 定位有效性（状态 A 且未过期）
+   */
+  get rmcPositionValid() {
+    if (!this._lastRmc) return false;
+    if (Date.now() - this._lastRmc.receivedAt > CONFIG.NMEA_RMC_MAX_AGE_MS) return false;
+    return this._lastRmc.valid;
+  }
+
+  /**
+   * $GPRMC 对地速度（km/h），过期/缺失返回 null（速度交叉验证源）
+   */
+  get rmcSpeedKmh() {
+    if (!this._lastRmc) return null;
+    if (Date.now() - this._lastRmc.receivedAt > CONFIG.NMEA_RMC_MAX_AGE_MS) return null;
+    return this._lastRmc.speedKmh;
+  }
+
+  /**
+   * $GPRMC 真航向（度），过期/缺失返回 null（航向交叉验证源）
+   */
+  get rmcTrack() {
+    if (!this._lastRmc) return null;
+    if (Date.now() - this._lastRmc.receivedAt > CONFIG.NMEA_RMC_MAX_AGE_MS) return null;
+    return this._lastRmc.trackTrue;
+  }
+
+  /**
+   * $G?GSA PDOP（多星座 GSA 最后到达为准），过期/缺失返回 null
+   */
+  get pdop() {
+    if (!this._lastGsa) return null;
+    if (Date.now() - this._lastGsa.receivedAt > CONFIG.NMEA_GSA_MAX_AGE_MS) return null;
+    return this._lastGsa.pdop;
+  }
+
+  /**
+   * $G?GSA HDOP，过期/缺失返回 null
+   */
+  get hdop() {
+    if (!this._lastGsa) return null;
+    if (Date.now() - this._lastGsa.receivedAt > CONFIG.NMEA_GSA_MAX_AGE_MS) return null;
+    return this._lastGsa.hdop;
+  }
+
+  /**
+   * $G?GSA VDOP，过期/缺失返回 null
+   */
+  get vdop() {
+    if (!this._lastGsa) return null;
+    if (Date.now() - this._lastGsa.receivedAt > CONFIG.NMEA_GSA_MAX_AGE_MS) return null;
+    return this._lastGsa.vdop;
+  }
+
+  /**
+   * HDOP 定位质量分级（与 accuracy 信号条互补）：
+   * 'excellent' | 'good' | 'moderate' | 'poor' | null（无数据）
+   */
+  get dopQuality() {
+    const h = this.hdop;
+    if (h == null) return null;
+    if (h < 1) return 'excellent';
+    if (h < 2) return 'good';
+    if (h < 5) return 'moderate';
+    return 'poor';
+  }
+
+  /**
+   * $GPGGA 海拔 MSL（米），过期/缺失返回 null
+   */
+  get altitudeMsl() {
+    if (!this._lastGga) return null;
+    if (Date.now() - this._lastGga.receivedAt > CONFIG.NMEA_GGA_MAX_AGE_MS) return null;
+    return this._lastGga.altitudeMsl;
+  }
+
+  /**
+   * $GPGGA 大地水准面分离（米，可正可负），过期/缺失返回 null
+   */
+  get geoidSep() {
+    if (!this._lastGga) return null;
+    if (Date.now() - this._lastGga.receivedAt > CONFIG.NMEA_GGA_MAX_AGE_MS) return null;
+    return this._lastGga.geoidSep;
+  }
+
+  /**
+   * 椭球高 = MSL 海拔 + 大地水准面分离（与浏览器 coords.altitude 口径一致）
+   */
+  get ellipsoidalAltitude() {
+    const msl = this.altitudeMsl;
+    if (msl == null) return null;
+    const sep = this.geoidSep;
+    return sep == null ? msl : msl + sep;
+  }
+
+  /**
+   * 原生坐标是否可信（坐标交叉校验连续超阈后置 false，恢复后回到 true）
+   */
+  get nativeCoordTrusted() {
+    return this._nativeCoordTrusted;
+  }
+
+  /**
+   * 当前定位源（对外两态）：
+   * 'GNSS' = 原生芯片接管（有插件且信号好）
+   * 'Web'  = 浏览器定位顶上（无插件 / 信号差 / NMEA 过期）
+   */
+  get gpsSource() {
+    return this._gpsSource === 'native' ? 'GNSS' : 'Web';
+  }
+
+  /**
+   * 当前速度来源：'gnss'（原生 VTG/RMC 优先）| 'browser'（浏览器降级）
+   */
+  get speedSource() {
+    return this.vtgSpeedKmh != null ? 'gnss' : 'browser';
+  }
+
+  /**
+   * 速度解算：VTG（km/h → m/s）优先，RMC 交叉验证，浏览器 coords.speed 兜底。
+   * VTG 与 RMC 速度偏差过大（绝对 + 相对双阈值）→ 判定冲突，降级浏览器物理测量。
+   */
+  _resolveSpeed(browserSpeed) {
+    const vtg = this.vtgSpeedKmh;
+    if (vtg != null && vtg >= 0) {
+      const rmc = this.rmcSpeedKmh;
+      if (rmc != null && rmc >= 0) {
+        const vtgMs = vtg / 3.6;
+        const rmcMs = rmc / 3.6;
+        const diff = Math.abs(vtgMs - rmcMs);
+        const ratioConflict = vtgMs > 0 && diff / vtgMs > CONFIG.NMEA_SPEED_CONFLICT_RATIO;
+        if (diff > CONFIG.NMEA_SPEED_CONFLICT_ABS && ratioConflict) {
+          // 两原生源冲突 → 浏览器 coords.speed（物理测量，最可信）
+          return browserSpeed != null ? browserSpeed : null;
+        }
+      }
+      return vtg / 3.6;
+    }
+    return browserSpeed != null ? browserSpeed : null;
+  }
+
+  /**
+   * 航向解算：VTG 真航向优先，RMC 交叉验证，浏览器 coords.heading 兜底。
+   * 低速（< NMEA_HEADING_MIN_SPEED）航向无意义，跳过交叉验证。
+   */
+  _resolveHeading(browserHeading) {
+    const vtg = this.vtgTrack;
+    if (vtg != null && !isNaN(vtg)) {
+      const rmc = this.rmcTrack;
+      if (rmc != null && !isNaN(rmc)) {
+        const speed = this._resolveSpeed(null);
+        if (speed != null && speed >= CONFIG.NMEA_HEADING_MIN_SPEED) {
+          let diff = Math.abs(vtg - rmc) % 360;
+          if (diff > 180) diff = 360 - diff;
+          if (diff > CONFIG.NMEA_HEADING_CONFLICT_DEG) {
+            return browserHeading != null ? browserHeading : null;
+          }
+        }
+      }
+      return vtg;
+    }
+    return browserHeading != null ? browserHeading : null;
+  }
+
+  /**
+   * 海拔解算：GGA 椭球高（MSL+分离，与浏览器口径一致）优先，浏览器 coords.altitude 兜底
+   */
+  _resolveAltitude(browserAltitude) {
+    const gga = this.ellipsoidalAltitude;
+    if (gga != null) return gga;
+    return browserAltitude != null ? browserAltitude : null;
   }
 }

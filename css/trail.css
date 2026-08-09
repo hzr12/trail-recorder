@@ -605,6 +605,43 @@
   font-weight: normal;
 }
 
+/* 录制期间实时统计卡（距离/时长/当前速度/平均速度/最高速度） */
+.rec-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.rec-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 2px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  min-width: 0;
+}
+
+.rec-stat-label {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.rec-stat-value {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--accent-1);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .trail-controls {
   display: flex;
   gap: 8px;

@@ -1069,16 +1069,6 @@ class MapManager {
       if (parts.length) ctx.fillText(parts.join('  ·  '), 40, statsY + statsH / 2);
     }
 
-    // 底图免责注记（仅单条导出开启；合集每张小图不重复，由合集整体底部统一标注）
-    if (o.disclaimer) {
-      ctx.fillStyle = isLight ? 'rgba(0,0,0,0.28)' : 'rgba(255,255,255,0.24)';
-      ctx.font = '11px -apple-system, "PingFang SC", sans-serif';
-      ctx.textBaseline = 'alphabetic';
-      ctx.textAlign = 'right';
-      ctx.fillText('注：底图较老，仅供参考使用', W - 24, H - 14);
-      ctx.textAlign = 'left';
-    }
-
     return canvas;
   }
 
@@ -1529,7 +1519,10 @@ class MapManager {
       const f = positions[0];
       const l = positions[positions.length - 1];
       if (f && l && f.time && l.time && l.time > f.time) duration = l.time - f.time;
-      return { distance, duration, points: positions.length };
+      let maxSpeed = 0;
+      for (const p of positions) { if (p.speed != null && p.speed > maxSpeed) maxSpeed = p.speed; }
+      const avgSpeed = duration > 0 ? distance / (duration / 1000) : 0;
+      return { distance, duration, points: positions.length, maxSpeed, avgSpeed };
     })();
 
     const panelY = H - 240;
@@ -1539,11 +1532,13 @@ class MapManager {
     ctx.roundRect(32, panelY - 26, W - 64, panelH, 24);
     ctx.fill();
 
-    // 距离（大字）+ 时长/配速/点数
+    // 距离（大字）+ 时长/均速/最高速/点数
+    const fmtSpeed = (v) => (v > 0 ? (v * 3.6).toFixed(1) + ' km/h' : '--');
     const statCols = [
       { label: '距离', value: formatDistance(stats.distance), big: true },
       { label: '时长', value: formatDurationShort(stats.duration), big: false },
-      { label: '配速', value: stats.distance > 0 && stats.duration > 0 ? this._fmtPace(stats.distance, stats.duration) : '--', big: false },
+      { label: '均速', value: fmtSpeed(stats.avgSpeed), big: false },
+      { label: '最高速', value: fmtSpeed(stats.maxSpeed), big: false },
       { label: '点数', value: String(stats.points), big: false }
     ];
     const colW = (W - 64) / statCols.length;
@@ -1577,15 +1572,6 @@ class MapManager {
       console.warn('[MapManager] 分享卡片导出失败:', e.message);
       return null;
     }
-  }
-
-  _fmtPace(distance, durationMs) {
-    // 配速 = 秒/公里，格式 M'SS"
-    const secPerKm = (durationMs / 1000) / (distance / 1000);
-    const m = Math.floor(secPerKm / 60);
-    const s = Math.round(secPerKm % 60);
-    if (s >= 60) return `${m + 1}'00"`;
-    return `${m}'${String(s).padStart(2, '0')}"`;
   }
 
   /**

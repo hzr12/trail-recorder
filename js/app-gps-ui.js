@@ -119,6 +119,17 @@ App.prototype._updateStatusBar = function (force) {
 
   // 降级/过期改图标+title，追踪并入圆点 tracking 动画，去除冗余文字
   const degradedIcon = isDowngraded ? ' <span class="gps-state-icon warn" title="低精度定位">⚠</span>' : '';
+  // GNSS 弱信号省电徽章（常驻；进入/退出由 onWeakSignalChange 各弹一次 Toast）
+  const weakBadge = this.gpsManager.isWeakSignal
+    ? ' <span class="gnss-weak-badge" title="GNSS 信号弱，已自动降低定位频率省电">⚠ 信号弱·省电中</span>'
+    : '';
+  // 定位源两态标识：GNSS（原生芯片接管）/ Web（浏览器定位顶上）
+  const isGnssSource = this.gpsManager.gpsSource === 'GNSS';
+  const sourceBadge = ` <span class="gps-source ${isGnssSource ? 'gnss' : 'web'}" title="${isGnssSource ? '原生 GNSS 芯片接管（卫星数足够且 DOP 良好）' : '浏览器 Geolocation 定位顶上（无 GNSS 或信号弱）'}">${this.gpsManager.gpsSource}</span>`;
+  // GNSS 芯片航向/速度徽章（仅原生接管且有 VTG 数据时显示；Web 源无原生航向）
+  const vtgInfo = (isGnssSource && this.gpsManager.speedSource === 'gnss')
+    ? ` <span class="gps-vtg" title="GNSS 芯片航向/速度（优先于浏览器定位数据）">↗${Math.round(this.gpsManager.vtgTrack || 0)}° ${this.gpsManager.vtgSpeedKmh != null ? this.gpsManager.vtgSpeedKmh.toFixed(1) : '--'}km/h·GNSS</span>`
+    : '';
   // 跟随模式独立为按钮，避免整条状态栏误触切换
   const followIcon = ` <button class="gps-follow-toggle${this._followMode ? ' active' : ''}" title="切换地图跟随">${this._followMode ? '跟随中' : '跟随'}</button>`;
 
@@ -128,8 +139,10 @@ App.prototype._updateStatusBar = function (force) {
       const used = this.gpsManager.gnssUsedCount;
       const visible = this.gpsManager.gnssVisibleCount;
       const snr = this.gpsManager.gnssAvgSnr;
-      gnssHtml = `<span class="gnss-indicator" title="参与定位 ${used}/${visible}, 平均信噪比 ${snr.toFixed(0)}dB-Hz">` +
-        ` 定位:${used} 可见:${visible} 信噪比:${snr.toFixed(0)}dB</span>`;
+      const hdop = this.gpsManager.hdop;
+      const hdopHtml = hdop != null ? ` HDOP:${hdop.toFixed(1)}` : '';
+      gnssHtml = `<span class="gnss-indicator" title="参与定位 ${used}/${visible}, 平均信噪比 ${snr.toFixed(0)}dB-Hz${hdop != null ? `, HDOP ${hdop.toFixed(1)}` : ''}">` +
+        ` 定位:${used} 可见:${visible} 信噪比:${snr.toFixed(0)}dB${hdopHtml}</span>`;
     } else {
       gnssHtml = `<span class="gnss-indicator" style="opacity:0.5"> 等待卫星...</span>`;
     }
@@ -176,7 +189,7 @@ App.prototype._updateStatusBar = function (force) {
   const line3 = this._weatherHtml ? `<div class="gps-line3">${this._weatherHtml}</div>` : '';
 
   this._statusEl.innerHTML =
-    `<div class="gps-line1"><span class="${dotClass}" title="${stale ? '定位过期' : isTracking ? '持续追踪中' : '已定位'}"></span><span class="gps-online">◉ 已定位</span>${degradedIcon}${followIcon}<span class="gps-elapsed">(${elapsed})</span></div>` +
+    `<div class="gps-line1"><span class="${dotClass}" title="${stale ? '定位过期' : isTracking ? '持续追踪中' : '已定位'}"></span><span class="gps-online">◉ 已定位</span>${degradedIcon}${weakBadge}${sourceBadge}${vtgInfo}${followIcon}<span class="gps-elapsed">(${elapsed})</span></div>` +
     `<div class="gps-line2">${line2}</div>` +
     line3;
 

@@ -10,6 +10,7 @@ class Trail {
     this.lastPos = null;      // 上次记录的位置（用于采样）
     this.isRecording = false; // 是否正在记录
     this.isPaused = false;    // 是否暂停记录
+    this._maxSpeed = 0;       // 增量维护的最高速度（m/s），供实时统计卡 O(1) 读取
   }
 
   /**
@@ -20,6 +21,7 @@ class Trail {
     this.lastPos = null;
     this.isRecording = true;
     this.isPaused = false;
+    this._maxSpeed = 0;
   }
 
   /**
@@ -51,6 +53,7 @@ class Trail {
   clear() {
     this.positions = [];
     this.lastPos = null;
+    this._maxSpeed = 0;
   }
 
   /**
@@ -61,6 +64,10 @@ class Trail {
   restore(positions, lastPos) {
     this.positions = positions;
     this.lastPos = lastPos;
+    this._maxSpeed = 0;
+    for (const p of positions) {
+      if (p && p.speed != null && p.speed > this._maxSpeed) this._maxSpeed = p.speed;
+    }
   }
 
   /**
@@ -104,10 +111,25 @@ class Trail {
     }
     this.positions.push(pt);
     this.lastPos = pt;
+    if (pt.speed != null && pt.speed > this._maxSpeed) {
+      this._maxSpeed = pt.speed;
+    }
     if (this.positions.length > CONFIG.TRAIL_MAX_POINTS) {
       this.positions = this.positions.slice(-CONFIG.TRAIL_MAX_POINTS);
+      // 裁剪可能丢弃最高速点，重建保证统计准确
+      this._maxSpeed = 0;
+      for (const p of this.positions) {
+        if (p && p.speed != null && p.speed > this._maxSpeed) this._maxSpeed = p.speed;
+      }
     }
     return true;
+  }
+
+  /**
+   * @returns {number} 轨迹最高速度（m/s），增量维护，O(1) 读取
+   */
+  getMaxSpeed() {
+    return this._maxSpeed;
   }
 
   /**

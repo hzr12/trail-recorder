@@ -31,6 +31,11 @@ class App {
       const btn = document.getElementById('power-saving-btn');
       if (btn) btn.classList.toggle('active', isOn);
     };
+    // GNSS 弱信号联动：进入/退出各弹一次 Toast + 立即刷新状态栏（徽章）
+    this.gpsManager.onWeakSignalChange = (weak) => {
+      Toast.show(weak ? ' GNSS 信号弱，已自动降低定位频率省电' : ' GNSS 信号已恢复，定位频率已还原');
+      this._updateStatusBar(true);
+    };
     this.gpsManager.onRestoreTracking = () => {
       Toast.show(' 电量恢复，已自动恢复追踪');
       this._startWatching();
@@ -729,7 +734,7 @@ class App {
         const added = this.trail.addPoint({
           lat: convPos.lat,
           lng: convPos.lng,
-          time: pos.timestamp || Date.now(),
+          time: this.gpsManager.calibratedNow,
           accuracy: pos.accuracy || 0,
           speed: pos.speed,
           heading: pos.heading
@@ -1377,35 +1382,7 @@ class App {
   }
 
   /**
-   * 将历史轨迹导出为单张轨迹图片（含标题与统计）
-   */
-  _exportTrailImage(id) {
-    Storage.loadTrailById(id).then(async (data) => {
-      if (!data || !data.positions || data.positions.length < 2) {
-        Toast.show('轨迹数据不足，无法导出');
-        return;
-      }
-      const stats = this._computeTrailStats(data.positions);
-      Toast.show('正在生成轨迹图片…');
-      const dataUrl = await this.mapManager.renderTrailThumbnail(data.positions, {
-        title: data.name || '轨迹',
-        stats: { distance: stats.distance, duration: stats.duration, points: data.positions.length },
-        disclaimer: true
-      });
-      if (!dataUrl) {
-        Toast.show('导出失败，请重试');
-        return;
-      }
-      const safeName = (data.name || '轨迹').replace(/[\\/:*?"<>|]/g, '_');
-      const dateStr = new Date().toISOString().slice(0, 10);
-      const filename = `途刻-${safeName}-${dateStr}.png`;
-      // dataURL → Blob：移动端/Capacitor 中 a[download] 会被忽略，改用 toBlob + 原生分享/Blob URL
-      this._downloadDataUrl(dataUrl, filename);
-    });
-  }
-
-  /**
-   * 生成并分享轨迹分享卡片（覆盖原「导出轨迹图片」）
+   * 生成并分享轨迹分享卡片
    * 分享链路与 _exportReport 相同：原生 Capacitor Filesystem+Share 系统分享 / Web 端 Blob URL 下载。
    * 绘制前可选做只读清洗（剔除首尾漂移段/异常点），仅用于卡片渲染，不落库不污染原数据。
    */
@@ -1429,14 +1406,14 @@ class App {
       name: data.name || '轨迹',
       createdAt: data.createdAt
     }, {
-      stats: { distance: stats.distance, duration: stats.duration, points: cardPositions.length }
+      stats: { distance: stats.distance, duration: stats.duration, points: cardPositions.length, avgSpeed: stats.avgSpeed, maxSpeed: stats.maxSpeed }
     });
     if (!dataUrl) {
       Toast.show('生成分享卡片失败，请重试');
       return;
     }
     const safeName = (data.name || '轨迹').replace(/[\\/:*?"<>|]/g, '_');
-    const dateStr = new Date().toISOString().slice(0, 10);
+    const dateStr = formatBeijing(Date.now()).slice(0, 10).replace(/\//g, '-');
     const filename = `途刻-${safeName}-${dateStr}.png`;
     // 复用 _exportReport 的分享链路（原生系统分享 / Web 下载）
     this._downloadDataUrl(dataUrl, filename, {
@@ -1812,7 +1789,7 @@ class App {
       { act: 'detail', label: '详情', fn: () => this._showTrailDetail(id) },
       { act: 'load', label: '加载到地图', fn: () => this._loadTrailFromList(id), replayOnly: true },
       { act: 'clean', label: '清洗轨迹', fn: () => this._cleanTrail(id), historyOnly: true },
-      { act: 'share-card', label: '分享卡片', fn: () => this._exportShareCard(id), historyOnly: true },
+      { act: 'share-card', label: '分享图片', fn: () => this._exportShareCard(id), historyOnly: true },
       { act: 'delete', label: '删除', danger: true, fn: () => this._deleteTrailFromList(id) }
     ];
     menu.innerHTML = items
@@ -1943,7 +1920,7 @@ class App {
   }
 
   _computeTrailStats(positions) {
-    if (!positions || positions.length === 0) return { distance: 0, duration: 0, points: 0 };
+    if (!positions || positions.length === 0) return { distance: 0, duration: 0, points: 0, avgSpeed: 0, maxSpeed: 0, hasSpeed: false };
     const distance = Storage._calcDistance(positions);
     let durationMs = 0;
     const first = positions[0];
@@ -1951,7 +1928,13 @@ class App {
     if (first && last && first.time && last.time && last.time > first.time) {
       durationMs = last.time - first.time;
     }
-    return { distance, duration: durationMs, points: positions.length };
+    let maxSpeed = 0;
+    let hasSpeed = false;
+    for (const p of positions) {
+      if (p.speed != null && p.speed > maxSpeed) { maxSpeed = p.speed; hasSpeed = true; }
+    }
+    const avgSpeed = durationMs > 0 ? distance / (durationMs / 1000) : 0;
+    return { distance, duration: durationMs, points: positions.length, avgSpeed, maxSpeed, hasSpeed };
   }
 
   _exportSelectedImages() {
@@ -1973,7 +1956,7 @@ class App {
         Toast.show('生成失败，请重试');
         return;
       }
-      const dateStr = new Date().toISOString().slice(0, 10);
+      const dateStr = formatBeijing(Date.now()).slice(0, 10).replace(/\//g, '-');
       const filename = `途刻-轨迹合集-${dateStr}.png`;
       // 批量导出改为分享链路（与报告导出相同）：原生系统分享 / Web 端下载
       this._downloadDataUrl(dataUrl, filename, {
@@ -2173,24 +2156,14 @@ class App {
       return;
     }
 
-    const totalDist = this.trail.getDistance();
+    const stats = this._calcLiveStats(pos);
+    const totalDist = stats.distance;
+    const durationMs = stats.durationMs;
+    const maxSpeed = stats.maxSpeed;
+    const hasSpeed = stats.hasSpeed;
+    const avgSpeed = stats.avgSpeed;
     const firstTime = pos[0].time || null;
     const lastTime = pos[pos.length - 1].time || null;
-    let durationMs = 0;
-    if (firstTime && lastTime && lastTime > firstTime) {
-      durationMs = lastTime - firstTime;
-    }
-
-    let maxSpeed = 0;
-    let hasSpeed = false;
-    for (const p of pos) {
-      if (p.speed != null && p.speed > maxSpeed) {
-        maxSpeed = p.speed;
-        hasSpeed = true;
-      }
-    }
-
-    const avgSpeed = durationMs > 0 ? totalDist / (durationMs / 1000) : 0;
 
     const fmtTime = (ts) => {
       if (!ts) return '--';
@@ -2321,7 +2294,7 @@ class App {
       ctx.fillText(' 途刻活动报告', 24 * S, 44 * S);
       ctx.fillStyle = isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)';
       ctx.font = `${13 * S}px "HarmonyOS Sans", sans-serif`;
-      ctx.fillText(new Date().toLocaleString('zh-CN'), 24 * S, 66 * S);
+      ctx.fillText(formatBeijing(Date.now()), 24 * S, 66 * S);
 
       const mapY = 96 * S;
       const mapH = 320 * S;
@@ -2527,7 +2500,7 @@ class App {
       ctx.fillText('注：底图较老，仅供参考使用', W - 24 * S, H - 40 * S);
       ctx.textAlign = 'left';
 
-      const dateStr = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+      const dateStr = formatBeijing(Date.now()).replace(/[/\s:]/g, '-');
       const filename = `tracecraft-activity-${dateStr}.png`;
       canvas.toBlob(async (blob) => {
         if (!blob) {
@@ -2609,6 +2582,7 @@ class App {
     if (distEl) {
       distEl.textContent = dist > 0 ? formatDistance(dist) : '0m';
     }
+    this._updateRecStats(dist);
 
     const hasPoints = this.trail.positions.length > 0;
     if (clearBtn) clearBtn.disabled = !hasPoints;
@@ -2623,6 +2597,65 @@ class App {
       autoPauseBtn.classList.toggle('active', this._autoPauseEnabled);
       autoPauseBtn.textContent = this._autoPauseEnabled ? '自动暂停开' : '自动暂停';
     }
+  }
+
+  /**
+   * 实时统计卡刷新（录制/恢复轨迹时由 _updateTrailUI 调用）
+   * @param {number} dist 已算好的轨迹总距离（米），避免重复全量计算
+   */
+  _updateRecStats(dist) {
+    const pos = this.trail.positions;
+    const setText = (id, text) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = text;
+    };
+
+    if (pos.length < 2) {
+      setText('rec-duration', '--');
+      setText('rec-cur-speed', '--');
+      setText('rec-avg-speed', '--');
+      setText('rec-max-speed', '--');
+      return;
+    }
+
+    const d = typeof dist === 'number' ? dist : this.trail.getDistance();
+    const firstTime = pos[0].time || null;
+    const lastTime = pos[pos.length - 1].time || null;
+    let durationMs = 0;
+    if (firstTime && lastTime && lastTime > firstTime) {
+      durationMs = lastTime - firstTime;
+    }
+    const avgSpeed = durationMs > 0 ? d / (durationMs / 1000) : 0;
+    const maxSpeed = this.trail.getMaxSpeed();
+
+    setText('rec-duration', formatDurationShort(durationMs));
+    setText('rec-cur-speed', this._lastSpeed != null ? (this._lastSpeed * 3.6).toFixed(1) + ' km/h' : '--');
+    setText('rec-avg-speed', avgSpeed > 0 ? (avgSpeed * 3.6).toFixed(1) + ' km/h' : '--');
+    setText('rec-max-speed', maxSpeed > 0 ? (maxSpeed * 3.6).toFixed(1) + ' km/h' : '--');
+  }
+
+  /**
+   * 计算一组轨迹点的核心统计（距离/时长/最高速/均速），供统计弹窗与实时统计卡共用
+   * @param {Array} positions
+   * @returns {{distance:number, durationMs:number, maxSpeed:number, hasSpeed:boolean, avgSpeed:number}}
+   */
+  _calcLiveStats(positions) {
+    const result = { distance: 0, durationMs: 0, maxSpeed: 0, hasSpeed: false, avgSpeed: 0 };
+    if (!positions || positions.length < 2) return result;
+    result.distance = Storage._calcDistance(positions);
+    const first = positions[0];
+    const last = positions[positions.length - 1];
+    if (first && last && first.time && last.time && last.time > first.time) {
+      result.durationMs = last.time - first.time;
+    }
+    for (const p of positions) {
+      if (p.speed != null && p.speed > result.maxSpeed) {
+        result.maxSpeed = p.speed;
+        result.hasSpeed = true;
+      }
+    }
+    result.avgSpeed = result.durationMs > 0 ? result.distance / (result.durationMs / 1000) : 0;
+    return result;
   }
 
   _recordFix(pos, convPos, isManual, isBackground) {
@@ -2705,7 +2738,7 @@ class App {
         const added = this.trail.addPoint({
           lat: convPos.lat,
           lng: convPos.lng,
-          time: pos.timestamp || Date.now(),
+          time: this.gpsManager.calibratedNow,
           accuracy: pos.accuracy || 0,
           speed: pos.speed,
           heading: pos.heading

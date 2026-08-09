@@ -21,7 +21,7 @@
   <link rel="stylesheet" href="css/map.css?t=20260805v9">
   <link rel="stylesheet" href="css/panel.css?t=20260805v15">
   <link rel="stylesheet" href="css/gps.css?t=20260805v10">
-  <link rel="stylesheet" href="css/trail.css?t=20260805v14">
+  <link rel="stylesheet" href="css/trail.css?t=20260809v15">
   <link rel="stylesheet" href="css/toast-modal.css?t=20260805v9">
   <link rel="stylesheet" href="css/responsive.css?t=20260805v9">
 </head>
@@ -99,7 +99,28 @@
       <div class="trail-section">
         <div class="trail-header">
           <span class="field-label">轨迹记录</span>
-          <span class="trail-distance" id="trail-distance">0m</span>
+        </div>
+        <div class="rec-stats-grid" id="rec-stats-grid">
+          <div class="rec-stat">
+            <span class="rec-stat-label">距离</span>
+            <span class="rec-stat-value" id="trail-distance">0m</span>
+          </div>
+          <div class="rec-stat">
+            <span class="rec-stat-label">时长</span>
+            <span class="rec-stat-value" id="rec-duration">--</span>
+          </div>
+          <div class="rec-stat">
+            <span class="rec-stat-label">当前速度</span>
+            <span class="rec-stat-value" id="rec-cur-speed">--</span>
+          </div>
+          <div class="rec-stat">
+            <span class="rec-stat-label">平均速度</span>
+            <span class="rec-stat-value" id="rec-avg-speed">--</span>
+          </div>
+          <div class="rec-stat">
+            <span class="rec-stat-label">最高速度</span>
+            <span class="rec-stat-value" id="rec-max-speed">--</span>
+          </div>
         </div>
         <div class="trail-controls">
           <button id="trail-record-btn" class="btn btn-trail">
@@ -288,12 +309,12 @@
   <script src="js/config.js?t=20260805v11"></script>
   <script src="js/toast.js?t=20260805v8"></script>
   <script src="js/storage.js?t=20260805v11"></script>
-  <script src="js/trail.js?t=20260805v11"></script>
+  <script src="js/trail.js?t=20260809v12"></script>
   <script src="js/trail-analysis.js?t=20260805v12"></script>
-  <script src="js/map.js?t=20260808v22"></script>
+  <script src="js/map.js?t=20260809v23"></script>
   <script src="js/gps.js?t=20260808v13"></script>
   <script src="js/replay.js?t=20260808v20"></script>
-  <script src="js/app-core.js?t=20260808v23"></script>
+  <script src="js/app-core.js?t=20260809v25"></script>
   <script src="js/app-gps-ui.js?t=20260805v9"></script>
 </body>
 </html>

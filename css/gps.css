@@ -236,6 +236,66 @@
   white-space: nowrap; /* 保持每一行小块不拆字 */
 }
 
+/* GNSS 弱信号省电徽章（状态栏第 1 行，常驻；脉动提示持续降级中） */
+.gnss-weak-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  line-height: 1.6;
+  color: var(--warning);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-full);
+  padding: 0 8px;
+  white-space: nowrap;
+  animation: gnssWeakPulse 2s ease-in-out infinite;
+}
+
+@keyframes gnssWeakPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* GNSS 芯片航向/速度徽章（状态栏第 1 行，VTG 优先源标识） */
+.gps-vtg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  line-height: 1.6;
+  color: var(--accent-1);
+  border: 1px solid var(--accent-1);
+  border-radius: var(--radius-full);
+  padding: 0 8px;
+  white-space: nowrap;
+  opacity: 0.9;
+}
+
+/* 定位源两态标识：GNSS（原生芯片接管）/ Web（浏览器定位顶上） */
+.gps-source {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  line-height: 1.6;
+  border-radius: var(--radius-full);
+  padding: 0 8px;
+  white-space: nowrap;
+}
+.gps-source.gnss {
+  color: var(--accent-1);
+  border: 1px solid var(--accent-1);
+}
+.gps-source.web {
+  color: var(--warning);
+  border: 1px solid var(--warning);
+}
+
 /* 底部独立卫星 bar：与上方 panel-body 用分割条隔开 */
 .gnss-bar {
   display: flex;
