@@ -640,6 +640,7 @@ class GPSManager {
     this.onError = null;
     this.onWatchStart = null;
     this.onWatchStop = null;
+    this.onSatellitesChange = null; // GNSS 卫星数据更新（事件/轮询统一入口触发）
     this.onDowngrade = null;   // 降级回调 (timeout) => void
     this.onRecovery = null;    // 恢复回调 (success: boolean) => void
     this.onPowerSavingChange = null; // 省电模式变更回调 (isOn: boolean) => void
@@ -1433,6 +1434,8 @@ class GPSManager {
    */
   _handleGnssSatellites(satellites) {
     this._gnssSatellites = satellites || [];
+    // 卫星数据变化 → 通知 UI（卫星天顶图等），即使监听未就绪也推送（用于隐藏空态）
+    if (this.onSatellitesChange) this.onSatellitesChange(this._gnssSatellites);
     // 弱信号状态机仅在 GNSS 激活且无初始化错误时运行（异常状态不得误判弱信号）
     if (!this._gnssListeningStarted || this._gnssInitError) return;
     this._evaluateWeakSignal();
@@ -2197,21 +2200,62 @@ class GPSManager {
   }
 
   /**
-   * 单次定位信号质量评分（0-100）：SNR(35) + HDOP(40) + 参与卫星数(25)
-   * 无 GNSS 插件或参与卫星数为 0 时返回 null（调用方回退 accuracy 信号条）
+   * 参与定位星座数（多系统协同冗余，参与定位卫星归属的非零星座个数）
+   */
+  get gnssUsedConstellationCount() {
+    const stats = this.gnssUsedConstellationStats;
+    return ['gps', 'beidou', 'glonass', 'galileo', 'other'].filter((k) => stats[k] > 0).length;
+  }
+
+  /**
+   * 单次定位信号质量评分（0-100）：SNR(35) + HDOP(40) + 参与卫星数(25) + 多星座冗余加成(5)
+   * 有 GNSS 插件且卫星参与时按上述打分；
+   * 无插件（Web/IP 定位）时基于 accuracy 给降级分，保证评分恒有值；
+   * 从未获得任何位置时返回 null。
    */
   get signalQualityScore() {
-    if (!this._gnssPlugin || this.gnssUsedCount <= 0) return null;
-    const snr = this.gnssAvgSnr;
-    const hdop = this.hdop;
-    const used = this.gnssUsedCount;
-    // SNR 35 分：20dB→0, 40dB→35；缺失给中间值 17
-    const snrScore = snr == null ? 17 : Math.max(0, Math.min(35, ((snr - 20) / 20) * 35));
-    // HDOP 40 分：4→0, 1→40；缺失给中间值 20
-    const hdopScore = hdop == null ? 20 : Math.max(0, Math.min(40, ((4 - hdop) / 3) * 40));
-    // 卫星数 25 分：4→0, 8→25
-    const usedScore = Math.max(0, Math.min(25, ((used - 4) / 4) * 25));
-    return Math.round(snrScore + hdopScore + usedScore);
+    if (this._gnssPlugin && this.gnssUsedCount > 0) {
+      const snr = this.gnssAvgSnr;
+      const hdop = this.hdop;
+      const used = this.gnssUsedCount;
+      // SNR 35 分：20dB→0, 40dB→35；缺失给中间值 17
+      const snrScore = snr == null ? 17 : Math.max(0, Math.min(35, ((snr - 20) / 20) * 35));
+      // HDOP 40 分：4→0, 1→40；缺失给中间值 20
+      const hdopScore = hdop == null ? 20 : Math.max(0, Math.min(40, ((4 - hdop) / 3) * 40));
+      // 卫星数 25 分：4→0, 8→25
+      const usedScore = Math.max(0, Math.min(25, ((used - 4) / 4) * 25));
+      // 多星座冗余加成 5 分：参与定位星座 ≥3 个（多系统协同，几何更强）时 +5
+      const constBonus = this.gnssUsedConstellationCount >= 3 ? 5 : 0;
+      return Math.min(100, Math.round(snrScore + hdopScore + usedScore + constBonus));
+    }
+    // Web/IP 降级分：无 GNSS 插件时按 accuracy（米）粗略分级，让评分融合出单一值
+    const acc = this.currentPosition && Number.isFinite(this.currentPosition.accuracy)
+      ? this.currentPosition.accuracy : null;
+    if (acc == null) return null;
+    if (acc <= 20) return 60;
+    if (acc <= 100) return 40;
+    if (acc <= 500) return 20;
+    return 5;
+  }
+
+  /**
+   * 信号评分详细信息（UI 展示分解用）
+   * @returns {{score:number, source:'gnss'|'web', breakdown:string}|null}
+   */
+  get signalQuality() {
+    const score = this.signalQualityScore;
+    if (score == null) return null;
+    if (this._gnssPlugin && this.gnssUsedCount > 0) {
+      let breakdown = `SNR ${this.gnssAvgSnr != null ? this.gnssAvgSnr.toFixed(0) : '--'}dB` +
+        ` · HDOP ${this.hdop != null ? this.hdop.toFixed(1) : '--'}` +
+        ` · 卫星 ${this.gnssUsedCount} 颗`;
+      const constCount = this.gnssUsedConstellationCount;
+      if (constCount >= 2) breakdown += ` · ${constCount} 星座`;
+      return { score, source: 'gnss', breakdown };
+    }
+    const acc = this.currentPosition && Number.isFinite(this.currentPosition.accuracy)
+      ? this.currentPosition.accuracy : null;
+    return { score, source: 'web', breakdown: acc != null ? `精度 ±${Math.round(acc)}m` : '' };
   }
 
   /**

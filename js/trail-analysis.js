@@ -317,6 +317,48 @@ const TrailAnalysis = {
   },
 
   /**
+   * 海拔分析：最高/最低海拔 + 累计爬升/累计下降（相邻点正差累加、负差累加）
+   * 1.5m 滞回去噪：微小起伏（常见于 GPS 垂直抖动）不计入爬升/下降。
+   * @param {Array} positions 轨迹点 [{lat,lng,time,speed?,altitude?}]
+   * @returns {{minAlt:number|null, maxAlt:number|null, gain:number, loss:number, hasAltitude:boolean}}
+   */
+  analyzeElevation(positions) {
+    if (!Array.isArray(positions) || positions.length < 2) {
+      return { minAlt: null, maxAlt: null, gain: 0, loss: 0, hasAltitude: false };
+    }
+    const hysteresis = 1.5; // 米，滞回去噪阈值（GPS 垂直精度通常 5-10m，仅滤掉邻点抖动）
+    let minAlt = null;
+    let maxAlt = null;
+    let gain = 0;
+    let loss = 0;
+    let prevAlt = null;
+    for (const p of positions) {
+      const a = p.altitude;
+      if (a == null || !Number.isFinite(a)) continue;
+      if (minAlt == null || a < minAlt) minAlt = a;
+      if (maxAlt == null || a > maxAlt) maxAlt = a;
+      if (prevAlt != null) {
+        const diff = a - prevAlt;
+        if (Math.abs(diff) >= hysteresis) {
+          if (diff > 0) gain += diff;
+          else loss -= diff;
+        }
+      }
+      prevAlt = a;
+    }
+    if (minAlt == null) {
+      return { minAlt: null, maxAlt: null, gain: 0, loss: 0, hasAltitude: false };
+    }
+    return {
+      minAlt: Math.round(minAlt),
+      maxAlt: Math.round(maxAlt),
+      gain: Math.round(gain),
+      loss: Math.round(loss),
+      hasAltitude: true
+    };
+  },
+
+  /**
    * 综合输出
    * @param {Array} positions
    * @returns {{keyPoints:Object, segments:Array}}

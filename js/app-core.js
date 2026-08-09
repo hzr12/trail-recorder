@@ -40,6 +40,10 @@ class App {
       Toast.show(' 电量恢复，已自动恢复追踪');
       this._startWatching();
     };
+    // GNSS 卫星数据更新 → 刷新卫星天顶图（内部自带节流，不干扰状态栏 2s 节流）
+    this.gpsManager.onSatellitesChange = () => {
+      if (this._updateSatelliteSky) this._updateSatelliteSky();
+    };
     this.myPosition = null;
     this.myPositionTime = null;
     this._statusEl = null;
@@ -159,7 +163,8 @@ class App {
         const pad = (n) => String(n).padStart(2, '0');
         const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
         const distStr = formatDistance(it.distance);
-        const hay = [it.name || '', dateStr, distStr, String(it.pointCount || 0)].join(' ').toLowerCase();
+        const durStr = formatDurationShort(it.duration);
+        const hay = [it.name || '', dateStr, distStr, durStr, String(it.pointCount || 0)].join(' ').toLowerCase();
         if (!hay.includes(kw)) return false;
       }
       return this._matchTimeRange(it.createdAt, timeRange);
@@ -1576,6 +1581,7 @@ class App {
         if (p.speed != null && p.speed > maxSpeed) { maxSpeed = p.speed; hasSpeed = true; }
       }
       const avgSpeed = durationMs > 0 ? stats.distance / (durationMs / 1000) : 0;
+      const elev = TrailAnalysis.analyzeElevation(pos);
 
       const fmtTime = (ts) => {
         if (!ts) return '--';
@@ -1619,6 +1625,9 @@ class App {
             <div class="stat-card"><span class="stat-label">平均速度</span><span class="stat-value">${avgSpeed > 0 ? (avgSpeed * 3.6).toFixed(1) + ' km/h' : '--'}</span></div>
             <div class="stat-card"><span class="stat-label">最高速度</span><span class="stat-value warning">${hasSpeed ? (maxSpeed * 3.6).toFixed(1) + ' km/h' : '--'}</span></div>
             <div class="stat-card"><span class="stat-label">轨迹点数</span><span class="stat-value accent2">${pos.length}</span></div>
+            <div class="stat-card"><span class="stat-label">最高海拔</span><span class="stat-value">${elev.hasAltitude ? elev.maxAlt + ' m' : '--'}</span></div>
+            <div class="stat-card"><span class="stat-label">累计爬升</span><span class="stat-value">${elev.hasAltitude ? '+' + elev.gain + ' m' : '--'}</span></div>
+            <div class="stat-card"><span class="stat-label">累计下降</span><span class="stat-value">${elev.hasAltitude ? '-' + elev.loss + ' m' : '--'}</span></div>
             <div class="stat-card"><span class="stat-label">是否收藏</span><span class="stat-value">${data.favorite ? '已收藏' : '未收藏'}</span></div>
           </div>
           <div class="confirm-actions">

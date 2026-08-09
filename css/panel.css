@@ -297,6 +297,7 @@
 
 /* ---------- 面板内卡片对齐 ---------- */
 #tab-record .speed-chart-section,
+#tab-record .satellite-section,
 #tab-record .gnss-bar {
   margin-left: 0;
   margin-right: 0;

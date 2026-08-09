@@ -19,8 +19,8 @@
   <link rel="stylesheet" href="css/theme.css?t=20260805v9">
   <link rel="stylesheet" href="css/base.css?t=20260805v10">
   <link rel="stylesheet" href="css/map.css?t=20260805v9">
-  <link rel="stylesheet" href="css/panel.css?t=20260805v15">
-  <link rel="stylesheet" href="css/gps.css?t=20260805v10">
+  <link rel="stylesheet" href="css/panel.css?t=20260809v16">
+  <link rel="stylesheet" href="css/gps.css?t=20260809v11">
   <link rel="stylesheet" href="css/trail.css?t=20260809v15">
   <link rel="stylesheet" href="css/toast-modal.css?t=20260805v9">
   <link rel="stylesheet" href="css/responsive.css?t=20260805v9">
@@ -172,6 +172,20 @@
         </div>
       </div>
 
+      <!-- 卫星天顶图面板（仿速度曲线可折叠结构，仅原生 GNSS 插件且可见卫星时显示） -->
+      <div id="satellite-section" class="satellite-section hidden">
+        <div class="satellite-header" id="satellite-header">
+          <span class="satellite-title">卫星天顶图</span>
+          <span class="satellite-info" id="satellite-info"></span>
+          <button id="satellite-toggle" class="satellite-toggle" title="展开/收起">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </div>
+        <div class="satellite-body" id="satellite-body">
+          <canvas id="satellite-canvas"></canvas>
+        </div>
+      </div>
+
       <!-- GNSS 卫星数据 bar -->
       <div id="gnss-bar" class="gnss-bar"></div>
       </div><!-- /tab-record -->
@@ -310,11 +324,11 @@
   <script src="js/toast.js?t=20260805v8"></script>
   <script src="js/storage.js?t=20260805v11"></script>
   <script src="js/trail.js?t=20260809v12"></script>
-  <script src="js/trail-analysis.js?t=20260805v12"></script>
+  <script src="js/trail-analysis.js?t=20260809v13"></script>
   <script src="js/map.js?t=20260809v23"></script>
   <script src="js/gps.js?t=20260808v13"></script>
   <script src="js/replay.js?t=20260808v20"></script>
-  <script src="js/app-core.js?t=20260809v25"></script>
-  <script src="js/app-gps-ui.js?t=20260805v9"></script>
+  <script src="js/app-core.js?t=20260809v26"></script>
+  <script src="js/app-gps-ui.js?t=20260809v10"></script>
 </body>
 </html>

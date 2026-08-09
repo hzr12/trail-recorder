@@ -355,3 +355,60 @@
   border-radius: var(--radius-sm);
   background: var(--bg-input);
 }
+
+/* ---------- 卫星天顶图面板（仿速度曲线可折叠结构） ---------- */
+.satellite-section {
+  margin: 6px 12px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  overflow: hidden;
+}
+.satellite-section.hidden {
+  display: none;
+}
+.satellite-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.satellite-title {
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--text-primary);
+}
+.satellite-info {
+  flex: 1;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.satellite-toggle {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 2px;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+.satellite-toggle.collapsed {
+  transform: rotate(-90deg);
+}
+.satellite-body {
+  display: flex;
+  justify-content: center;
+  padding: 2px 0 10px;
+}
+.satellite-body.collapsed {
+  display: none;
+}
+#satellite-canvas {
+  border-radius: var(--radius-sm);
+}
