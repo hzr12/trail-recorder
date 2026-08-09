@@ -891,11 +891,13 @@ class GPSManager {
   _tryInitGnssPlugin() {
     if (typeof Capacitor === 'undefined' || !Capacitor.Plugins) {
       this._gnssInitError = 'not_capacitor';
+      console.info('[GPS] 非 Capacitor 环境，跳过 GNSS 插件探测');
       return;
     }
     const plugin = Capacitor.Plugins.GnssData;
     if (!plugin) {
       this._gnssInitError = 'plugin_not_registered';
+      console.info('[GPS] 未注册 GnssData 插件，跳过 GNSS 卫星数据');
       return;
     }
     this._gnssPlugin = plugin;
@@ -1688,49 +1690,62 @@ class GPSManager {
         reject(new Error('定位请求无响应（' + (fallbackMs / 1000).toFixed(0) + ' 秒超时）'));
       }, fallbackMs);
 
-      navigator.geolocation.getCurrentPosition(
-        // 成功回调
-        (position) => {
-          clearTimeout(fallbackTimer);
-          this._checkNativeCoordConflict(position.coords.latitude, position.coords.longitude);
-          const pos = {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-            accuracy: position.coords.accuracy,
-            altitude: this._resolveAltitude(position.coords.altitude),
-            speed: this._resolveSpeed(position.coords.speed),
-            heading: this._resolveHeading(position.coords.heading),
-            timestamp: position.timestamp,
-            signalQuality: this.signalQualityScore
-          };
-          this.currentPosition = pos;
-          resolve(pos);
-        },
-        // 失败回调
-        (error) => {
-          clearTimeout(fallbackTimer);
-          let message;
-          switch (error.code) {
-            case error.PERMISSION_DENIED:
-              message = '定位权限被拒绝，请在浏览器设置中允许访问位置信息';
-              break;
-            case error.POSITION_UNAVAILABLE:
-              message = '无法获取位置信息（GPS 信号弱或不可用）';
-              break;
-            case error.TIMEOUT:
-              message = '定位请求超时，请确保 GPS 已开启并在室外';
-              break;
-            default:
-              message = '定位失败（未知错误）';
-          }
-          reject(new Error(message));
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: t,
-          maximumAge: 0 // 每次获取最新位置
+      let lowAccuracyFallback = false;
+
+      // 成功回调（高精度 / 低精度重试共用）
+      const handleSuccess = (position) => {
+        clearTimeout(fallbackTimer);
+        this._checkNativeCoordConflict(position.coords.latitude, position.coords.longitude);
+        const pos = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          altitude: this._resolveAltitude(position.coords.altitude),
+          speed: this._resolveSpeed(position.coords.speed),
+          heading: this._resolveHeading(position.coords.heading),
+          timestamp: position.timestamp,
+          signalQuality: this.signalQualityScore
+        };
+        this.currentPosition = pos;
+        resolve(pos);
+      };
+
+      // 失败回调
+      const handleError = (error) => {
+        clearTimeout(fallbackTimer);
+        // 高精度超时 → 退到低精度（IP / 基站定位）重试一次，兼容桌面端无 GPS 硬件
+        if (error.code === error.TIMEOUT && !lowAccuracyFallback) {
+          lowAccuracyFallback = true;
+          console.info('[GPS] 高精度定位超时，退用低精度（IP/基站）重试');
+          navigator.geolocation.getCurrentPosition(handleSuccess, handleError, {
+            enableHighAccuracy: false,
+            timeout: t,
+            maximumAge: 0
+          });
+          return;
         }
-      );
+        let message;
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            message = '定位权限被拒绝，请在浏览器设置中允许访问位置信息';
+            break;
+          case error.POSITION_UNAVAILABLE:
+            message = '无法获取位置信息（GPS 信号弱或不可用）';
+            break;
+          case error.TIMEOUT:
+            message = '定位请求超时，请确保 GPS 已开启并在室外';
+            break;
+          default:
+            message = '定位失败（未知错误）';
+        }
+        reject(new Error(message));
+      };
+
+      navigator.geolocation.getCurrentPosition(handleSuccess, handleError, {
+        enableHighAccuracy: true,
+        timeout: t,
+        maximumAge: 0 // 每次获取最新位置
+      });
     });
   }
 
@@ -2134,6 +2149,38 @@ class GPSManager {
     if (!this._lastGsa) return null;
     if (Date.now() - this._lastGsa.receivedAt > CONFIG.NMEA_GSA_MAX_AGE_MS) return null;
     return this._lastGsa.vdop;
+  }
+
+  /**
+   * 融合精度因子（3D Dilution of Precision 综合评估）。
+   * PDOP = sqrt(HDOP² + VDOP²) 是三维几何精度的总度量，作为融合主值；
+   * 缺失 PDOP 时用 sqrt(HDOP² + VDOP²) 兜底合成。
+   * 返回 { value, quality, label }，quality ∈ 'excellent'|'good'|'moderate'|'poor'；无数据返回 null。
+   */
+  get fusedDop() {
+    if (!this._lastGsa) return null;
+    if (Date.now() - this._lastGsa.receivedAt > CONFIG.NMEA_GSA_MAX_AGE_MS) return null;
+    const p = this._lastGsa.pdop;
+    const h = this._lastGsa.hdop;
+    const v = this._lastGsa.vdop;
+    let value;
+    if (p != null && !isNaN(p) && p > 0) {
+      value = p;
+    } else {
+      const hs = (h != null && !isNaN(h)) ? h * h : 0;
+      const vs = (v != null && !isNaN(v)) ? v * v : 0;
+      const sum = hs + vs;
+      if (sum <= 0) return null;
+      value = Math.sqrt(sum);
+    }
+    if (!isFinite(value) || value <= 0) return null;
+    let quality;
+    if (value < 2) quality = 'excellent';
+    else if (value < 3) quality = 'good';
+    else if (value < 6) quality = 'moderate';
+    else quality = 'poor';
+    const label = { excellent: '极佳', good: '良好', moderate: '一般', poor: '差' }[quality];
+    return { value: Math.round(value * 10) / 10, quality, label };
   }
 
   /**

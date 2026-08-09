@@ -242,6 +242,18 @@
 .gps-signal-score.moderate { color: var(--warning); }
 .gps-signal-score.poor { color: #f44336; }
 
+/* 融合精度因子（PDOP/HDOP/VDOP → 单一综合指标）徽章 */
+.gps-dop {
+  font-weight: 600;
+  border-radius: var(--radius-full);
+  padding: 0 6px;
+  border: 1px solid currentColor;
+}
+.gps-dop.excellent { color: var(--accent-1); }
+.gps-dop.good { color: #4caf50; }
+.gps-dop.moderate { color: var(--warning); }
+.gps-dop.poor { color: #f44336; }
+
 .gnss-indicator {
   display: inline-flex;
   align-items: center;

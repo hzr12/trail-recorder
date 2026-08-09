@@ -139,10 +139,18 @@ App.prototype._updateStatusBar = function (force) {
       const used = this.gpsManager.gnssUsedCount;
       const visible = this.gpsManager.gnssVisibleCount;
       const snr = this.gpsManager.gnssAvgSnr;
+      const dop = this.gpsManager.fusedDop;
+      const pdop = this.gpsManager.pdop;
       const hdop = this.gpsManager.hdop;
-      const hdopHtml = hdop != null ? ` HDOP:${hdop.toFixed(1)}` : '';
-      gnssHtml = `<span class="gnss-indicator" title="参与定位 ${used}/${visible}, 平均信噪比 ${snr.toFixed(0)}dB-Hz${hdop != null ? `, HDOP ${hdop.toFixed(1)}` : ''}">` +
-        ` 定位:${used} 可见:${visible} 信噪比:${snr.toFixed(0)}dB${hdopHtml}</span>`;
+      const vdop = this.gpsManager.vdop;
+      const dopTitle = `参与定位 ${used}/${visible}, 平均信噪比 ${snr.toFixed(0)}dB-Hz` +
+        (dop != null ? `, 综合精度因子(PDOP) ${dop.value}·${dop.label}` +
+          ` [PDOP:${pdop != null ? pdop.toFixed(1) : '--'} HDOP:${hdop != null ? hdop.toFixed(1) : '--'} VDOP:${vdop != null ? vdop.toFixed(1) : '--'}]` : '');
+      const dopHtml = dop != null
+        ? ` <span class="gps-dop ${dop.quality}" title="综合精度因子（PDOP=√(HDOP²+VDOP²)）">精度因子:${dop.value}·${dop.label}</span>`
+        : '';
+      gnssHtml = `<span class="gnss-indicator" title="${dopTitle}">` +
+        ` 定位:${used} 可见:${visible} 信噪比:${snr.toFixed(0)}dB${dopHtml}</span>`;
     } else {
       gnssHtml = `<span class="gnss-indicator" style="opacity:0.5"> 等待卫星...</span>`;
     }
