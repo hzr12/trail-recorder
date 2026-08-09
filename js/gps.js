@@ -1700,7 +1700,8 @@ class GPSManager {
             altitude: this._resolveAltitude(position.coords.altitude),
             speed: this._resolveSpeed(position.coords.speed),
             heading: this._resolveHeading(position.coords.heading),
-            timestamp: position.timestamp
+            timestamp: position.timestamp,
+            signalQuality: this.signalQualityScore
           };
           this.currentPosition = pos;
           resolve(pos);
@@ -1808,6 +1809,8 @@ class GPSManager {
         this._bestPendingPosition = null;
 
         const pos = { ...bestPos };
+        // 信号质量评分（0-100）写入轨迹点，供后续轨迹质量分聚合使用
+        pos.signalQuality = this.signalQualityScore;
 
         // 保存原始位置（滤波前，WGS84），供结束记录时的 RTS 离线平滑使用
         this._rawPosition = { lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, speed: pos.speed, heading: pos.heading, timestamp: pos.timestamp };
@@ -2144,6 +2147,24 @@ class GPSManager {
     if (h < 2) return 'good';
     if (h < 5) return 'moderate';
     return 'poor';
+  }
+
+  /**
+   * 单次定位信号质量评分（0-100）：SNR(35) + HDOP(40) + 参与卫星数(25)
+   * 无 GNSS 插件或参与卫星数为 0 时返回 null（调用方回退 accuracy 信号条）
+   */
+  get signalQualityScore() {
+    if (!this._gnssPlugin || this.gnssUsedCount <= 0) return null;
+    const snr = this.gnssAvgSnr;
+    const hdop = this.hdop;
+    const used = this.gnssUsedCount;
+    // SNR 35 分：20dB→0, 40dB→35；缺失给中间值 17
+    const snrScore = snr == null ? 17 : Math.max(0, Math.min(35, ((snr - 20) / 20) * 35));
+    // HDOP 40 分：4→0, 1→40；缺失给中间值 20
+    const hdopScore = hdop == null ? 20 : Math.max(0, Math.min(40, ((4 - hdop) / 3) * 40));
+    // 卫星数 25 分：4→0, 8→25
+    const usedScore = Math.max(0, Math.min(25, ((used - 4) / 4) * 25));
+    return Math.round(snrScore + hdopScore + usedScore);
   }
 
   /**

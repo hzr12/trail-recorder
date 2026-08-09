@@ -224,6 +224,24 @@
   opacity: 1;
 }
 
+/* 信号质量评分徽章（SNR/HDOP/卫星数综合 0-100） */
+.gps-signal-score {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  line-height: 1.6;
+  border-radius: var(--radius-full);
+  padding: 0 8px;
+  white-space: nowrap;
+  border: 1px solid currentColor;
+}
+.gps-signal-score.excellent { color: var(--accent-1); }
+.gps-signal-score.good { color: #4caf50; }
+.gps-signal-score.moderate { color: var(--warning); }
+.gps-signal-score.poor { color: #f44336; }
+
 .gnss-indicator {
   display: inline-flex;
   align-items: center;

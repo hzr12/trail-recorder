@@ -148,8 +148,16 @@ App.prototype._updateStatusBar = function (force) {
     }
   }
 
+  // 信号质量评分（SNR/HDOP/卫星数综合 0-100）优先；无 GNSS/卫星时回退 accuracy 信号条
   let signalHtml = '';
-  if (this._lastAccuracy != null) {
+  const qScore = this.gpsManager.hasGnssPlugin ? this.gpsManager.signalQualityScore : null;
+  if (qScore != null) {
+    const lvl = qScore >= 80 ? { t: '优', c: 'excellent' }
+      : qScore >= 60 ? { t: '良', c: 'good' }
+        : qScore >= 40 ? { t: '中', c: 'moderate' }
+          : { t: '差', c: 'poor' };
+    signalHtml = `<span class="gps-signal-score ${lvl.c}" title="信号质量评分（SNR/HDOP/卫星数综合）：${qScore} 分">质${qScore}·${lvl.t}</span>`;
+  } else if (this._lastAccuracy != null) {
     let bars, label;
     if (this._lastAccuracy <= 10) { bars = 4; label = '极好'; }
     else if (this._lastAccuracy <= 30) { bars = 3; label = '良好'; }
