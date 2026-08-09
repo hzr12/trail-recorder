@@ -1055,6 +1055,14 @@ class GPSManager {
           this._gnssPollRunning = false;
           return;
         }
+        // 轮询兜底也要消费 NMEA 数组：事件路径失效时，GGA 海拔 / VTG 航向 /
+        // RMC 时钟校准等不能丢，否则极端 ROM 下会退回浏览器多为 null 的 altitude
+        if (data && data.nmea && Array.isArray(data.nmea)) {
+          for (const nmea of data.nmea) {
+            if (nmea && nmea.sentence) this._parseNmea(nmea.sentence);
+          }
+          if (CONFIG.DEBUG) console.log('[GPS] GNSS 轮询兜底：解析 NMEA 数:', data.nmea.length);
+        }
         if (data && data.satellites && data.satellites.length > 0) {
           this._handleGnssSatellites(data.satellites);
           if (CONFIG.DEBUG) console.log('[GPS] GNSS 轮询兜底：收到卫星数:', data.satellites.length);
@@ -1261,8 +1269,13 @@ class GPSManager {
     const used = this.gnssUsedCount;
     const hdop = this.hdop;
     const rmcValid = this.rmcPositionValid;
-    // 信号好：卫星数达标，且 HDOP 在阈值内（HDOP 缺失但有 RMC 有效定位时放行）
+    // GGA 明确报 fix 无效（fixQuality=0）→ 即便卫星数/HDOP 达标也视为尚未锁定，强制降级 browser
+    // ggaFixValid 为 null（未收到 GGA）时保留原有放行逻辑，零回归
+    const ggaFix = this.ggaFixValid;
+    const ggaFixOk = ggaFix == null ? true : ggaFix;
+    // 信号好：卫星数达标，且 HDOP 在阈值内（HDOP 缺失但有 RMC 有效定位时放行），且 GGA fix 有效
     const gnssGood = used >= CONFIG.GPS_TAKEOVER_MIN_SATS &&
+      ggaFixOk &&
       (hdop == null ? rmcValid : hdop <= CONFIG.GPS_TAKEOVER_HDOP);
     const hold = Math.max(1, Math.round(CONFIG.GPS_SOURCE_HOLD_MS / 1000));
     if (gnssGood) {
@@ -1345,14 +1358,14 @@ class GPSManager {
       this._coordConflictStreak++;
       if (this._coordConflictStreak >= CONFIG.NMEA_COORD_CONFLICT_STREAK && this._nativeCoordTrusted) {
         this._nativeCoordTrusted = false;
-        if (CONFIG.DEBUG) console.warn(`[GPS] 原生坐标与浏览器偏差连续 ${this._coordConflictStreak} 次 > ${CONFIG.NMEA_COORD_CONFLICT_M}m，判定原生坐标不可信`);
+        if (CONFIG.DEBUG) console.warn(`[GPS] 原生坐标(GGA ${this._lastGga.lat?.toFixed(5)},${this._lastGga.lng?.toFixed(5)}) 与浏览器偏差连续 ${this._coordConflictStreak} 次 > ${CONFIG.NMEA_COORD_CONFLICT_M}m，判定原生坐标不可信`);
       }
     } else {
       // 偏差回到阈值内：计数回落，降至 0 恢复信任
       this._coordConflictStreak = Math.max(0, this._coordConflictStreak - 1);
       if (this._coordConflictStreak === 0 && !this._nativeCoordTrusted) {
         this._nativeCoordTrusted = true;
-        if (CONFIG.DEBUG) console.log('[GPS] 原生坐标与浏览器偏差恢复正常，恢复信任');
+        if (CONFIG.DEBUG) console.log(`[GPS] 原生坐标与浏览器偏差恢复正常，恢复信任（GGA 锚点 ${this._lastGga.lat?.toFixed(5)},${this._lastGga.lng?.toFixed(5)}）`);
       }
     }
   }
@@ -2274,6 +2287,17 @@ class GPSManager {
     if (!this._lastGga) return null;
     if (Date.now() - this._lastGga.receivedAt > CONFIG.NMEA_GGA_MAX_AGE_MS) return null;
     return this._lastGga.geoidSep;
+  }
+
+  /**
+   * $GPGGA 定位质量有效性（fixQuality > 0），过期/缺失返回 null。
+   * 作为定位源降级信号：GGA 明确报 fix 无效（fixQuality=0）时，即便卫星数/HDOP 达标也不足以信任原生坐标。
+   * null 表示未收到 GGA，不干预既有决策（与 "无数据" 区分）。
+   */
+  get ggaFixValid() {
+    if (!this._lastGga) return null;
+    if (Date.now() - this._lastGga.receivedAt > CONFIG.NMEA_GGA_MAX_AGE_MS) return null;
+    return this._lastGga.fixValid;
   }
 
   /**
