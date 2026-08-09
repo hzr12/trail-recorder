@@ -2986,7 +2986,7 @@ class App {
         // 日出日落等完整信息移入 title 悬停，常态只显示关键信息；更新时间独立胶囊醒目常驻
         const weatherTitle = `${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}${sunText}`;
         this._weatherHtml =
-          `<span class="gps-weather" title="${weatherTitle}">${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}<span class="upd">· 更新${updateText}</span></span>`;
+          `<span class="gps-weather" data-w="${App._weatherCat(desc)}" title="${weatherTitle}">${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}<span class="upd">· 更新${updateText}</span></span>`;
         this._updateStatusBar(true);
       });
   }
@@ -3029,9 +3029,22 @@ class App {
         // 日出日落等完整信息移入 title 悬停，常态只显示关键信息；更新时间独立胶囊醒目常驻
         const weatherTitle = `${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}${sunText}`;
         this._weatherHtml =
-          `<span class="gps-weather" title="${weatherTitle}">${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}<span class="upd">· 更新${updateText}</span></span>`;
+          `<span class="gps-weather" data-w="${App._weatherCat(desc)}" title="${weatherTitle}">${temp}°C${feelsText}${humidityText}${desc ? ' ' + desc : ''}<span class="upd">· 更新${updateText}</span></span>`;
         this._updateStatusBar(true);
       });
+  }
+
+  /**
+   * 天气描述 → 类型分类（用于天气胶囊动态上色）
+   * 优先级：晴 > 雪/冰雹 > 雨 > 云/阴/雾
+   */
+  static _weatherCat(desc) {
+    if (!desc) return 'unknown';
+    if (/晴/.test(desc)) return 'clear';
+    if (/雪|冰雹/.test(desc)) return 'snow';
+    if (/雨|阵雨/.test(desc)) return 'rain';
+    if (/云|阴|雾|霰/.test(desc)) return 'cloudy';
+    return 'unknown';
   }
 
   static _weatherCodeToZh(code) {
