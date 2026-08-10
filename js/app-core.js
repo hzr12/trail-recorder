@@ -2838,7 +2838,6 @@ class App {
 
     if (pos.length < 2) {
       setText('rec-duration', '--');
-      setText('rec-cur-speed', '--');
       setText('rec-avg-speed', '--');
       setText('rec-max-speed', '--');
       return;
@@ -2855,14 +2854,6 @@ class App {
     const maxSpeed = this.trail.getMaxSpeed();
 
     setText('rec-duration', formatDurationShort(durationMs));
-    // 当前速度：记录中用实时 GPS 速度；查看历史/回放时用当前轨迹末点速度
-    let curSpeed;
-    if (this.trail.isRecording) {
-      curSpeed = this._lastSpeed;
-    } else if (pos.length >= 1) {
-      curSpeed = pos[pos.length - 1].speed;
-    }
-    setText('rec-cur-speed', curSpeed != null ? (curSpeed * 3.6).toFixed(1) + ' km/h' : '--');
     setText('rec-avg-speed', avgSpeed > 0 ? (avgSpeed * 3.6).toFixed(1) + ' km/h' : '--');
     setText('rec-max-speed', maxSpeed > 0 ? (maxSpeed * 3.6).toFixed(1) + ' km/h' : '--');
   }
