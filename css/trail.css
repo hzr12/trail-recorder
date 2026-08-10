@@ -605,10 +605,10 @@
   font-weight: normal;
 }
 
-/* 录制期间实时统计卡（距离/时长/当前速度/平均速度/最高速度） */
+/* 录制期间实时统计卡（距离/时长/平均速度/最高速度，4 列等宽填满） */
 .rec-stats-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 6px;
   margin-bottom: 10px;
 }

@@ -536,11 +536,29 @@ class Storage {
     });
   }
 
+  static _META_MIGRATED_KEY = 'trailcraft_meta_migrated_v' + CONFIG.DB_VERSION;
+
+  static _isMetaMigrated() {
+    try { return localStorage.getItem(Storage._META_MIGRATED_KEY) === '1'; } catch (_) { return false; }
+  }
+
+  static _markMetaMigrated() {
+    try { localStorage.setItem(Storage._META_MIGRATED_KEY, '1'); } catch (_) {}
+  }
+
   static loadTrailList() {
     return Storage._initDB().then(db => {
       // v2+ 优先读 meta store：只含 meta，不反序列化大 positions
       if (db.objectStoreNames.contains(CONFIG.DB_STORE_META)) {
-        return Storage._loadTrailListFromMeta(db);
+        return Storage._loadTrailListFromMeta(db).then(list => {
+          // 兼容兜底：meta store 为空（v1→v2 升级后尚未迁移）或尚未确认迁移完整时，
+          // 回退合并 trail + meta 两个 store 并懒迁移补齐，保证任何一侧的旧轨迹都不丢。
+          // 注意：不能用 localStorage 标记跳过此处——DB 重建后标记残留会让升级路径被跳过。
+          if (list.length === 0 || !Storage._isMetaMigrated()) {
+            return Storage._loadTrailListFromTrail(db);
+          }
+          return list;
+        });
       }
       // 旧库（v1）回退：遍历 trail store 提取 meta，并在返回后懒迁移到 meta store
       return Storage._loadTrailListFromTrail(db);
@@ -583,17 +601,41 @@ class Storage {
 
   static _loadTrailListFromTrail(db) {
     return new Promise((resolve, reject) => {
-      const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readonly');
-      const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
-      const results = [];
+      const stores = [CONFIG.DB_STORE_TRAIL];
+      const hasMeta = db.objectStoreNames.contains(CONFIG.DB_STORE_META);
+      if (hasMeta) stores.push(CONFIG.DB_STORE_META);
+      const transaction = db.transaction(stores, 'readonly');
+      const trailStore = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
+      const byId = new Map(); // id -> 合并后的 meta
       const toMigrate = [];
-      const request = store.openCursor();
-      request.onsuccess = (e) => {
+      let pending = 1; // trail 游标计数
+      if (hasMeta) pending++;
+
+      const maybeDone = () => {
+        if (pending > 0) return;
+        const results = Array.from(byId.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        resolve(results);
+        // 懒迁移：把旧库轨迹 meta 补写进 meta store（后台异步，不阻塞返回）
+        if (toMigrate.length > 0) {
+          Storage._migrateMeta(toMigrate).then(() => {
+            Storage._markMetaMigrated();
+          }).catch(err => {
+            if (CONFIG.DEBUG) console.warn('[Storage] meta 懒迁移失败:', err.message);
+          });
+        } else {
+          // 无待迁移记录也视为迁移完成，避免每次加载都回退扫描 trail store
+          Storage._markMetaMigrated();
+        }
+      };
+
+      // 主数据源：trail store（旧库记录 + 双写记录）
+      const trailReq = trailStore.openCursor();
+      trailReq.onsuccess = (e) => {
         const cursor = e.target.result;
         if (cursor) {
           const val = cursor.value;
           if (val && val.id && val.id.startsWith(Storage._TRAIL_LIST_PREFIX)) {
-            const meta = {
+            byId.set(val.id, {
               id: val.id,
               name: val.name,
               createdAt: val.createdAt,
@@ -602,23 +644,45 @@ class Storage {
               duration: val.duration || 0,
               pointCount: val.pointCount,
               favorite: !!val.favorite
-            };
-            results.push(meta);
-            toMigrate.push(meta);
+            });
+            toMigrate.push(byId.get(val.id));
           }
           cursor.continue();
         } else {
-          results.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-          resolve(results);
-          // 懒迁移：把旧库轨迹 meta 补写进 meta store（后台异步，不阻塞返回）
-          if (toMigrate.length > 0) {
-            Storage._migrateMeta(toMigrate).catch(err => {
-              if (CONFIG.DEBUG) console.warn('[Storage] meta 懒迁移失败:', err.message);
-            });
-          }
+          pending--;
+          maybeDone();
         }
       };
-      request.onerror = (e) => reject(e.target.error);
+      trailReq.onerror = (e) => reject(e.target.error);
+
+      // 补充数据源：meta store 独有记录（正常情况下双写保持一致，此分支防历史遗留不一致）
+      if (hasMeta) {
+        const metaReq = transaction.objectStore(CONFIG.DB_STORE_META).openCursor();
+        metaReq.onsuccess = (e) => {
+          const cursor = e.target.result;
+          if (cursor) {
+            const val = cursor.value;
+            if (val && val.id && val.id.startsWith(Storage._TRAIL_LIST_PREFIX) && !byId.has(val.id)) {
+              byId.set(val.id, {
+                id: val.id,
+                name: val.name,
+                createdAt: val.createdAt,
+                updatedAt: val.updatedAt || val.createdAt,
+                distance: val.distance,
+                duration: val.duration || 0,
+                pointCount: val.pointCount,
+                favorite: !!val.favorite
+              });
+              toMigrate.push(byId.get(val.id));
+            }
+            cursor.continue();
+          } else {
+            pending--;
+            maybeDone();
+          }
+        };
+        metaReq.onerror = (e) => reject(e.target.error);
+      }
     });
   }
 
@@ -675,7 +739,7 @@ class Storage {
         const results = [];
         const seen = new Set();
         const requests = ids.map((id) => store.get(id));
-        requests.forEach((request, i) => {
+        requests.forEach((request) => {
           request.onsuccess = () => {
             const data = request.result;
             if (data && data.positions && data.positions.length > 0 && !seen.has(data.id)) {
