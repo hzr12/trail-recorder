@@ -2380,9 +2380,11 @@ class GPSManager {
   }
 
   /**
-   * 海拔解算：GGA 椭球高（MSL+分离，与浏览器口径一致）优先，浏览器 coords.altitude 兜底
+   * 海拔解算：GGA 椭球高（MSL+分离，与浏览器口径一致）优先，浏览器 coords.altitude 兜底。
+   * 弱信号（GNSS 降级）时不接收任何海拔数据——弱信号下垂直精度极差，海拔无意义。
    */
   _resolveAltitude(browserAltitude) {
+    if (this._weakSignal) return null;
     const gga = this.ellipsoidalAltitude;
     if (gga != null) return gga;
     return browserAltitude != null ? browserAltitude : null;
