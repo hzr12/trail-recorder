@@ -226,7 +226,6 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
      * 部分机型只有前 3 分量，此时 w 由模长补齐。
      */
     private static JSArray rotationToJSArray(float[] values) {
-        JSArray arr = new JSArray();
         double x = values[0], y = values[1], z = values[2];
         double w;
         if (values.length >= 4) {
@@ -242,16 +241,28 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
                 w = Math.sqrt(1.0 - sq);
             }
         }
+        // 预校验有限性：四元数出现 NaN/Infinity（传感器异常）时直接返回空数组，
+        // 与「无姿态数据」降级路径一致（JS 侧 q.length<4 即安全跳过注入）。
+        // 保证输出要么完整 4 元、要么空数组，绝不产生残缺的部分数组。
+        if (!isFinite(w) || !isFinite(x) || !isFinite(y) || !isFinite(z)) {
+            return new JSArray();
+        }
+        JSArray arr = new JSArray();
         try {
             arr.put(w);
             arr.put(x);
             arr.put(y);
             arr.put(z);
         } catch (JSONException e) {
-            // JSArray.put(double) 声明抛 JSONException；四元数数值均合法，理论上不会失败，防御兜底
+            // put(double) 声明抛 JSONException；经预校验后均为有限值，此分支理论上不可达，仅防御
             Log.e(TAG, "Failed to build rotation quaternion JSON", e);
         }
         return arr;
+    }
+
+    /** 有限数判断（Double.isFinite 为 API 24+，minSdk 23 用手动实现兼容） */
+    private static boolean isFinite(double d) {
+        return !Double.isNaN(d) && !Double.isInfinite(d);
     }
 
     private void registerSensor(Sensor sensor) {
