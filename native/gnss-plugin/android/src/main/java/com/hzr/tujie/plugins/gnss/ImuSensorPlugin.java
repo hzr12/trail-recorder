@@ -17,6 +17,8 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import org.json.JSONException;
+
 /**
  * IMU 惯性传感器数据插件。
  *
@@ -240,10 +242,15 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
                 w = Math.sqrt(1.0 - sq);
             }
         }
-        arr.put(w);
-        arr.put(x);
-        arr.put(y);
-        arr.put(z);
+        try {
+            arr.put(w);
+            arr.put(x);
+            arr.put(y);
+            arr.put(z);
+        } catch (JSONException e) {
+            // JSArray.put(double) 声明抛 JSONException；四元数数值均合法，理论上不会失败，防御兜底
+            Log.e(TAG, "Failed to build rotation quaternion JSON", e);
+        }
         return arr;
     }
 
