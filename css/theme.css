@@ -32,8 +32,8 @@
   --radius-lg: 20px;
   --radius-full: 999px;
   /* 毛玻璃（弹出菜单等浮层） */
-  --glass-bg: rgba(22, 24, 32, 0.72);
-  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-bg: rgba(255, 255, 255, 0.08);
+  --glass-border: rgba(255, 255, 255, 0.18);
   --font-sans: 'HarmonyOS Sans SC', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC', 'Helvetica Neue', sans-serif;
   --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -94,8 +94,8 @@
   --handle-bar: rgba(0, 0, 0, 0.15);
   --handle-bar-active: rgba(0, 0, 0, 0.25);
   /* 浅色主题毛玻璃 */
-  --glass-bg: rgba(255, 255, 255, 0.78);
-  --glass-border: rgba(0, 0, 0, 0.12);
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(0, 0, 0, 0.14);
 }
 
 [data-theme="light"] .qq-map .map-controls {

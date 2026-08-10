@@ -1221,18 +1221,32 @@ class App {
   }
 
   _updateChartTheme() {
-    if (!this._speedChart) return;
+    if (!this._speedChart && !this._elevChart) return;
     const isDark = this._theme === 'dark';
     const gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
     const textColor = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
-    const scales = this._speedChart.options.scales;
-    if (scales?.x?.ticks) scales.x.ticks.color = textColor;
-    if (scales?.x?.title) scales.x.title.color = textColor;
-    if (scales?.x?.grid) scales.x.grid.color = gridColor;
-    if (scales?.y?.ticks) scales.y.ticks.color = textColor;
-    if (scales?.y?.title) scales.y.title.color = textColor;
-    if (scales?.y?.grid) scales.y.grid.color = gridColor;
-    this._speedChart.update('none');
+    // 速度曲线
+    if (this._speedChart) {
+      const scales = this._speedChart.options.scales;
+      if (scales?.x?.ticks) scales.x.ticks.color = textColor;
+      if (scales?.x?.title) scales.x.title.color = textColor;
+      if (scales?.x?.grid) scales.x.grid.color = gridColor;
+      if (scales?.y?.ticks) scales.y.ticks.color = textColor;
+      if (scales?.y?.title) scales.y.title.color = textColor;
+      if (scales?.y?.grid) scales.y.grid.color = gridColor;
+      this._speedChart.update('none');
+    }
+    // 海拔剖面
+    if (this._elevChart) {
+      const scales = this._elevChart.options.scales;
+      if (scales?.x?.ticks) scales.x.ticks.color = textColor;
+      if (scales?.x?.title) scales.x.title.color = textColor;
+      if (scales?.x?.grid) scales.x.grid.color = gridColor;
+      if (scales?.y?.ticks) scales.y.ticks.color = textColor;
+      if (scales?.y?.title) scales.y.title.color = textColor;
+      if (scales?.y?.grid) scales.y.grid.color = gridColor;
+      this._elevChart.update('none');
+    }
   }
 
   _updateThemeBtn() {

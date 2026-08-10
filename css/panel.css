@@ -296,9 +296,10 @@
 }
 
 /* ---------- 面板内卡片对齐 ---------- */
-#tab-record .speed-chart-section {
-  margin-left: 0;
-  margin-right: 0;
+#tab-record .speed-chart-section,
+#tab-record .elev-profile-section {
+  margin-left: 12px;
+  margin-right: 12px;
 }
 
 /* 回放空态卡片化，与其余区块呼吸一致 */
