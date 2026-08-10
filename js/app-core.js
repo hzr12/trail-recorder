@@ -601,6 +601,16 @@ class App {
       } else if (this._isWatching) {
         Toast.show(' GPS 信号恢复');
       }
+      // 推算进出不经过定位更新，需强制刷新状态栏徽章（GPS ↔ IMU 切换）
+      this._updateStatusBar(true);
+    };
+    this.gpsManager.onDeadReckonPosition = (pos) => {
+      if (!this._isWatching || !pos || this._isReplaying) return;
+      // 推算点只做 UI 展示（地图标记/跟随），不写轨迹：纯积分漂移不可信，
+      // 轨迹落库仍以原始 fix 为准（RTS 离线平滑按需修正）
+      const convPos = this.mapManager.wgs84ToGcj02Sync(pos);
+      this.mapManager.setLocation(convPos, pos.accuracy, pos.heading);
+      if (this._followMode) this.mapManager.flyTo(convPos);
     };
     this.gpsManager.startWatching();
 
@@ -618,6 +628,7 @@ class App {
     this.gpsManager.onRecovery = null;
     this.gpsManager.onRestoreTracking = null;
     this.gpsManager.onDeadReckoningChange = null;
+    this.gpsManager.onDeadReckonPosition = null;
     this._hideSpeedChart();
     this._hideElevProfile();
 

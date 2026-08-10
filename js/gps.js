@@ -1806,7 +1806,12 @@ class GPSManager {
     this._deadReckoning = false;       // 推算状态
     this._drStartTime = 0;             // 推算开始时间戳（毫秒）
     this._drLastTime = 0;              // 推算最近推进时间戳（毫秒）
+    this._drLastLat = null;            // 推算最近输出纬度（WGS84，UI/航向用）
+    this._drLastLng = null;            // 推算最近输出经度（WGS84，UI/航向用）
+    this._drHeading = null;            // 推算期航向（由推进方位角实时更新）
+    this._fixCount = 0;                // 本次会话有效 GPS fix 计数（IMU_MIN_FIXES 门槛）
     this.onDeadReckoningChange = null; // 推算状态变更回调 (active: boolean) => void
+    this.onDeadReckonPosition = null;  // 推算位置回调 (pos) => void（仅 UI 展示，不落轨迹）
     // 推算推进：IMU 高频样本到达时驱动 filter.predictOnly（仅推算期生效）
     this._imuManager.onSample = (sample, accEnu, now) => {
       if (!this._deadReckoning || !accEnu) return;
@@ -2017,6 +2022,99 @@ class GPSManager {
     }
     this._gnssPlugin = plugin;
     if (CONFIG.DEBUG) console.log('[GPS] GNSS 插件已探测到，等待 startGnss() 激活');
+  }
+
+  /* ── IMU 短时航迹推算状态机（阶段三）──────────────── */
+
+  /**
+   * 尝试进入推算：GPS 精度崩坏（>IMU_ACC_FREEZE）且卫星不足（<IMU_SAT_MIN）时，
+   * 用 IMU 高频样本推进 predictOnly 做 ≤IMU_DEAD_RECKON_MAX_MS 的短时推算。
+   * 前置门槛：IMU 有数据、滤波器支持推算、已累计 ≥IMU_MIN_FIXES 个有效 fix、非省电。
+   * @param {object} pos 最近一次滤波后位置（WGS84）
+   * @param {number} accuracy 定位精度（米）
+   * @returns {boolean} 是否进入推算
+   */
+  _maybeEnterDeadReckoning(pos, accuracy) {
+    if (this._powerSaving) return false;
+    if (!this._imuManager || !this._imuManager.hasData()) return false;
+    if (!this._filter || typeof this._filter.predictOnly !== 'function') return false;
+    if (this._fixCount < CONFIG.IMU_MIN_FIXES) return false;
+    // 触发条件：精度超阈值；GNSS 已激活时还需卫星不足（避免信号好时误判丢失）
+    if (!(accuracy > CONFIG.IMU_ACC_FREEZE)) return false;
+    const sat = this.gnssUsedCount;
+    if (this._gnssListeningStarted && sat >= CONFIG.IMU_SAT_MIN) return false;
+    this._enterDeadReckoning(pos);
+    return true;
+  }
+
+  /** 进入推算：锁定参考点、切 IMU 高频逐事件模式、通知 UI */
+  _enterDeadReckoning(pos) {
+    this._deadReckoning = true;
+    const now = Date.now();
+    this._drStartTime = now;
+    this._drLastTime = now;
+    this._drLastLat = pos.lat;
+    this._drLastLng = pos.lng;
+    this._drHeading = (pos.heading != null && isFinite(pos.heading)) ? pos.heading : null;
+    if (this._imuManager) this._imuManager.setHighFrequency(true);
+    if (CONFIG.DEBUG) console.log('[GPS] 进入 IMU 航迹推算（GPS 丢失）');
+    if (this.onDeadReckoningChange) this.onDeadReckoningChange(true);
+  }
+
+  /**
+   * 推算推进：IMU 高频样本到达时驱动 filter.predictOnly（只预测不更新）。
+   * 超出时长上限 → 强制退出回冻结；预测失败 → 退出避免死循环。
+   * 推算坐标走独立 onDeadReckonPosition 通知 UI（不写轨迹，纯积分漂移不可信）。
+   * @param {Float64Array|number[]} accEnu ENU 加速度 [ax, ay]
+   * @param {number} now 时间戳（毫秒）
+   */
+  _advanceDeadReckoning(accEnu, now) {
+    if (!this._deadReckoning) return;
+    if (now - this._drStartTime > CONFIG.IMU_DEAD_RECKON_MAX_MS) {
+      this._exitDeadReckoning(false);
+      return;
+    }
+    const filtered = this._filter.predictOnly(now, accEnu);
+    if (!filtered) {
+      this._exitDeadReckoning(false);
+      return;
+    }
+    // 推进方位角 → 推算期航向（地图箭头/状态栏方向跟随）
+    if (this._drLastLat != null && this._drLastLng != null) {
+      const from = { lat: this._drLastLat, lng: this._drLastLng };
+      const moved = calcDistance(from, filtered);
+      if (moved > 0.5) {
+        this._drHeading = calcBearing(from, filtered);
+      }
+    }
+    this._drLastLat = filtered.lat;
+    this._drLastLng = filtered.lng;
+    this._drLastTime = now;
+    if (this.onDeadReckonPosition) {
+      this.onDeadReckonPosition({
+        lat: filtered.lat,
+        lng: filtered.lng,
+        accuracy: null,           // 推算坐标不可信 → 隐藏精度圆
+        speed: null,              // 速度由滤波器内部状态持有，不对外发布
+        heading: this._drHeading,
+        timestamp: now,
+        deadReckoned: true
+      });
+    }
+  }
+
+  /**
+   * 退出推算：恢复 1s 聚合注入模式、清推算状态、通知 UI。
+   * @param {boolean} [recovered] true=GPS 恢复重锚退出；false=超时/异常强制退出
+   */
+  _exitDeadReckoning(recovered) {
+    if (!this._deadReckoning) return;
+    this._deadReckoning = false;
+    this._drStartTime = 0;
+    this._drLastTime = 0;
+    if (this._imuManager) this._imuManager.setHighFrequency(false);
+    if (CONFIG.DEBUG) console.log('[GPS] 退出 IMU 航迹推算' + (recovered ? '（GPS 恢复重锚）' : '（超时/异常）'));
+    if (this.onDeadReckoningChange) this.onDeadReckoningChange(false);
   }
 
   /**
@@ -3060,6 +3158,7 @@ class GPSManager {
         }
 
         this.currentPosition = pos;
+        this._fixCount++;       // 有效 fix 计数（IMU_MIN_FIXES 推算门槛）
         this._resetTimeouts(); // 收到位置 → 重置超时计数
         this._updateAdaptiveInterval(pos.speed); // 按本次速度调下次节流间隔
         // ── IMU 推算状态机（阶段三）：推算中收到好 fix/卫星恢复 → 重锚退出；
@@ -3114,6 +3213,9 @@ class GPSManager {
     this._consecutiveTimeouts = 0;
     this._stopTimeoutWatch();
     this._stopRecoveryTimer();
+    // 新会话重新计数 fix；IMU 随 watch 生命周期启停（内部会退出推算，如有）
+    this._fixCount = 0;
+    this._stopImu();
     if (this.onWatchStop) this.onWatchStop();
   }
 
@@ -3626,3 +3728,4 @@ class GPSManager {
     if (gga != null) return gga;
     return browserAltitude != null ? browserAltitude : null;
   }
+}

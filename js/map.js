@@ -221,6 +221,15 @@ class MapManager {
     return this._wgs84Gcj02(point);
   }
 
+  /**
+   * 同步 WGS84 → GCJ02（手写算法，零网络开销）
+   * 推算位置 25Hz 高频回调用：逐点走网络 convertor API 会爆请求，
+   * 手写算法精度与官方偏差 < 1m，对 UI 展示足够。
+   */
+  wgs84ToGcj02Sync(point) {
+    return this._wgs84Gcj02(point);
+  }
+
   _wgs84Gcj02(point) {
     const A = 6378245.0;
     const EE = 0.00669342162296594323;

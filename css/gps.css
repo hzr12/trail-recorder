@@ -293,5 +293,15 @@
   color: var(--warning);
   border: 1px solid var(--warning);
 }
+/* IMU 惯性推算态：GPS 丢失期间短时顶上，紫色 + 脉动醒目区分 */
+.gps-source.imu {
+  color: #A78BFA;
+  border: 1px solid #A78BFA;
+  animation: imuPulse 1.2s ease-in-out infinite;
+}
+@keyframes imuPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
 
 
