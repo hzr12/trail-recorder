@@ -408,8 +408,10 @@ class Storage {
   static TRAIL_META_KEY = 'trailcraft_trail_meta';
 
   static _TRAIL_MAGIC = 'CT1';
-  static _TRAIL_VERSION = 1;
+  // v2：头部扩为 12 字节（magic3 + version1 + 基准时间 Float64），点时间存相对基准毫秒
+  static _TRAIL_VERSION = 2;
   static _TRAIL_POINT_BYTES = 26;
+  static _TRAIL_HEADER_BYTES = 12;
 
   static _getMaxSize() {
     const engine = Storage._resolveEngine();
@@ -417,7 +419,7 @@ class Storage {
   }
 
   static _estimateSize(positions) {
-    return 4 + positions.length * Storage._TRAIL_POINT_BYTES;
+    return Storage._TRAIL_HEADER_BYTES + positions.length * Storage._TRAIL_POINT_BYTES;
   }
 
   static saveTrail(trail) {
@@ -736,15 +738,18 @@ class Storage {
       return new Promise((resolve, reject) => {
         const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readonly');
         const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
-        const results = [];
+        // 按 ids 索引位预置占位，onsuccess 按位回填：
+        // IndexedDB 不保证单事务内多个 get 的 onsuccess 顺序与发起顺序一致，
+        // 若直接 push 会导致 mergeTrails 的首尾拼接顺序错乱。
+        const results = new Array(ids.length).fill(null);
         const seen = new Set();
         const requests = ids.map((id) => store.get(id));
-        requests.forEach((request) => {
+        requests.forEach((request, idx) => {
           request.onsuccess = () => {
             const data = request.result;
             if (data && data.positions && data.positions.length > 0 && !seen.has(data.id)) {
               seen.add(data.id);
-              results.push({
+              results[idx] = {
                 id: data.id,
                 positions: data.positions,
                 name: data.name,
@@ -754,12 +759,12 @@ class Storage {
                 pointCount: data.pointCount,
                 duration: data.duration || 0,
                 cleaned: !!data.cleaned
-              });
+              };
             }
           };
           request.onerror = () => {};
         });
-        transaction.oncomplete = () => resolve(results);
+        transaction.oncomplete = () => resolve(results.filter(Boolean));
         transaction.onerror = (e) => reject(e.target.error);
       });
     }).catch(err => {
@@ -942,15 +947,20 @@ class Storage {
   static _encodeTrail(positions) {
     const n = positions.length;
     const PB = Storage._TRAIL_POINT_BYTES;
-    const bytes = new Uint8Array(4 + n * PB);
+    const HEAD = Storage._TRAIL_HEADER_BYTES;
+    const bytes = new Uint8Array(HEAD + n * PB);
     bytes[0] = 67; bytes[1] = 84; bytes[2] = 49;
     bytes[3] = Storage._TRAIL_VERSION;
     const dv = new DataView(bytes.buffer);
-    let o = 4;
+    const baseTime = n > 0 ? (Number(positions[0].time) || 0) : 0;
+    dv.setFloat64(4, baseTime, true);
+    let o = HEAD;
     for (const p of positions) {
       dv.setFloat64(o, Number(p.lat) || 0, true); o += 8;
       dv.setFloat64(o, Number(p.lng) || 0, true); o += 8;
-      dv.setUint32(o, Math.max(0, Math.floor((Number(p.time) || 0) / 1000)), true); o += 4;
+      // 点时间 = 相对基准毫秒偏移（uint32 上限 2^32 ms ≈ 49.7 天，远超单条会话轨迹跨度）
+      const t = Math.max(0, (Number(p.time) || 0) - baseTime);
+      dv.setUint32(o, Math.min(0xFFFFFFFF, Math.floor(t)), true); o += 4;
       dv.setUint16(o, Math.max(0, Math.min(65535, Math.round((Number(p.speed) || 0) * 100))), true); o += 2;
       const h = (((Number(p.heading) || 0) % 360) + 360) % 360;
       dv.setUint16(o, Math.max(0, Math.min(35999, Math.round(h * 100))), true); o += 2;
@@ -969,19 +979,25 @@ class Storage {
     const bytes = new Uint8Array(len);
     for (let i = 0; i < len; i++) bytes[i] = str.charCodeAt(i);
     if (bytes.length < 4 || bytes[0] !== 67 || bytes[1] !== 84 || bytes[2] !== 49) return null;
-    if (bytes[3] !== Storage._TRAIL_VERSION) {
-      console.warn('[Storage] 轨迹格式版本不兼容:', bytes[3], '（当前', Storage._TRAIL_VERSION, '）');
+    const ver = bytes[3];
+    if (ver !== 1 && ver !== 2) {
+      console.warn('[Storage] 轨迹格式版本不兼容:', ver, '（当前', Storage._TRAIL_VERSION, '）');
       return null;
     }
     const PB = Storage._TRAIL_POINT_BYTES;
     const dv = new DataView(bytes.buffer);
-    const count = Math.floor((len - 4) / PB);
+    // v1：4 字节头，点时间 = 绝对秒（×1000 转毫秒）；v2：12 字节头，含基准毫秒，点时间 = 基准 + 相对毫秒
+    const headerLen = ver === 2 ? Storage._TRAIL_HEADER_BYTES : 4;
+    if (bytes.length < headerLen) return null;
+    const baseTime = ver === 2 ? dv.getFloat64(4, true) : 0;
+    const count = Math.floor((len - headerLen) / PB);
     const positions = new Array(count);
-    let o = 4;
+    let o = headerLen;
     for (let i = 0; i < count; i++) {
       const lat = dv.getFloat64(o, true); o += 8;
       const lng = dv.getFloat64(o, true); o += 8;
-      const time = dv.getUint32(o, true) * 1000; o += 4;
+      const t = dv.getUint32(o, true); o += 4;
+      const time = ver === 2 ? baseTime + t : t * 1000;
       const speed = dv.getUint16(o, true) / 100; o += 2;
       const heading = dv.getUint16(o, true) / 100; o += 2;
       const accuracy = dv.getUint16(o, true); o += 2;

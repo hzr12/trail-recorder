@@ -685,6 +685,7 @@ class ImmFilter {
 
     // 交互混合工作区（单套，逐模型复用）
     this._cbar = new Float64Array(3);   // 转移预测概率 c̄_i = Σ_j T[i][j]·μ_j
+    this._cbarRaw = new Float64Array(3); // 未修正的 c̄_i（速度先验前），混合权重归一化用
     this._w = new Float64Array(3);      // 混合权重 μ_{j|i}
     this._mxs = new Float64Array(3);    // 混合状态 x̂⁰（x 轴）
     this._mys = new Float64Array(3);    // 混合状态 ŷ⁰（y 轴）
@@ -890,6 +891,11 @@ class ImmFilter {
       this._cbar[i] = T[i][0] * mu[0] + T[i][1] * mu[1] + T[i][2] * mu[2];
       if (!(this._cbar[i] > 0) || !isFinite(this._cbar[i])) this._cbar[i] = 1e-12;
     }
+    // 保存未修正的 c̄：速度先验只应影响模型概率更新（第 3 步），
+    // 混合权重（第 2 步）须用原始 c̄ 作分母，否则 Σ_j μ_{j|i} ≠ 1 导致混合状态/协方差比例偏差
+    this._cbarRaw[0] = this._cbar[0];
+    this._cbarRaw[1] = this._cbar[1];
+    this._cbarRaw[2] = this._cbar[2];
 
     // ── 1b. 速度辅助模型先验（软门控，可选）──
     // 纯位置观测下，低速静止时 STILL 的 S 仍由 R 主导（P 收缩受交互混合限制），
@@ -920,8 +926,8 @@ class ImmFilter {
 
     // ── 2. 逐模型：混合输入 → 预测 → 更新(Huber) → 对数似然 ──
     for (let m = 0; m < 3; m++) {
-      // 混合权重 μ_{j|i} = T[i][j]·μ_j / c̄_i
-      const ci = this._cbar[m];
+      // 混合权重 μ_{j|i} = T[i][j]·μ_j / c̄_i（用未修正 c̄ 归一，保证 Σ_j μ_{j|i} = 1）
+      const ci = this._cbarRaw[m];
       this._w[0] = T[m][0] * mu[0] / ci;
       this._w[1] = T[m][1] * mu[1] / ci;
       this._w[2] = T[m][2] * mu[2] / ci;

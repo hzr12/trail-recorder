@@ -508,7 +508,7 @@ class App {
       this._lastAltitude = pos.altitude;
       this._lastHeading = pos.heading;
       this._lastCalcPos = { lat: convPos.lat, lng: convPos.lng };
-      this._lastCalcTime = pos.timestamp || Date.now();
+      this._lastCalcTime = this.gpsManager.calibratedNow;
       this._lastAccuracy = pos.accuracy;
       this._recordFix(pos, convPos);
 
@@ -1049,7 +1049,7 @@ class App {
       if (pos.speed != null) {
         this._lastSpeed = pos.speed;
       } else if (this._lastCalcPos) {
-        const dt = (pos.timestamp || Date.now()) - this._lastCalcTime;
+        const dt = this.gpsManager.calibratedNow - this._lastCalcTime;
         if (dt > 100) {
           const dist = calcDistance(this._lastCalcPos, convPos);
           this._lastSpeed = dist / (dt / 1000);
@@ -1060,15 +1060,15 @@ class App {
       this._lastAltitude = pos.altitude;
       this._lastHeading = pos.heading;
       this._lastCalcPos = { lat: convPos.lat, lng: convPos.lng };
-      this._lastCalcTime = pos.timestamp || Date.now();
+      this._lastCalcTime = this.gpsManager.calibratedNow;
       this._lastAccuracy = pos.accuracy;
 
       this.myPosition = convPos;
       this.myPositionTime = Date.now();
       this._recordFix(pos, convPos);
 
-      // 静止自动暂停检查（仅手动开关开启时生效）
-      this._checkAutoPause(this._lastSpeed, pos.timestamp || Date.now());
+      // 静止自动暂停检查（仅手动开关开启时生效，统一用校准后时钟）
+      this._checkAutoPause(this._lastSpeed, this.gpsManager.calibratedNow);
 
       this._fetchWeather();
 

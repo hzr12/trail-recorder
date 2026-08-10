@@ -128,13 +128,14 @@ App.prototype._processBackgroundPosition = async function (pos) {
     this._lastAltitude = pos.altitude;
     this._lastHeading = pos.heading;
     this._lastCalcPos = { lat: convPos.lat, lng: convPos.lng };
-    this._lastCalcTime = pos.timestamp || Date.now();
+    this._lastCalcTime = this.gpsManager.calibratedNow;
     this.mapManager.setLocation(convPos, pos.accuracy, pos.heading);
 
     this._recordFix(pos, convPos, false, true);
 
     // 静止自动暂停检查（后台定位同样生效，仅手动开关开启时）
-    this._checkAutoPause(pos.speed, pos.timestamp || Date.now());
+    // 统一用校准后时钟：轨迹点 time 以 calibratedNow 为准，避免混用 GPS 原始时钟导致窗口判定偏差
+    this._checkAutoPause(pos.speed, this.gpsManager.calibratedNow);
 
     // 回放期间允许记录继续采集（并行模式）：记录轨迹线与回放路径分属不同 zIndex 层，互不遮挡
     if (this.trail.isRecording && !this.trail.isPaused && !this._trailLoading) {
