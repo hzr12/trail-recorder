@@ -90,14 +90,14 @@ class KalmanFilter {
    * - 速度启发式：低速静止漂移压狠（K 小）；高速机动残差天然大 → 放宽避免误伤正常机动
    * - 精度启发式：精度差时测量噪声大、标准化残差偏小 → 收紧阈值维持抑制能力
    * @param {number} speedFactor 速度因子（1~12，clamp(speed/0.5)，与动态 Q 共用）
-   * @param {number} accClamped 精度（clamp 1~100 米）
+   * @param {number} accClamped 精度（clamp 1~2000 米）
    * @returns {number} 实际 K（≤0 表示禁用 Huber，纯最小二乘）
    */
   _huberKFor(speedFactor, accClamped) {
     if (this._huberK <= 0) return 0; // 基准 0 → 禁用
     // 速度启发式：0.7 + 0.08·sf → 静止 0.78× 基准，高速 1.66× 基准
     let k = this._huberK * (0.7 + 0.08 * speedFactor);
-    // 精度启发式：acc=10m → 1.0，acc=100m → 0.64（下限 0.65），
+    // 精度启发式：acc=10m → 1.0，精度越差阈值越紧，约 100m 起触底 0.65 下限，
     // 即精度越差阈值越紧，避免「噪声大→标准化残差小→Huber 失效」
     const accFactor = 1 - 0.004 * Math.max(0, accClamped - 10);
     k *= Math.max(0.65, accFactor);
@@ -121,8 +121,8 @@ class KalmanFilter {
       this._lastFiltered = { lat: zLat, lng: zLng };
       return { lat: zLat, lng: zLng };
     }
-    if (accuracy > 200) {
-      // 精度极差（地下/信号遮挡）：测量坐标不可信，保持上次滤波输出（冻结），
+    if (accuracy > 2000) {
+      // 精度极差（>2000m，地下/信号遮挡）：测量坐标不可信，保持上次滤波输出（冻结），
       // 避免「init 重置 + 接受跳变测量」导致的轨迹被突然拉回又回去。
       // 实时显示位置暂停，但 _rawFixes 仍记录原始测量，结束记录后 RTS 离线平滑
       // 会用未来测量修正这段轨迹，最终落库的是修正后的路径。
@@ -157,7 +157,7 @@ class KalmanFilter {
     // 经参数扫描校准（5 次运行全过：静止 RMSE 2.3-2.9m ≤3.5；轨迹 RMSE
     // 3.4-3.8m < 1D 3.9-4.1m；重锚 40m/s 误差 40m <60m。原固定 sf=3 时
     // 高速场景速度收敛过慢 → 重锚误差 97.5m 超标）
-    const accClamped = Math.max(Math.min(accuracy || 10, 100), 1);
+    const accClamped = Math.max(Math.min(accuracy || 10, 2000), 1);
     const speedFactor = Math.min(12, Math.max(1, (speed || 0) / 0.5)); // 速度越快机动越强，q 越大
     const q = Math.max(0.1, (0.5 / accClamped) * speedFactor);
 
@@ -197,7 +197,7 @@ class KalmanFilter {
     this._Ppred[10] += q22; this._Ppred[15] += q22;  // 速度对角 (vx,vx),(vy,vy)
 
     // ── Update（更新）──
-    const sigma = Math.max(3, Math.min(accClamped, 100)); // 米
+    const sigma = Math.max(3, Math.min(accClamped, 2000)); // 米
     const r = sigma * sigma;
     // S = H·P⁻·Hᵀ + R（2×2：P 的位置块 + diag(r, r)）
     const s00 = this._Ppred[0] + r, s01 = this._Ppred[1],
@@ -315,7 +315,7 @@ class KalmanFilter {
    * 对整段原始测量序列做「前向滤波 + 反向递推」，利用未来测量修正历史状态，
    * 显著降低轨迹滞后与抖动（实时滤波的 RMSE 通常可再降 30~40%）。
    * 输入输出均为 WGS84 坐标；内部在局部米坐标系下运算，参考点取段首。
-   * 遇到时间断裂（dt≤0 或 >60s）、精度过差（>200m）或距段首超 3km 时自动分段，
+   * 遇到时间断裂（dt≤0 或 >60s）、精度过差（>2000m）或距段首超 3km 时自动分段，
    * 每段独立平滑后拼接（重锚/重置点即段边界）。
    * @param {Array<{lat:number,lng:number,time:number,accuracy?:number,speed?:number,ts?:*}>} fixes 原始测量序列（升序）
    * @returns {Array<{lat:number,lng:number,time:number,ts:*}>} 平滑后坐标（与输入等长）
@@ -337,7 +337,7 @@ class KalmanFilter {
         const ref = seg[0];
         const mx = (f.lng - ref.lng) * M_PER_DEG * Math.cos(ref.lat * DEG2RAD);
         const my = (f.lat - ref.lat) * M_PER_DEG;
-        const breakSeg = dt <= 0 || dt > 60 || (f.accuracy || 0) > 200 || Math.hypot(mx, my) > 3000;
+        const breakSeg = dt <= 0 || dt > 60 || (f.accuracy || 0) > 2000 || Math.hypot(mx, my) > 3000;
         if (breakSeg) { segments.push(seg); seg = []; }
       }
       seg.push(f);
@@ -393,7 +393,7 @@ class KalmanFilter {
       // 避免溢出/炸裂（正常路径 dt>0 完全不受影响）。
       if (!(dt > RTS_MIN_DT)) dt = RTS_MIN_DT;
       // 动态 q（与 update() 完全一致）
-      const accClamped = Math.max(Math.min(fixes[i].accuracy || 10, 100), 1);
+      const accClamped = Math.max(Math.min(fixes[i].accuracy || 10, 2000), 1);
       const speedFactor = Math.min(12, Math.max(1, (fixes[i].speed || 0) / 0.5));
       const q = Math.max(0.1, (0.5 / accClamped) * speedFactor);
       const dt2 = dt * dt, q2 = q * q;
@@ -437,7 +437,7 @@ class KalmanFilter {
       Pp.set(Ppred, i * 16);
 
       // Update：S、K 计算与 update() 一致
-      const sigma = Math.max(3, Math.min(accClamped, 100));
+      const sigma = Math.max(3, Math.min(accClamped, 2000));
       const r = sigma * sigma;
       const s00 = Ppred[0] + r, s01 = Ppred[1], s10 = Ppred[4], s11 = Ppred[5] + r;
       const det = s00 * s11 - s01 * s10;
@@ -659,7 +659,7 @@ class ImmFilter {
     this._accVar = C.IMM_ACC_VAR != null ? C.IMM_ACC_VAR : 4;
     this._reanchorM = C.IMM_REANCHOR_M != null ? C.IMM_REANCHOR_M : 3000;
     this._speedLimit = C.IMM_SPEED_LIMIT != null ? C.IMM_SPEED_LIMIT : 120;
-    this._freezeAcc = C.IMM_FREEZE_ACC != null ? C.IMM_FREEZE_ACC : 200;
+    this._freezeAcc = C.IMM_FREEZE_ACC != null ? C.IMM_FREEZE_ACC : 2000;
     this._likTemp = C.IMM_LIKELIHOOD_TEMP != null ? C.IMM_LIKELIHOOD_TEMP : 2.0;
     this._minProb = C.IMM_MIN_PROB != null ? C.IMM_MIN_PROB : 1e-6;
     // 速度辅助模型先验开关：用 GPS 上报 speed 修正转移预测概率 c̄。
@@ -831,9 +831,9 @@ class ImmFilter {
       my = (zLat - this._refLat) * M_PER_DEG;
     }
 
-    const accClamped = Math.max(Math.min(accuracy || 10, 100), 1);
+    const accClamped = Math.max(Math.min(accuracy || 10, 2000), 1);
     const speedFactor = Math.min(12, Math.max(1, (speed || 0) / 0.5));
-    const sigma = Math.max(3, Math.min(accClamped, 100)); // 米
+    const sigma = Math.max(3, Math.min(accClamped, 2000)); // 米
     const R = sigma * sigma;
     const hk = (this._lastHuberK = this._huberKFor(speedFactor, accClamped));
 
@@ -3049,7 +3049,7 @@ class GPSManager {
           // 会使 dt ≤ 0 触发滤波器重置，平滑被静默关闭
           const ts = now;
           const acc = pos.accuracy || 10;
-          // 精度差（>200m，地下/遮挡）也进 update()：内部改为冻结在最后可信位置，
+          // 精度差（>2000m，地下/遮挡）也进 update()：内部改为冻结在最后可信位置，
           // 不再重置+接受跳变测量（避免轨迹拉回又回去）。RTS 后处理修正地下段。
           const filtered = this._filter.update(pos.lat, pos.lng, acc, ts, pos.speed);
           pos.lat = filtered.lat;
@@ -3626,4 +3626,3 @@ class GPSManager {
     if (gga != null) return gga;
     return browserAltitude != null ? browserAltitude : null;
   }
-}
