@@ -649,7 +649,10 @@ class App {
           accuracy: location.accuracy,
           speed: location.speed,
           heading: location.bearing,
-          altitude: this.gpsManager._resolveAltitude(location.altitude),
+          altitude: this.gpsManager.filterAltitude(
+            this.gpsManager._resolveAltitude(location.altitude),
+            location.time
+          ),
           timestamp: location.time,
         });
       });
@@ -881,35 +884,46 @@ class App {
   }
 
   /**
-   * 对刚停止记录的轨迹做 RTS 离线平滑（结束记录时的后处理）
-   * 数据流：GPSManager._rawFixes（WGS84 原始测量）→ KalmanFilter.smoothTrail
-   * → 平滑 WGS84 → batchWgs84ToGcj02 → 按 ts 匹配写回 trail.positions。
+   * 对刚停止记录的轨迹做 3D RTS 离线平滑（结束记录时的后处理）
+   * 数据流：GPSManager._rawFixes（WGS84 原始测量）→ smoothTrailRts3d
+   * （水平 2D RTS + 海拔独立 1D RTS）→ 平滑 WGS84 → batchWgs84ToGcj02
+   * → 按 ts 匹配写回 trail.positions（含 altitude 回写）。
    * 匹配失败的点（如时间戳缺失）保留原值；无原始测量时静默跳过。
    */
   _applyTrailRtsSmoothing() {
     if (!this.gpsManager || !this.trail.positions || !this.trail.positions.length) return;
     try {
-      // 取走并清空原始测量缓冲（smoothTrailRts 内部已清空）
-      const smoothed = this.gpsManager.smoothTrailRts();
+      // 取走并清空原始测量缓冲（smoothTrailRts3d 内部已清空）。
+      // 水平走现有 2D RTS，海拔走独立 1D RTS（两者互不依赖），
+      // 返回元素含 alt 字段（海拔平滑结果，null 表示无海拔/缺口）。
+      const smoothed = this.gpsManager.smoothTrailRts3d();
       if (!smoothed || smoothed.length < 2) return;
-      // 平滑输出为 WGS84 → 批量转 GCJ02（同步手写算法）
+      // 平滑输出为 WGS84 → 批量转 GCJ02（同步手写算法）。
+      // 注意 batchWgs84ToGcj02 只映射 lat/lng，不保留 alt，需从 smoothed[i].alt 直接取。
       const gcj = this.mapManager.batchWgs84ToGcj02(smoothed);
       // 建立 ts → 平滑坐标 映射（ts 为原始 GPS 时间戳）
       const byTs = new Map();
       for (let i = 0; i < smoothed.length; i++) {
-        if (smoothed[i].ts != null) byTs.set(smoothed[i].ts, gcj[i]);
+        if (smoothed[i].ts != null) {
+          byTs.set(smoothed[i].ts, { lat: gcj[i].lat, lng: gcj[i].lng, alt: smoothed[i].alt });
+        }
       }
       let replaced = 0;
+      let replacedAlt = 0;
       for (const pt of this.trail.positions) {
         const smooth = byTs.get(pt.time);
         if (smooth) {
           pt.lat = smooth.lat;
           pt.lng = smooth.lng;
+          if (smooth.alt != null && Number.isFinite(smooth.alt)) {
+            pt.altitude = smooth.alt;
+            replacedAlt++;
+          }
           replaced++;
         }
       }
       if (CONFIG.DEBUG) {
-        console.log(`[RTS] 平滑 ${smoothed.length} 点，替换 ${replaced}/${this.trail.positions.length} 个轨迹点`);
+        console.log(`[RTS] 平滑 ${smoothed.length} 点，替换 ${replaced}/${this.trail.positions.length} 个轨迹点，含海拔 ${replacedAlt} 个`);
       }
       // 刷新地图轨迹线
       this.mapManager.setTrail(this._getTrailPositions());
