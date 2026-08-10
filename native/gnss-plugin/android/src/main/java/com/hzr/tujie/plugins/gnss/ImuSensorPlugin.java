@@ -226,6 +226,8 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
      * 部分机型只有前 3 分量，此时 w 由模长补齐。
      */
     private static JSArray rotationToJSArray(float[] values) {
+        // 平台保证 ROTATION_VECTOR 至少 3 分量；防御性检查，异常 ROM 返回空数组（安全降级）
+        if (values == null || values.length < 3) return new JSArray();
         double x = values[0], y = values[1], z = values[2];
         double w;
         if (values.length >= 4) {

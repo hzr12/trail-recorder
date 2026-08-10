@@ -356,22 +356,27 @@ public class GnssDataPlugin extends Plugin {
         }
     }
 
+    /**
+     * 用 new JSArray(Collection) 构造器（AOSP JSONArray(Collection) 不抛异常）替代 arr.put(Object)，
+     * 避免依赖 Capacitor 版本对 JSONArray.put(Object) throws JSONException 的覆盖行为
+     * （Capacitor 8.4.1 未覆盖 → 编译报 unreported exception；某些版本覆盖 → 编译通过）。
+     */
     private static JSArray satellitesToJSArray(List<GnssSatelliteInfo> sats) {
-        JSArray arr = new JSArray();
+        List<JSObject> objs = new ArrayList<>(sats.size());
         for (GnssSatelliteInfo sat : sats) {
-            arr.put(sat.toJSObject());
+            objs.add(sat.toJSObject());
         }
-        return arr;
+        return new JSArray(objs);
     }
 
     private static JSArray nmeaToJSArray(ArrayDeque<GnssNmeaData> nmeaQueue) {
-        JSArray arr = new JSArray();
+        List<JSObject> objs = new ArrayList<>(nmeaQueue.size());
         // 按时间倒序，最新的在前
         Object[] array = nmeaQueue.toArray();
         for (int i = array.length - 1; i >= 0; i--) {
-            arr.put(((GnssNmeaData) array[i]).toJSObject());
+            objs.add(((GnssNmeaData) array[i]).toJSObject());
         }
-        return arr;
+        return new JSArray(objs);
     }
 
     /** 计算参与定位的卫星数 */
