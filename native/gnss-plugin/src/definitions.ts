@@ -48,3 +48,40 @@ export interface GnssDataPlugin {
     nmea: GnssNmeaData[];
   }>;
 }
+
+export interface ImuSample {
+  /** 设备系线性加速度 X（m/s²，TYPE_LINEAR_ACCELERATION 已去重力） */
+  ax: number;
+  /** 设备系线性加速度 Y（m/s²） */
+  ay: number;
+  /** 设备系线性加速度 Z（m/s²） */
+  az: number;
+  /** 陀螺仪角速度 X（rad/s） */
+  gx: number;
+  /** 陀螺仪角速度 Y（rad/s） */
+  gy: number;
+  /** 陀螺仪角速度 Z（rad/s） */
+  gz: number;
+  /** 姿态四元数 [w,x,y,z]（设备系→ENU 世界系）；无姿态数据时为 [] */
+  rotation: number[];
+  /** 传感器时间戳（nanosecond） */
+  timestamp: number;
+}
+
+export interface ImuDataPlugin {
+  /**
+   * 开始监听 IMU 传感器（线性加速度 + 陀螺仪 + 旋转向量，25Hz）。
+   * 惯性传感器无需权限。
+   */
+  startImuListening(): Promise<void>;
+
+  /**
+   * 停止监听，释放传感器。
+   */
+  stopImuListening(): Promise<void>;
+
+  /**
+   * 获取最后一次缓存的 IMU 样本快照（事件流中断时兜底）。
+   */
+  getLastImuSample(): Promise<ImuSample>;
+}

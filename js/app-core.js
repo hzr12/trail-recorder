@@ -595,6 +595,13 @@ class App {
       Toast.show(' 电量恢复，已自动恢复追踪');
       this._startWatching();
     };
+    this.gpsManager.onDeadReckoningChange = (active) => {
+      if (active) {
+        Toast.show(' GPS 信号丢失，进入惯性推算');
+      } else if (this._isWatching) {
+        Toast.show(' GPS 信号恢复');
+      }
+    };
     this.gpsManager.startWatching();
 
     Toast.show(' 持续追踪已开启');
@@ -610,6 +617,7 @@ class App {
     this.gpsManager.onDowngrade = null;
     this.gpsManager.onRecovery = null;
     this.gpsManager.onRestoreTracking = null;
+    this.gpsManager.onDeadReckoningChange = null;
     this._hideSpeedChart();
     this._hideElevProfile();
 
