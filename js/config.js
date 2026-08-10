@@ -180,7 +180,7 @@ const CONFIG = {
   IMU_ACC_CLAMP: 30,               // 加速度幅值限幅（m/s²，防传感器粗差拖垮预测）
   IMU_MIN_FIXES: 3,                // 触发推算所需最少有效 GPS fix 数（确保有初速）
   IMU_SAT_MIN: 4,                  // 触发推算：参与定位卫星数上限（低于才可能推算）
-  IMU_ACC_FREEZE: 2000,            // 触发推算：accuracy 阈值（米，对齐 IMM_FREEZE_ACC）
+  IMU_ACC_FREEZE: 750,             // 触发推算：accuracy 阈值（米；低于 IMM_FREEZE_ACC=2000，精度显著恶化即提前介入推算，滤波本身仍在 2km 内正常更新）
   IMU_DEAD_RECKON_MAX_MS: 8000,    // 推算时长上限（纯积分漂移物理上限，超过强制回冻结）
   IMU_RECOVER_ACC: 100,            // 退出推算：accuracy 恢复阈值（米）
   IMU_RECOVER_SAT: 6,              // 退出推算：卫星数恢复阈值（滞回，高于触发阈值）
