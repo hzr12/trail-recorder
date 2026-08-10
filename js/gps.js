@@ -2047,6 +2047,26 @@ class GPSManager {
     return true;
   }
 
+  /**
+   * 超时看门狗兜底入口：GPS 彻底断信号（watchPosition 回调停止）时，位置回调里的
+   * _maybeEnterDeadReckoning 不再有机会执行，由 _startTimeoutWatch 在检测到超时后主动调用。
+   * 参考点取最近一次可信 fix（currentPosition），精度视为无限大（必然 >IMU_ACC_FREEZE）。
+   * 前置门槛与 _maybeEnterDeadReckoning 对齐，不满足时静默返回，不影响既有超时降级流程。
+   */
+  _tryEnterDeadReckoningFromTimeout() {
+    if (this._deadReckoning) return;
+    const pos = this.currentPosition;
+    if (!pos || !isFinite(pos.lat) || !isFinite(pos.lng)) return;
+    if (this._powerSaving) return;
+    if (!this._imuManager || !this._imuManager.hasData()) return;
+    if (!this._filter || typeof this._filter.predictOnly !== 'function') return;
+    if (this._fixCount < CONFIG.IMU_MIN_FIXES) return;
+    // 卫星仍充足 → 只是暂时性延迟，不进推算
+    if (this._gnssListeningStarted && this.gnssUsedCount >= CONFIG.IMU_SAT_MIN) return;
+    if (CONFIG.DEBUG) console.log('[GPS] 超时看门狗触发 IMU 航迹推算（watch 无回调）');
+    this._enterDeadReckoning(pos);
+  }
+
   /** 进入推算：锁定参考点、切 IMU 高频逐事件模式、通知 UI */
   _enterDeadReckoning(pos) {
     this._deadReckoning = true;
@@ -2842,6 +2862,10 @@ class GPSManager {
       if (elapsed > this._getCurrentTimeout()) {
         this._consecutiveTimeouts++;
         if (CONFIG.DEBUG) console.warn(`[GPS] 超时 #${this._consecutiveTimeouts}（${(elapsed / 1000).toFixed(0)}s 无新位置）`);
+        // ── IMU 推算兜底（阶段三补盲）：GPS 彻底断信号时 watchPosition 回调停止触发，
+        //    位置回调里的 _maybeEnterDeadReckoning 失去执行机会，改由超时看门狗主动触发。
+        //    不满足门槛（无 IMU 数据/省电/未达 fix 数/卫星仍充足）时静默跳过，不影响降级流程。
+        this._tryEnterDeadReckoningFromTimeout();
         if (!this._downgraded && this._consecutiveTimeouts >= CONFIG.GPS_TIMEOUT_MAX_FAILURES) {
           this._downgrade();
         }
