@@ -923,6 +923,7 @@ class GPSManager {
     // GNSS 插件（Capacitor 原生端卫星数据）
     this._gnssPlugin = null;       // Capacitor.Plugins.GnssData 引用
     this._gnssSatellites = [];     // GnssSatelliteInfo[]
+    this._satStatsCache = null;    // 卫星统计预计算缓存（见 _handleGnssSatellites）
     this._gnssInitError = null;    // 初始化失败原因
     this._gnssListeningStarted = false; // startGnss() 是否已调用
     this._gnssStarting = null;     // startGnss() 的 Promise，防止并发
@@ -1704,6 +1705,7 @@ class GPSManager {
     }
     this._gnssListeningStarted = false;
     this._gnssSatellites = [];
+    this._satStatsCache = null;
     this._gnssInitError = null;
     // 弱信号状态机依赖 GNSS 监听，监听已关闭 → 复位
     this._resetWeakSignalState();
@@ -1716,6 +1718,8 @@ class GPSManager {
    */
   _handleGnssSatellites(satellites) {
     this._gnssSatellites = satellites || [];
+    // 预计算卫星统计缓存：UI 轮询 getter 直接读缓存，避免每秒多次 filter/reduce
+    this._satStatsCache = this._computeSatStats(this._gnssSatellites);
     // 卫星数据变化 → 通知 UI（卫星天顶图等），即使监听未就绪也推送（用于隐藏空态）
     if (this.onSatellitesChange) this.onSatellitesChange(this._gnssSatellites);
     // 弱信号状态机仅在 GNSS 激活且无初始化错误时运行（异常状态不得误判弱信号）
@@ -1723,6 +1727,35 @@ class GPSManager {
     this._evaluateWeakSignal();
     // 卫星状态变化 → 重估定位源（节流内置）
     this._maybeEvaluateSource();
+  }
+
+  _computeSatStats(satellites) {
+    const stats = { used: 0, visible: 0, snrSum: 0, consts: { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 }, usedConsts: { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 } };
+    if (!satellites || satellites.length === 0) return stats;
+    for (const s of satellites) {
+      const c = s.constellation;
+      switch (c) {
+        case 'GPS': stats.consts.gps++; break;
+        case 'BEIDOU': stats.consts.beidou++; break;
+        case 'GLONASS': stats.consts.glonass++; break;
+        case 'GALILEO': stats.consts.galileo++; break;
+        default: stats.consts.other++; break;
+      }
+      if (s.usedInFix) {
+        stats.used++;
+        stats.snrSum += s.cn0DbHz || 0;
+        switch (c) {
+          case 'GPS': stats.usedConsts.gps++; break;
+          case 'BEIDOU': stats.usedConsts.beidou++; break;
+          case 'GLONASS': stats.usedConsts.glonass++; break;
+          case 'GALILEO': stats.usedConsts.galileo++; break;
+          default: stats.usedConsts.other++; break;
+        }
+      }
+    }
+    stats.visible = satellites.length;
+    stats.avgSnr = stats.used > 0 ? stats.snrSum / stats.used : 0;
+    return stats;
   }
 
   /**
@@ -2358,63 +2391,44 @@ class GPSManager {
   }
 
   /**
-   * 参与定位的卫星数
+   * 参与定位的卫星数（读预计算缓存）
    */
   get gnssUsedCount() {
-    return this._gnssSatellites.filter(s => s.usedInFix).length;
+    return this._satStatsCache ? this._satStatsCache.used : 0;
   }
 
   /**
-   * 可见卫星总数
+   * 可见卫星总数（读预计算缓存）
    */
   get gnssVisibleCount() {
-    return this._gnssSatellites.length;
+    return this._satStatsCache ? this._satStatsCache.visible : this._gnssSatellites.length;
   }
 
   /**
-   * 参与定位卫星的平均信噪比 (dB-Hz)
+   * 参与定位卫星的平均信噪比 (dB-Hz)（读预计算缓存）
    */
   get gnssAvgSnr() {
-    const used = this._gnssSatellites.filter(s => s.usedInFix);
-    if (used.length === 0) return 0;
-    return used.reduce((sum, s) => sum + s.cn0DbHz, 0) / used.length;
+    return this._satStatsCache ? this._satStatsCache.avgSnr : 0;
   }
 
   /**
-   * 按星座分组的卫星数量（所有可见卫星）
+   * 按星座分组的卫星数量（所有可见卫星，读预计算缓存）
    * @returns {{gps:number, beidou:number, glonass:number, galileo:number, other:number}}
    */
   get gnssConstellationStats() {
-    const stats = { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 };
-    for (const s of this._gnssSatellites) {
-      switch (s.constellation) {
-        case 'GPS':     stats.gps++; break;
-        case 'BEIDOU':  stats.beidou++; break;
-        case 'GLONASS': stats.glonass++; break;
-        case 'GALILEO': stats.galileo++; break;
-        default:        stats.other++; break;
-      }
-    }
-    return stats;
+    return this._satStatsCache
+      ? Object.assign({}, this._satStatsCache.consts)
+      : { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 };
   }
 
   /**
-   * 按星座分组的参与定位卫星数量
+   * 按星座分组的参与定位卫星数量（读预计算缓存）
    * @returns {{gps:number, beidou:number, glonass:number, galileo:number, other:number}}
    */
   get gnssUsedConstellationStats() {
-    const stats = { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 };
-    for (const s of this._gnssSatellites) {
-      if (!s.usedInFix) continue;
-      switch (s.constellation) {
-        case 'GPS':     stats.gps++; break;
-        case 'BEIDOU':  stats.beidou++; break;
-        case 'GLONASS': stats.glonass++; break;
-        case 'GALILEO': stats.galileo++; break;
-        default:        stats.other++; break;
-      }
-    }
-    return stats;
+    return this._satStatsCache
+      ? Object.assign({}, this._satStatsCache.usedConsts)
+      : { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 };
   }
 
   /**

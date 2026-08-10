@@ -47,6 +47,23 @@ const CONFIG = {
   STATUS_THROTTLE_MS: 2000,
   MIN_DISPLACEMENT_M: 5,
 
+  // ----- 速度曲线 / GPS 状态 UI -----
+  SPEED_HISTORY_MAX: 2500,     // 速度曲线历史样本上限
+  SPEED_CHART_WINDOW: 2500,    // 速度曲线图表显示窗口（与历史上限一致）
+
+  // ----- 后台定位（页面隐藏时）-----
+  BG_LOCATE_INTERVAL_NORMAL: 5000,    // 有电时后台定位间隔（ms）
+  BG_LOCATE_INTERVAL_POWER_SAVE: 20000, // 省电时后台定位间隔（ms）
+  NATIVE_BG_MIN_INTERVAL: 5000,       // 原生后台定位最小上报间隔（ms）
+
+  // ----- 轨迹视觉抽稀（map.js / replay.js 共用）-----
+  TRAIL_DECIMATE_MIN_ZOOM_LIMIT: 2000,   // zoom 抽稀下限（最低密度）
+  TRAIL_DECIMATE_MAX_ZOOM_LIMIT: 20000,  // zoom 抽稀上限（最高密度）
+  TRAIL_DECIMATE_ZOOM_BASE: 12,          // 密度随 zoom 增长基准
+  REPLAY_DECIMATE_MAX_POINTS: 4000,      // 回放路径视觉抽稀上限
+  THUMB_DECIMATE_MAX_POINTS: 6000,       // 缩略图/分享图抽稀上限
+  REPLAY_START_DELAY: 300,               // 列表点击回放后延迟启动（等面板切换动画）
+
   // ----- 轨迹 -----
   TRAIL_SAMPLE_MIN_DIST: 5,
   TRAIL_JITTER_FACTOR: 1.5,
@@ -154,11 +171,15 @@ const CONFIG = {
   TRAIL_STORAGE_ENGINE: 'auto',
 
   DB_NAME: 'trailcraft_db',
-  DB_VERSION: 1,
+  DB_VERSION: 2,
   DB_STORE_TRAIL: 'trail',
+  DB_STORE_META: 'trail_meta',
   DB_MAX_SIZE: 200 * 1024 * 1024,
 
   LS_MAX_SIZE: 5 * 1024 * 1024,
+
+  // 紧急快照 key：页面被强杀时 IndexedDB 异步写可能丢失，用 localStorage 同步兜底
+  TRAIL_EMERGENCY_KEY: 'trailcraft_emergency',
 
   // ----- Debug -----
   DEBUG: false,
@@ -296,4 +317,44 @@ function formatBeijing(ts, withDate = true) {
     ? { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
     : { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' };
   return d.toLocaleString('zh-CN', opt);
+}
+
+/**
+ * 本地时区日期时间格式化（单一来源：详情弹窗、统计弹窗、导出报告共用）。
+ * @param {number} ts 毫秒时间戳
+ * @param {Object} [opts]
+ * @param {boolean} [opts.withSeconds=false] 是否输出秒
+ * @param {boolean} [opts.shortDate=false] 短日期 "M/D"，否则 "YYYY-MM-DD"
+ * @returns {string} 如 "2026-08-10 14:30" 或 "8/10 14:30:05"
+ */
+function formatDateTime(ts, opts) {
+  const o = opts || {};
+  if (!ts) return '--';
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return '--';
+  const pad = (n) => String(n).padStart(2, '0');
+  const datePart = o.shortDate
+    ? `${d.getMonth() + 1}/${d.getDate()}`
+    : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const timePart = o.withSeconds
+    ? `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+    : `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${datePart} ${timePart}`;
+}
+
+/**
+ * 时长格式化（单一来源：详情弹窗、统计弹窗、导出报告共用）。
+ * "1:02:03" / "5:03" / "42秒"，与 formatDurationShort 的中文长格式互补。
+ * @param {number} ms 毫秒
+ * @returns {string}
+ */
+function formatDurationLong(ms) {
+  if (!ms || ms <= 0) return '--';
+  const s = Math.round(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  if (m > 0) return `${m}:${String(sec).padStart(2, '0')}`;
+  return `${sec}秒`;
 }

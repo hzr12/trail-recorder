@@ -61,19 +61,31 @@ class Storage {
 
       request.onupgradeneeded = (e) => {
         const db = e.target.result;
-        if (!db.objectStoreNames.contains(CONFIG.DB_STORE_TRAIL)) {
-          const store = db.createObjectStore(CONFIG.DB_STORE_TRAIL, { keyPath: 'id' });
-          store.createIndex('updatedAt', 'updatedAt', { unique: false });
+        const oldVersion = e.oldVersion;
+        // 增量升级：v0 → v1 创建轨迹 store
+        if (oldVersion < 1) {
+          if (!db.objectStoreNames.contains(CONFIG.DB_STORE_TRAIL)) {
+            const store = db.createObjectStore(CONFIG.DB_STORE_TRAIL, { keyPath: 'id' });
+            store.createIndex('updatedAt', 'updatedAt', { unique: false });
+          }
+        }
+        // v1 → v2 新增 meta store（列表只读 meta，不反序列化大 positions）
+        if (oldVersion < 2 && !db.objectStoreNames.contains(CONFIG.DB_STORE_META)) {
+          const meta = db.createObjectStore(CONFIG.DB_STORE_META, { keyPath: 'id' });
+          meta.createIndex('updatedAt', 'updatedAt', { unique: false });
         }
       };
 
       request.onsuccess = (e) => {
         Storage._db = e.target.result;
         Storage._dbInitialized = true;
-        Storage._migrateFromLocalStorage().catch(err => {
-          console.warn('[Storage] 数据迁移失败:', err.message);
-        });
-        resolve(Storage._db);
+        // 迁移纳入 init 链：确保 _initDB().then 拿到的是迁移完成后的库，
+        // 避免外部（loadTrail 等）在迁移完成前读到空数据
+        Storage._migrateFromLocalStorage(Storage._db)
+          .catch(err => {
+            console.warn('[Storage] 数据迁移失败:', err.message);
+          })
+          .then(() => resolve(Storage._db));
       };
 
       request.onerror = (e) => {
@@ -86,7 +98,7 @@ class Storage {
     return Storage._dbInitPromise;
   }
 
-  static _migrateFromLocalStorage() {
+  static _migrateFromLocalStorage(db) {
     return new Promise((resolve) => {
       try {
         const oldData = localStorage.getItem(Storage.TRAIL_KEY);
@@ -111,7 +123,11 @@ class Storage {
             pointCount: positions.length,
             sizeBytes: new Blob([oldData]).size
           };
-          Storage._saveToIndexedDB(trailData).then(() => {
+          // 直接用已打开的 db 写入，避免经 _initDB() 等待自身 resolve 造成死锁
+          const write = db
+            ? Storage._writeCurrentTrail(db, trailData)
+            : Storage._saveToIndexedDB(trailData);
+          write.then(() => {
             try {
               localStorage.removeItem(Storage.TRAIL_KEY);
               console.info('[Storage] 轨迹数据已迁移到 IndexedDB（', positions.length, '点）');
@@ -127,15 +143,19 @@ class Storage {
     });
   }
 
+  static _writeCurrentTrail(db, data) {
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readwrite');
+      const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
+      store.put(data);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = (e) => reject(e.target.error);
+    });
+  }
+
   static _saveToIndexedDB(data) {
     return Storage._initDB().then(db => {
-      return new Promise((resolve, reject) => {
-        const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readwrite');
-        const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
-        store.put(data);
-        transaction.oncomplete = () => resolve();
-        transaction.onerror = (e) => reject(e.target.error);
-      });
+      return Storage._writeCurrentTrail(db, data);
     });
   }
 
@@ -155,8 +175,9 @@ class Storage {
 
   static _indexedDBStore = {
     save(trail) {
-      if (!trail) return;
-      if ((!trail.positions || trail.positions.length === 0) && !trail.isRecording) return;
+      // 统一返回 Promise，保存完成 resolve，失败降级或 reject
+      if (!trail) return Promise.resolve(false);
+      if ((!trail.positions || trail.positions.length === 0) && !trail.isRecording) return Promise.resolve(false);
 
       const positions = trail.positions || [];
       let workingPositions = positions;
@@ -182,21 +203,19 @@ class Storage {
         isPaused: trail.isPaused || false
       };
 
-      Storage._saveToIndexedDB(trailData).catch(err => {
-        console.warn('[Storage] IndexedDB 保存失败:', err.message);
-        if (Storage._activeEngine === 'indexeddb' && CONFIG.TRAIL_STORAGE_ENGINE === 'auto' && !Storage._fallbackAttempted) {
-          console.info('[Storage] IndexedDB 失败，降级到 localStorage');
-          Storage._fallbackAttempted = true;
-          Storage._activeEngine = 'localstorage';
-          try {
-            Storage._localStorageStore.save(trail);
-          } catch (e) {
-            console.warn('[Storage] localStorage 降级保存也失败:', e.message);
+      return Storage._saveToIndexedDB(trailData)
+        .then(() => true)
+        .catch(err => {
+          console.warn('[Storage] IndexedDB 保存失败:', err.message);
+          if (Storage._activeEngine === 'indexeddb' && CONFIG.TRAIL_STORAGE_ENGINE === 'auto' && !Storage._fallbackAttempted) {
+            console.info('[Storage] IndexedDB 失败，降级到 localStorage');
+            Storage._fallbackAttempted = true;
+            Storage._activeEngine = 'localstorage';
+            return Storage._localStorageStore.save(trail);
           }
-        } else {
           try { Toast.show('轨迹保存失败：本地存储空间不足'); } catch (_) {}
-        }
-      });
+          return false;
+        });
     },
 
     load() {
@@ -247,8 +266,9 @@ class Storage {
 
   static _localStorageStore = {
     save(trail) {
-      if (!trail) return;
-      if ((!trail.positions || trail.positions.length === 0) && !trail.isRecording) return;
+      // 统一返回 Promise，保存成功 resolve(true)
+      if (!trail) return Promise.resolve(false);
+      if ((!trail.positions || trail.positions.length === 0) && !trail.isRecording) return Promise.resolve(false);
 
       const positions = trail.positions || [];
       let workingPositions = positions;
@@ -264,12 +284,12 @@ class Storage {
         localStorage.setItem(Storage.TRAIL_META_KEY, meta);
       } catch (_) {}
 
-      if (positions.length === 0) return;
+      if (positions.length === 0) return Promise.resolve(true);
 
       const encoded = Storage._encodeTrail(workingPositions);
       try {
         localStorage.setItem(Storage.TRAIL_KEY, encoded);
-        return;
+        return Promise.resolve(true);
       } catch (e) {
         if (e.name === 'QuotaExceededError' || e.code === 22) {
           const ratio = maxSize / estimatedSize;
@@ -281,7 +301,7 @@ class Storage {
           try {
             const encodedHalf = Storage._encodeTrail(workingPositions);
             localStorage.setItem(Storage.TRAIL_KEY, encodedHalf);
-            return;
+            return Promise.resolve(true);
           } catch (e2) {
             console.warn('[Storage] localStorage 抽稀保存也失败:', e2.message);
           }
@@ -293,13 +313,14 @@ class Storage {
           console.info('[Storage] localStorage 失败，回退到 IndexedDB');
           Storage._fallbackAttempted = true;
           Storage._activeEngine = 'indexeddb';
-          Storage._indexedDBStore.save(trail).catch(err => {
+          return Storage._indexedDBStore.save(trail).catch(err => {
             console.warn('[Storage] IndexedDB 降级保存也失败:', err.message);
+            return false;
           });
-          return;
         }
 
         try { Toast.show('轨迹保存失败：本地存储空间不足，建议切换存储引擎'); } catch (_) {}
+        return Promise.resolve(false);
       }
     },
 
@@ -401,7 +422,8 @@ class Storage {
 
   static saveTrail(trail) {
     const store = Storage._getActiveStore();
-    store.save(trail);
+    // 统一 Promise 接口：IndexedDB 与 localStorage 引擎均返回 Promise
+    return Promise.resolve(store.save(trail));
   }
 
   static loadTrail() {
@@ -485,18 +507,30 @@ class Storage {
     const duration = Storage._calcDuration(positions);
     const now = Date.now();
     const o = opts || {};
-    const trailMeta = {
+    const meta = {
       id,
       name: name || Storage._fmtTrailName(now),
       createdAt: now,
+      updatedAt: now,
       distance,
       duration,
       pointCount: positions.length,
       favorite: !!favorite,
-      ...(o.cleaned ? { cleaned: true } : {}),
-      positions
+      ...(o.cleaned ? { cleaned: true } : {})
     };
-    return Storage._saveToIndexedDB(trailMeta).then(() => id).catch(err => {
+    const trailData = Object.assign({}, meta, { positions });
+    // 同时写 meta store（列表只读 meta，避免每次反序列化大 positions）+ trail store（完整数据）
+    return Storage._initDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction([CONFIG.DB_STORE_TRAIL, CONFIG.DB_STORE_META], 'readwrite');
+        transaction.objectStore(CONFIG.DB_STORE_TRAIL).put(trailData);
+        if (db.objectStoreNames.contains(CONFIG.DB_STORE_META)) {
+          transaction.objectStore(CONFIG.DB_STORE_META).put(meta);
+        }
+        transaction.oncomplete = () => resolve(id);
+        transaction.onerror = (e) => reject(e.target.error);
+      });
+    }).catch(err => {
       console.warn('[Storage] 轨迹列表保存失败:', err.message);
       return null;
     });
@@ -504,37 +538,99 @@ class Storage {
 
   static loadTrailList() {
     return Storage._initDB().then(db => {
-      return new Promise((resolve, reject) => {
-        const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readonly');
-        const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
-        const results = [];
-        const request = store.openCursor();
-        request.onsuccess = (e) => {
-          const cursor = e.target.result;
-          if (cursor) {
-            const val = cursor.value;
-            if (val && val.id && val.id.startsWith(Storage._TRAIL_LIST_PREFIX)) {
-              results.push({
-                id: val.id,
-                name: val.name,
-                createdAt: val.createdAt,
-                distance: val.distance,
-                duration: val.duration || 0,
-                pointCount: val.pointCount,
-                favorite: !!val.favorite
-              });
-            }
-            cursor.continue();
-          } else {
-            results.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-            resolve(results);
-          }
-        };
-        request.onerror = (e) => reject(e.target.error);
-      });
+      // v2+ 优先读 meta store：只含 meta，不反序列化大 positions
+      if (db.objectStoreNames.contains(CONFIG.DB_STORE_META)) {
+        return Storage._loadTrailListFromMeta(db);
+      }
+      // 旧库（v1）回退：遍历 trail store 提取 meta，并在返回后懒迁移到 meta store
+      return Storage._loadTrailListFromTrail(db);
     }).catch(err => {
       console.warn('[Storage] 加载轨迹列表失败:', err.message);
       return [];
+    });
+  }
+
+  static _loadTrailListFromMeta(db) {
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(CONFIG.DB_STORE_META, 'readonly');
+      const store = transaction.objectStore(CONFIG.DB_STORE_META);
+      const results = [];
+      // updatedAt 索引倒序，免内存排序
+      const request = store.index('updatedAt').openCursor(null, 'prev');
+      request.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (cursor) {
+          const val = cursor.value;
+          if (val && val.id && val.id.startsWith(Storage._TRAIL_LIST_PREFIX)) {
+            results.push({
+              id: val.id,
+              name: val.name,
+              createdAt: val.createdAt,
+              distance: val.distance,
+              duration: val.duration || 0,
+              pointCount: val.pointCount,
+              favorite: !!val.favorite
+            });
+          }
+          cursor.continue();
+        } else {
+          resolve(results);
+        }
+      };
+      request.onerror = (e) => reject(e.target.error);
+    });
+  }
+
+  static _loadTrailListFromTrail(db) {
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readonly');
+      const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
+      const results = [];
+      const toMigrate = [];
+      const request = store.openCursor();
+      request.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (cursor) {
+          const val = cursor.value;
+          if (val && val.id && val.id.startsWith(Storage._TRAIL_LIST_PREFIX)) {
+            const meta = {
+              id: val.id,
+              name: val.name,
+              createdAt: val.createdAt,
+              updatedAt: val.updatedAt || val.createdAt,
+              distance: val.distance,
+              duration: val.duration || 0,
+              pointCount: val.pointCount,
+              favorite: !!val.favorite
+            };
+            results.push(meta);
+            toMigrate.push(meta);
+          }
+          cursor.continue();
+        } else {
+          results.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          resolve(results);
+          // 懒迁移：把旧库轨迹 meta 补写进 meta store（后台异步，不阻塞返回）
+          if (toMigrate.length > 0) {
+            Storage._migrateMeta(toMigrate).catch(err => {
+              if (CONFIG.DEBUG) console.warn('[Storage] meta 懒迁移失败:', err.message);
+            });
+          }
+        }
+      };
+      request.onerror = (e) => reject(e.target.error);
+    });
+  }
+
+  static _migrateMeta(metaList) {
+    return Storage._initDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CONFIG.DB_STORE_META, 'readwrite');
+        const store = transaction.objectStore(CONFIG.DB_STORE_META);
+        metaList.forEach((m) => store.put(m));
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = (e) => reject(e.target.error);
+      });
     });
   }
 
@@ -571,8 +667,40 @@ class Storage {
 
   static loadTrailsByIds(ids) {
     if (!ids || ids.length === 0) return Promise.resolve([]);
-    return Promise.all(ids.map((id) => Storage.loadTrailById(id))).then((list) => {
-      return list.filter((d) => d && d.positions && d.positions.length > 0);
+    // 单事务批量读取：N 条轨迹一次事务，避免 N 次事务往返
+    return Storage._initDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readonly');
+        const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
+        const results = [];
+        const seen = new Set();
+        const requests = ids.map((id) => store.get(id));
+        requests.forEach((request, i) => {
+          request.onsuccess = () => {
+            const data = request.result;
+            if (data && data.positions && data.positions.length > 0 && !seen.has(data.id)) {
+              seen.add(data.id);
+              results.push({
+                id: data.id,
+                positions: data.positions,
+                name: data.name,
+                favorite: !!data.favorite,
+                createdAt: data.createdAt,
+                distance: data.distance,
+                pointCount: data.pointCount,
+                duration: data.duration || 0,
+                cleaned: !!data.cleaned
+              });
+            }
+          };
+          request.onerror = () => {};
+        });
+        transaction.oncomplete = () => resolve(results);
+        transaction.onerror = (e) => reject(e.target.error);
+      });
+    }).catch(err => {
+      console.warn('[Storage] 批量加载轨迹失败:', err.message);
+      return [];
     });
   }
 
@@ -604,9 +732,14 @@ class Storage {
   static deleteTrail(id) {
     return Storage._initDB().then(db => {
       return new Promise((resolve, reject) => {
-        const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readwrite');
-        const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
-        store.delete(id);
+        const stores = db.objectStoreNames.contains(CONFIG.DB_STORE_META)
+          ? [CONFIG.DB_STORE_TRAIL, CONFIG.DB_STORE_META]
+          : [CONFIG.DB_STORE_TRAIL];
+        const transaction = db.transaction(stores, 'readwrite');
+        transaction.objectStore(CONFIG.DB_STORE_TRAIL).delete(id);
+        if (db.objectStoreNames.contains(CONFIG.DB_STORE_META)) {
+          transaction.objectStore(CONFIG.DB_STORE_META).delete(id);
+        }
         transaction.oncomplete = () => resolve(true);
         transaction.onerror = (e) => reject(e.target.error);
       });
@@ -619,7 +752,10 @@ class Storage {
   static renameTrail(id, name) {
     return Storage._initDB().then(db => {
       return new Promise((resolve, reject) => {
-        const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readwrite');
+        const stores = db.objectStoreNames.contains(CONFIG.DB_STORE_META)
+          ? [CONFIG.DB_STORE_TRAIL, CONFIG.DB_STORE_META]
+          : [CONFIG.DB_STORE_TRAIL];
+        const transaction = db.transaction(stores, 'readwrite');
         const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
         const request = store.get(id);
         request.onsuccess = () => {
@@ -627,8 +763,23 @@ class Storage {
           if (data) {
             data.name = name;
             store.put(data);
+            if (db.objectStoreNames.contains(CONFIG.DB_STORE_META)) {
+              const metaStore = transaction.objectStore(CONFIG.DB_STORE_META);
+              const metaReq = metaStore.get(id);
+              metaReq.onsuccess = () => {
+                const meta = metaReq.result;
+                if (meta) {
+                  meta.name = name;
+                  meta.updatedAt = Date.now();
+                  metaStore.put(meta);
+                }
+              };
+            }
+            transaction.oncomplete = () => resolve(true);
+          } else {
+            // id 不存在：如实返回 false，避免调用方误以为重命名成功
+            transaction.oncomplete = () => resolve(false);
           }
-          transaction.oncomplete = () => resolve(true);
         };
         transaction.onerror = (e) => reject(e.target.error);
       });
@@ -641,7 +792,10 @@ class Storage {
   static toggleFavorite(id) {
     return Storage._initDB().then(db => {
       return new Promise((resolve, reject) => {
-        const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readwrite');
+        const stores = db.objectStoreNames.contains(CONFIG.DB_STORE_META)
+          ? [CONFIG.DB_STORE_TRAIL, CONFIG.DB_STORE_META]
+          : [CONFIG.DB_STORE_TRAIL];
+        const transaction = db.transaction(stores, 'readwrite');
         const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
         const request = store.get(id);
         request.onsuccess = () => {
@@ -649,6 +803,18 @@ class Storage {
           if (!data) { resolve(false); return; }
           data.favorite = !data.favorite;
           store.put(data);
+          if (db.objectStoreNames.contains(CONFIG.DB_STORE_META)) {
+            const metaStore = transaction.objectStore(CONFIG.DB_STORE_META);
+            const metaReq = metaStore.get(id);
+            metaReq.onsuccess = () => {
+              const meta = metaReq.result;
+              if (meta) {
+                meta.favorite = data.favorite;
+                meta.updatedAt = Date.now();
+                metaStore.put(meta);
+              }
+            };
+          }
           transaction.oncomplete = () => resolve(data.favorite);
         };
         request.onerror = (e) => reject(e.target.error);
@@ -669,7 +835,10 @@ class Storage {
     if (!id || !patch || typeof patch !== 'object') return Promise.resolve(false);
     return Storage._initDB().then(db => {
       return new Promise((resolve, reject) => {
-        const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readwrite');
+        const stores = db.objectStoreNames.contains(CONFIG.DB_STORE_META)
+          ? [CONFIG.DB_STORE_TRAIL, CONFIG.DB_STORE_META]
+          : [CONFIG.DB_STORE_TRAIL];
+        const transaction = db.transaction(stores, 'readwrite');
         const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
         const request = store.get(id);
         request.onsuccess = () => {
@@ -677,6 +846,22 @@ class Storage {
           if (!data) { resolve(false); return; }
           Object.assign(data, patch);
           store.put(data);
+          // 同步 meta store：仅拷贝元数据字段，避免把大 positions 写入 meta
+          if (db.objectStoreNames.contains(CONFIG.DB_STORE_META)) {
+            const metaStore = transaction.objectStore(CONFIG.DB_STORE_META);
+            const metaReq = metaStore.get(id);
+            metaReq.onsuccess = () => {
+              const meta = metaReq.result;
+              if (meta) {
+                const META_FIELDS = ['name', 'distance', 'duration', 'pointCount', 'favorite', 'cleaned'];
+                META_FIELDS.forEach((k) => {
+                  if (patch[k] !== undefined) meta[k] = patch[k];
+                });
+                meta.updatedAt = Date.now();
+                metaStore.put(meta);
+              }
+            };
+          }
           transaction.oncomplete = () => resolve(true);
           transaction.onerror = (e) => reject(e.target.error);
         };

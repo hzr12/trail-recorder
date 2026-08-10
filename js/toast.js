@@ -26,11 +26,14 @@ class Toast {
       toast.classList.add('show');
     });
 
-    const ms = duration || CONFIG.DEFAULT_TOAST_DURATION;
-    toast._removalTimer = setTimeout(() => {
-      toast.classList.remove('show');
-      setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
-    }, ms);
+    // 显式传 0（不自动关闭）必须生效，仅 null/undefined 回退默认值
+    const ms = duration ?? CONFIG.DEFAULT_TOAST_DURATION;
+    if (ms > 0) {
+      toast._removalTimer = setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
+      }, ms);
+    }
   }
 
   /**
@@ -72,17 +75,20 @@ class Toast {
         toast.classList.remove('show');
         setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
       } catch (_) {
-        Toast.show(' 撤销失败');
+        Toast.show('撤销失败');
         undoBtn.disabled = false;
         undoBtn.textContent = '撤销';
       }
     });
 
-    const ms = duration || 5000;
-    const autoTimer = setTimeout(() => {
-      toast.classList.remove('show');
-      setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
-    }, ms);
-    toast._removalTimer = autoTimer;
+    const ms = duration ?? 5000;
+    // 显式传 0 表示不自动关闭
+    if (ms > 0) {
+      const autoTimer = setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
+      }, ms);
+      toast._removalTimer = autoTimer;
+    }
   }
 }

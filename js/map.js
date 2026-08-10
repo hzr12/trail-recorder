@@ -274,8 +274,15 @@ class MapManager {
 
   /**
    * 创建我的位置标记图标（蓝色实心圆点）
+   * 按 heading 取整到 5° 缓存 MarkerImage：定位 marker 高频刷新时避免每帧重建 SVG/解码开销
    */
   _createLocationIcon(heading) {
+    const key = (heading != null && !isNaN(heading))
+      ? `h${Math.round(heading / 5) * 5}`
+      : 'none';
+    if (!this._locIconCache) this._locIconCache = {};
+    if (this._locIconCache[key]) return this._locIconCache[key];
+
     const arrow = (heading != null && !isNaN(heading))
       ? `<polygon points="20,2 23,10 17,10" fill="#00A3FF" transform="rotate(${heading}, 20, 20)"/>`
       : '';
@@ -296,13 +303,14 @@ class MapManager {
 
     const dataUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
 
-    return new qq.maps.MarkerImage(
+    this._locIconCache[key] = new qq.maps.MarkerImage(
       dataUri,
       new qq.maps.Size(40, 40),
       new qq.maps.Point(0, 0),
       new qq.maps.Point(20, 20),
       new qq.maps.Size(40, 40)
     );
+    return this._locIconCache[key];
   }
 
   /**
@@ -464,7 +472,12 @@ class MapManager {
         if (typeof z === 'number') zoom = z;
       } catch (_) {}
     }
-    return Math.round(Math.min(20000, Math.max(2000, 2000 * Math.pow(2, zoom - 12))));
+    return Math.round(Math.min(
+      CONFIG.TRAIL_DECIMATE_MAX_ZOOM_LIMIT,
+      Math.max(CONFIG.TRAIL_DECIMATE_MIN_ZOOM_LIMIT,
+        CONFIG.TRAIL_DECIMATE_MIN_ZOOM_LIMIT * Math.pow(2, zoom - CONFIG.TRAIL_DECIMATE_ZOOM_BASE))
+      )
+    );
   }
 
   /**
@@ -492,7 +505,12 @@ class MapManager {
     if (out[out.length - 1] !== positions[n - 1]) {
       out.push(positions[n - 1]);
     }
+    // 限容：最多保留 3 条抽稀结果，超限淘汰最旧，避免缓存随大轨迹无限膨胀
     this._decimateCache.set(positions, { limit, points: out });
+    if (this._decimateCache.size > 3) {
+      const oldest = this._decimateCache.keys().next().value;
+      this._decimateCache.delete(oldest);
+    }
     return out;
   }
 
@@ -798,10 +816,10 @@ class MapManager {
     }
     this.clearTrail();
     // 视觉抽稀：主题切换是低频全量重绘，为保持与正常显示（setTrail 增量场景全量点）几何完全一致，
-    // 抽稀上限固定取 _getZoomLimit() 的最大值 20000（即最高 zoom 的显示密度）。
+    // 抽稀上限固定取 _getZoomLimit() 的最大值（即最高 zoom 的显示密度）。
     // 若沿用 _getZoomLimit()（zoom 较小时仅 2000 点），弯折密集区的点会被抽掉，
-    // 导致"切换主题后线段弯折位置/角度与切换前不同"。仅超大轨迹（>20000 点）才抽稀保性能。
-    const limit = 20000;
+    // 导致"切换主题后线段弯折位置/角度与切换前不同"。仅超大轨迹才抽稀保性能。
+    const limit = CONFIG.TRAIL_DECIMATE_MAX_ZOOM_LIMIT;
     if (positions.length > limit) {
       positions = this._decimateTrail(positions, limit);
     }
@@ -959,8 +977,8 @@ class MapManager {
     if (!positions || positions.length < 2) return canvas;
     const o = opts || {};
     // 视觉抽稀：超大轨迹先抽稀再投影/绘制，避免逐点三角函数与逐段 canvas 绘制卡死
-    if (positions.length > 6000) {
-      positions = this._decimateTrail(positions, 6000);
+    if (positions.length > CONFIG.THUMB_DECIMATE_MAX_POINTS) {
+      positions = this._decimateTrail(positions, CONFIG.THUMB_DECIMATE_MAX_POINTS);
     }
     const W = canvas.width;
     const H = canvas.height;
@@ -1581,6 +1599,38 @@ class MapManager {
     if (this._resizeHandler) {
       window.removeEventListener('resize', this._resizeHandler);
       this._resizeHandler = null;
+    }
+    // 清理定时器 / 动画帧 / 缓存，避免销毁后仍有任务运行与内存滞留
+    if (this._zoomDecimateTimer) {
+      clearTimeout(this._zoomDecimateTimer);
+      this._zoomDecimateTimer = null;
+    }
+    if (this._themeRefreshRaf) {
+      cancelAnimationFrame(this._themeRefreshRaf);
+      this._themeRefreshRaf = null;
+    }
+    if (this._rafId) {
+      cancelAnimationFrame(this._rafId);
+      this._rafId = null;
+    }
+    if (this._overlayRafId) {
+      cancelAnimationFrame(this._overlayRafId);
+      this._overlayRafId = null;
+    }
+    if (this._tileCache) {
+      this._tileCache.clear();
+      this._tileCache = null;
+    }
+    if (this._decimateCache) {
+      this._decimateCache.clear();
+      this._decimateCache = null;
+    }
+    if (this._coordCache) {
+      this._coordCache.clear();
+      this._coordCache = null;
+    }
+    if (this._locIconCache) {
+      this._locIconCache = null;
     }
     this._stopLocationAnim();
     this.clearTrail();

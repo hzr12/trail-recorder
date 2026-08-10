@@ -54,9 +54,13 @@ App.prototype._hideElevProfile = function () {
 };
 
 App.prototype._initSpeedChart = function () {
-  if (this._speedChart) return;
   const canvas = document.getElementById('speed-chart-canvas');
   if (!canvas || typeof Chart === 'undefined') return;
+  // 重建前销毁旧实例：面板重建/重复初始化时 canvas 被替换，残留 Chart 会引用已移除的 canvas
+  if (this._speedChart) {
+    try { this._speedChart.destroy(); } catch (e) {}
+    this._speedChart = null;
+  }
   const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
   const gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
   const textColor = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
@@ -96,13 +100,20 @@ App.prototype._initSpeedChart = function () {
   });
 };
 
+App.prototype._destroySpeedChart = function () {
+  if (this._speedChart) {
+    try { this._speedChart.destroy(); } catch (e) {}
+    this._speedChart = null;
+  }
+};
+
 App.prototype._updateSpeedChart = function () {
   if (!this._speedChart) return;
   const now = Date.now();
   if (this._lastChartUpdate && (this._speedHistory.length % 5 !== 0) && now - this._lastChartUpdate < 30000) return;
   this._lastChartUpdate = now;
   const data = this._speedChart.data.datasets[0].data;
-  const win = this._speedHistory.slice(-2500);
+  const win = this._speedHistory.slice(-CONFIG.SPEED_CHART_WINDOW);
   data.length = 0;
   for (const p of win) data.push(p);
   this._speedChart.update('none');

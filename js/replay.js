@@ -68,8 +68,8 @@ class TrailPlayer {
 
     // 回放视觉抽稀：超大数据量轨迹对「路径绘制」抽稀，显著降低每帧 slice/分段/建 polyline 开销；
     // marker 位置插值仍用全量 positions（保证精确），仅路径线用抽稀点。
-    if (this.mapManager && this.positions.length > 4000) {
-      this._renderPositions = this.mapManager._decimateTrail(this.positions, 4000);
+    if (this.mapManager && this.positions.length > CONFIG.REPLAY_DECIMATE_MAX_POINTS) {
+      this._renderPositions = this.mapManager._decimateTrail(this.positions, CONFIG.REPLAY_DECIMATE_MAX_POINTS);
     } else {
       this._renderPositions = this.positions;
     }
@@ -140,6 +140,12 @@ class TrailPlayer {
 
   _setupMapMarkers() {
     if (!this.mapManager.map) return;
+    if (!this.positions || this.positions.length === 0) {
+      // 空数组守卫：无回放点时不创建 marker，避免 this.positions[0] 抛 TypeError
+      this._hasPositions = false;
+      return;
+    }
+    this._hasPositions = true;
 
     // 初始箭头指向第二个点（若无则朝北）
     const initHeading = this.positions.length >= 2

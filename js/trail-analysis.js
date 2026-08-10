@@ -36,6 +36,41 @@ const TrailAnalysis = {
    * 速度等级 → 时速上限文案（如 bus → "≤60km/h"，最高档 → ">350km/h"）
    * 用于分段标签：以时速上限替代交通方式名（如"公交"）
    */
+  /**
+   * 计算一组轨迹点的核心统计（单一来源：详情/统计/清洗/分享/实时统计卡共用）
+   * @param {Array} positions 轨迹点数组
+   * @returns {{distance:number, durationMs:number, points:number, maxSpeed:number, hasSpeed:boolean, avgSpeed:number}}
+   */
+  calcStats(positions) {
+    const result = { distance: 0, durationMs: 0, points: 0, maxSpeed: 0, hasSpeed: false, avgSpeed: 0 };
+    if (!positions || positions.length === 0) return result;
+    result.points = positions.length;
+    let distance = 0;
+    const first = positions[0];
+    const last = positions[positions.length - 1];
+    if (first && last && first.time && last.time && last.time > first.time) {
+      result.durationMs = last.time - first.time;
+    }
+    for (let i = 1; i < positions.length; i++) {
+      const p0 = positions[i - 1];
+      const p1 = positions[i];
+      if (!p0 || !p1) continue;
+      distance += calcDistance(p0, p1);
+      const sp = p1.speed != null ? p1.speed : 0;
+      if (sp > result.maxSpeed) {
+        result.maxSpeed = sp;
+        result.hasSpeed = true;
+      }
+    }
+    if (positions.length === 1 && positions[0].speed != null && positions[0].speed > 0) {
+      result.maxSpeed = positions[0].speed;
+      result.hasSpeed = true;
+    }
+    result.distance = distance;
+    result.avgSpeed = result.durationMs > 0 ? distance / (result.durationMs / 1000) : 0;
+    return result;
+  },
+
   modeSpeedLimit(mode) {
     const levels = this.SPEED_LEVELS;
     const idx = levels.findIndex((s) => s.mode === mode);
@@ -59,10 +94,11 @@ const TrailAnalysis = {
   },
 
   // 用位移/时间推算即时速度（旧数据可能缺 speed 或为 0）
+  // 时间戳乱序/回拨（dt <= 0）时返回 null：不参与统计，避免被误判为"步行"档
   _calcInstantSpeed(p0, p1) {
     const dist = calcDistance(p0, p1);
     const dt = (p1.time || 0) - (p0.time || 0);
-    if (dt <= 0) return 0;
+    if (dt <= 0) return null;
     return dist / (dt / 1000);
   },
 
@@ -84,7 +120,9 @@ const TrailAnalysis = {
       const p = positions[i];
       let speed = (p.speed != null && p.speed > 0) ? p.speed : 0;
       if (speed <= 0) {
-        speed = this._calcInstantSpeed(positions[i - 1], p);
+        const calc = this._calcInstantSpeed(positions[i - 1], p);
+        // 负 dt（时间戳乱序/回拨）返回 null：跳过该点对，不更新最高速
+        if (calc != null) speed = calc;
       }
       if (speed > maxSpeed) {
         maxSpeed = speed;

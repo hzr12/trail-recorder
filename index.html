@@ -251,7 +251,7 @@
               <option value="duration">时长</option>
               <option value="points">点数</option>
             </select>
-            <button class="header-btn" id="batch-select-all" title="全选当前">全选当前</button>
+            <button class="header-btn batch-select-all-btn" id="batch-select-all-replay" data-tab="replay" title="全选当前">全选当前</button>
             <button class="fav-filter-btn" id="replay-fav-filter" title="仅看收藏">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
               <span>仅看收藏</span>
@@ -281,7 +281,7 @@
             <option value="duration">时长</option>
             <option value="points">点数</option>
           </select>
-          <button class="header-btn" id="batch-select-all" title="全选当前">全选当前</button>
+          <button class="header-btn batch-select-all-btn" id="batch-select-all-history" data-tab="history" title="全选当前">全选当前</button>
           <button class="fav-filter-btn" id="history-fav-filter" title="仅看收藏">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
             <span>仅看收藏</span>
@@ -314,15 +314,22 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 
   <!-- 应用脚本 -->
-  <script src="js/config.js?t=20260810v12"></script>
-  <script src="js/toast.js?t=20260805v8"></script>
-  <script src="js/storage.js?t=20260805v11"></script>
+  <script src="js/config.js?t=20260810v13"></script>
+  <script src="js/toast.js?t=20260810v9"></script>
+  <script src="js/storage.js?t=20260810v12"></script>
   <script src="js/trail.js?t=20260809v12"></script>
-  <script src="js/trail-analysis.js?t=20260809v13"></script>
-  <script src="js/map.js?t=20260809v23"></script>
-  <script src="js/gps.js?t=20260810v16"></script>
-  <script src="js/replay.js?t=20260808v20"></script>
-  <script src="js/app-core.js?t=20260810v27"></script>
-  <script src="js/app-gps-ui.js?t=20260809v10"></script>
+  <script src="js/trail-analysis.js?t=20260810v14"></script>
+  <script src="js/map.js?t=20260810v24"></script>
+  <script src="js/gps.js?t=20260810v17"></script>
+  <script src="js/replay.js?t=20260810v21"></script>
+  <script src="js/app-core.js?t=20260810v28"></script>
+  <script src="js/app-list.js?t=20260810v2"></script>
+  <script src="js/app-replay.js?t=20260810v2"></script>
+  <script src="js/app-export.js?t=20260810v2"></script>
+  <script src="js/app-stats.js?t=20260810v2"></script>
+  <script src="js/app-weather.js?t=20260810v2"></script>
+  <script src="js/app-background.js?t=20260810v2"></script>
+  <script src="js/app-battery.js?t=20260810v2"></script>
+  <script src="js/app-gps-ui.js?t=20260810v11"></script>
 </body>
 </html>
