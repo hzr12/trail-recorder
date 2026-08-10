@@ -166,7 +166,8 @@ App.prototype._updateStatusBar = function (force) {
     const srcTag = qInfo.source === 'gnss' ? 'GNSS' : 'Web';
     const tip = `信号质量评分（${srcTag}${qInfo.breakdown ? '：' + qInfo.breakdown : ''}）：${qInfo.score} 分`;
     // 按 n 升序生成：从左到右 s1→s4（矮→高），亮格=当前档，与 accuracy fallback 一致
-    signalHtml = `<span class="gps-signal" title="${tip}">` +
+    // lvl-* 类：按当前等级给整组信号条换色（4 强绿 / 3 绿 / 2 黄 / 1 红）
+    signalHtml = `<span class="gps-signal lvl-${lvl.n}" title="${tip}">` +
       [1, 2, 3, 4].map(n => `<span class="signal-bar s${n}${lvl.n >= n ? ' on' : ''}"></span>`).join('') +
       `</span>`;
   } else if (this._lastAccuracy != null) {
@@ -175,7 +176,7 @@ App.prototype._updateStatusBar = function (force) {
     else if (this._lastAccuracy <= 30) { bars = 3; }
     else if (this._lastAccuracy <= 100) { bars = 2; }
     else { bars = 1; }
-    signalHtml = `<span class="gps-signal" title="精度 ±${Math.round(this._lastAccuracy)}m">` +
+    signalHtml = `<span class="gps-signal lvl-${bars}" title="精度 ±${Math.round(this._lastAccuracy)}m">` +
       `<span class="signal-bar s1${bars >= 1 ? ' on' : ''}"></span>` +
       `<span class="signal-bar s2${bars >= 2 ? ' on' : ''}"></span>` +
       `<span class="signal-bar s3${bars >= 3 ? ' on' : ''}"></span>` +

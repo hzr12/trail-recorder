@@ -129,6 +129,27 @@ const CONFIG = {
   // 默认 2.0 ≈ 2σ 截断。
   GPS_HUBER_K: 2.0,
 
+  // ----- 海拔独立滤波（完全自洽，不依赖水平滤波/Huber/RTS 机制）-----
+  // 四级融合：L1 源头质量门(_resolveAltitude) → L2 1D 自适应卡尔曼(AltKalmanFilter)
+  // → L3 中值预滤波 + 自适应 Huber(AltFilterPipeline) → L4 离线 1D RTS(AltRtsSmoother)。
+  // 海拔链只消费「原始海拔 + 时间戳 + 口径来源(gga/browser)」，参数全走 ALT_*，
+  // 不读精度/水平速度/GPS_HUBER_K，实时滤波与离线平滑各自独立自洽。
+  ALT_FILTER_ENABLED: true,           // 实时海拔融合总开关
+  ALT_FILTER_RTS_ENABLED: true,       // 离线 1D RTS 平滑（必须启用，结束记录后处理）
+  ALT_KALMAN_R_BASE: 64,              // 垂直观测噪声方差基准（~8m²）
+  ALT_KALMAN_R_MIN: 16,               // 自适应 R 下限（~4m²）
+  ALT_KALMAN_R_MAX: 900,              // 自适应 R 上限（~30m²）
+  ALT_KALMAN_Q_BASE: 0.5,             // 垂直动态噪声基准（固定，不随水平速度缩放）
+  ALT_KALMAN_Q_MAX: 8,                // 自适应 Q 上限（垂直速度大时放宽）
+  ALT_KALMAN_Q_REF_VEL: 5,            // Q 自适应参考垂直速度（m/s）
+  ALT_RESIDUAL_WINDOW: 20,            // 残差滑动窗口（自适应 R/Huber 估计共用）
+  ALT_MEDIAN_WINDOW: 5,               // 中值预滤波窗口（奇数，去瞬态尖刺）
+  ALT_HUBER_K: 2.0,                   // 海拔残差 Huber 阈值系数（×鲁棒尺度 σ̂，自适应）
+  ALT_HUBER_K_MIN: 1.0,               // Huber 阈值下限（σ̂ 倍数，防止过度收缩）
+  ALT_VELOCITY_LIMIT: 30,             // 海拔变化速率上限（m/s）
+  ALT_RTS_ALPHA_MAX: 0.3,             // 海拔 RTS 反向平滑最大权重（残差大时）
+  ALT_RTS_ALPHA_MIN: 0.1,             // 海拔 RTS 反向平滑最小权重（残差小时）
+
   // ----- 存储引擎 -----
   TRAIL_STORAGE_ENGINE: 'auto',
 

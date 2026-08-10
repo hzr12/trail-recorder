@@ -204,6 +204,11 @@
   background: var(--accent-1);
   opacity: 1;
 }
+/* 信号强弱等级配色：4 档最强→青绿，3 良好→绿，2 中等→黄，1 弱→红 */
+.gps-signal.lvl-4 .signal-bar.on { background: var(--accent-1); }
+.gps-signal.lvl-3 .signal-bar.on { background: #4caf50; }
+.gps-signal.lvl-2 .signal-bar.on { background: var(--warning); }
+.gps-signal.lvl-1 .signal-bar.on { background: var(--danger); }
 
 /* 融合精度因子（PDOP/HDOP/VDOP → 单一综合指标）徽章 */
 .gps-dop {
