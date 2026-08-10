@@ -176,23 +176,37 @@ jobs:
             "$APK_SIGNED"
           echo "签名完成: $APK_SIGNED"
 
-      - name: 验证 APK 中的 GNSS 插件类
+      - name: 验证 APK 中的 GNSS / IMU 插件类
         working-directory: native
         run: |
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
           if [ ! -f "$APK" ]; then
             echo "APK 不存在，跳过验证"
-            echo "::notice title=GNSS 验证::APK 不存在，跳过类验证"
+            echo "::notice title=GNSS/IMU 验证::APK 不存在，跳过类验证"
             exit 0
           fi
-          if unzip -p "$APK" "*.dex" 2>/dev/null | strings | grep -qi "GnssData"; then
+          DEX_STRINGS=$(unzip -p "$APK" "*.dex" 2>/dev/null | strings)
+
+          # ── GNSS 插件类验证 ──
+          if echo "$DEX_STRINGS" | grep -qi "GnssData"; then
             echo "## GNSS 插件类已验证" >> $GITHUB_STEP_SUMMARY
             echo "在 APK 的 DEX 中找到 GnssData 类" | tee -a $GITHUB_STEP_SUMMARY
-            # 统计匹配行数上报注解器
-            COUNT=$(unzip -p "$APK" "*.dex" 2>/dev/null | strings | grep -c "GnssData")
+            COUNT=$(echo "$DEX_STRINGS" | grep -c "GnssData")
             echo "类引用次数: $COUNT" >> $GITHUB_STEP_SUMMARY
           else
             echo "## ⚠️ 未找到 GNSS 插件类" >> $GITHUB_STEP_SUMMARY
+            echo "插件可能未被链接到构建中。" >> $GITHUB_STEP_SUMMARY
+            echo "请检查集成步骤的日志。" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # ── IMU 插件类验证 ──
+          if echo "$DEX_STRINGS" | grep -qi "ImuSensor"; then
+            echo "## IMU 插件类已验证" >> $GITHUB_STEP_SUMMARY
+            echo "在 APK 的 DEX 中找到 ImuSensor 类" | tee -a $GITHUB_STEP_SUMMARY
+            COUNT=$(echo "$DEX_STRINGS" | grep -c "ImuSensor")
+            echo "类引用次数: $COUNT" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ⚠️ 未找到 IMU 插件类" >> $GITHUB_STEP_SUMMARY
             echo "插件可能未被链接到构建中。" >> $GITHUB_STEP_SUMMARY
             echo "请检查集成步骤的日志。" >> $GITHUB_STEP_SUMMARY
           fi
