@@ -28,6 +28,31 @@ App.prototype._hideSpeedChart = function () {
   if (section) section.classList.add('hidden');
 };
 
+App.prototype._showElevProfile = function () {
+  const section = document.getElementById('elev-profile-section');
+  if (!section) return;
+  section.classList.remove('hidden');
+  this._initElevProfileChart();
+  const header = section.querySelector('.elev-profile-header');
+  const body = document.getElementById('elev-profile-body');
+  const toggle = document.getElementById('elev-profile-toggle');
+  if (header && body && toggle) {
+    header.onclick = () => {
+      body.classList.toggle('collapsed');
+      toggle.classList.toggle('collapsed');
+    };
+  }
+  // 若记录页已有轨迹点（如加载历史到记录页），先画一次
+  if (this.trail && this.trail.positions && this.trail.positions.length) {
+    this._updateElevProfileChart(this.trail.positions);
+  }
+};
+
+App.prototype._hideElevProfile = function () {
+  const section = document.getElementById('elev-profile-section');
+  if (section) section.classList.add('hidden');
+};
+
 App.prototype._initSpeedChart = function () {
   if (this._speedChart) return;
   const canvas = document.getElementById('speed-chart-canvas');

@@ -21,6 +21,24 @@ function haversine(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+/**
+ * 生成模拟海拔（米）：多频正弦叠加模拟起伏 + 轻微噪声
+ * @param {number} i 当前点索引
+ * @param {number} pointCount 总点数
+ * @param {number} baseAlt 基准海拔（米）
+ * @param {number} amplitude 起伏幅度（米）
+ */
+function mockAltitude(i, pointCount, baseAlt, amplitude) {
+  const t = (i / Math.max(1, pointCount - 1)) * Math.PI * 2;
+  return Math.max(0, Math.round(
+    baseAlt +
+    amplitude * 0.55 * Math.sin(t * 3 + 0.5) +
+    amplitude * 0.3 * Math.sin(t * 6.5 + 1.3) +
+    amplitude * 0.12 * Math.sin(t * 12 + 0.6) +
+    (Math.random() - 0.5) * 3
+  ));
+}
+
 // ===== 轨迹生成器 =====
 
 const MockTrails = {
@@ -60,7 +78,8 @@ const MockTrails = {
         time: baseTime + i * interval,
         speed: speedMs + (Math.random() - 0.5) * 0.5,
         heading: 0,
-        accuracy: 5 + Math.random() * 10
+        accuracy: 5 + Math.random() * 10,
+        altitude: mockAltitude(i, pointCount, 30, 45)
       });
     }
 
@@ -99,7 +118,8 @@ const MockTrails = {
         time: baseTime + i * interval,
         speed: speedKmh / 3.6 + (Math.random() - 0.5) * 1,
         heading: (heading + 360) % 360,
-        accuracy: 3 + Math.random() * 8
+        accuracy: 3 + Math.random() * 8,
+        altitude: mockAltitude(i, pointCount, 50, 12)
       });
     }
 
@@ -140,7 +160,8 @@ const MockTrails = {
         time: baseTime + i * interval,
         speed: speedKmh / 3.6 + (Math.random() - 0.5) * 2,
         heading,
-        accuracy: 5 + Math.random() * 10
+        accuracy: 5 + Math.random() * 10,
+        altitude: mockAltitude(i, pointCount, 40, 60)
       });
     }
 
@@ -182,7 +203,8 @@ const MockTrails = {
         time: baseTime + i * interval,
         speed: speedKmh / 3.6,
         heading,
-        accuracy: 8 + Math.random() * 15
+        accuracy: 8 + Math.random() * 15,
+        altitude: mockAltitude(i, pointCount, 25, 6)
       });
     }
 

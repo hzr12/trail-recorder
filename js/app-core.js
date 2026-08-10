@@ -20,6 +20,7 @@ class App {
         this._gpsBtn.classList.remove('watching');
         this._gpsBtn.title = '定位到我的位置';
         this._hideSpeedChart();
+        this._hideElevProfile();
         this._speedHistory = [];
         if (this._speedChart) {
           this._speedChart.data.datasets[0].data = [];
@@ -63,6 +64,7 @@ class App {
     this._speedHistory = [];
     this._speedChart = null;
     this._speedTrackingStart = 0;
+    this._elevChart = null;
     this.trail = new Trail();
     this._followMode = false;
     this._dirty = false;
@@ -537,6 +539,7 @@ class App {
     this._restoringView = false;
     if (!this._speedHistory.length) this._speedTrackingStart = Date.now();
     this._showSpeedChart();
+    this._showElevProfile();
 
     this._gpsBtn.classList.add('watching');
     this._gpsBtn.title = '正在持续追踪位置';
@@ -593,11 +596,16 @@ class App {
     this.gpsManager.onRecovery = null;
     this.gpsManager.onRestoreTracking = null;
     this._hideSpeedChart();
+    this._hideElevProfile();
 
     this._speedHistory = [];
     if (this._speedChart) {
       this._speedChart.data.datasets[0].data = [];
       this._speedChart.update('none');
+    }
+    if (this._elevChart) {
+      this._elevChart.data.datasets[0].data = [];
+      this._elevChart.update('none');
     }
 
     this._gpsBtn.classList.remove('watching');
@@ -737,7 +745,8 @@ class App {
           time: this.gpsManager.calibratedNow,
           accuracy: pos.accuracy || 0,
           speed: pos.speed,
-          heading: pos.heading
+          heading: pos.heading,
+          altitude: pos.altitude
         });
         if (added) {
           this._trailDirty = true;
@@ -2166,6 +2175,7 @@ class App {
     const maxSpeed = stats.maxSpeed;
     const hasSpeed = stats.hasSpeed;
     const avgSpeed = stats.avgSpeed;
+    const elev = TrailAnalysis.analyzeElevation(pos);
     const firstTime = pos[0].time || null;
     const lastTime = pos[pos.length - 1].time || null;
 
@@ -2201,10 +2211,14 @@ class App {
       document.getElementById('stat-points').textContent = pos.length;
       document.getElementById('stat-start-time').textContent = fmtDate(firstTime);
       document.getElementById('stat-end-time').textContent = fmtDate(lastTime);
+      document.getElementById('stat-elev-max').textContent = elev.hasAltitude ? elev.maxAlt + ' m' : '--';
+      document.getElementById('stat-elev-gain').textContent = elev.hasAltitude ? '+' + elev.gain + ' m' : '--';
+      document.getElementById('stat-elev-loss').textContent = elev.hasAltitude ? '-' + elev.loss + ' m' : '--';
       overlay.classList.add('show');
       return;
     }
 
+    const elevHasData = elev.hasAltitude;
     const html = `<div id="stats-modal" class="modal-overlay show">
       <div class="modal-box">
         <div class="modal-header">
@@ -2216,6 +2230,9 @@ class App {
           <div class="stat-card"><span class="stat-label">总时长</span><span class="stat-value" id="stat-duration">${fmtDuration(durationMs)}</span></div>
           <div class="stat-card"><span class="stat-label">平均速度</span><span class="stat-value" id="stat-avg-speed">${avgSpeed > 0 ? (avgSpeed * 3.6).toFixed(1) + ' km/h' : '--'}</span></div>
           <div class="stat-card"><span class="stat-label">最高速度</span><span class="stat-value warning" id="stat-max-speed">${hasSpeed ? (maxSpeed * 3.6).toFixed(1) + ' km/h' : '--'}</span></div>
+          <div class="stat-card"><span class="stat-label">最高海拔</span><span class="stat-value" id="stat-elev-max">${elevHasData ? elev.maxAlt + ' m' : '--'}</span></div>
+          <div class="stat-card"><span class="stat-label">累计爬升</span><span class="stat-value" id="stat-elev-gain">${elevHasData ? '+' + elev.gain + ' m' : '--'}</span></div>
+          <div class="stat-card"><span class="stat-label">累计下降</span><span class="stat-value" id="stat-elev-loss">${elevHasData ? '-' + elev.loss + ' m' : '--'}</span></div>
           <div class="stat-card"><span class="stat-label">轨迹点数</span><span class="stat-value accent2" id="stat-points">${pos.length}</span></div>
           <div class="stat-card"><span class="stat-label">开始时间</span><span class="stat-value" id="stat-start-time">${fmtDate(firstTime)}</span></div>
           <div class="stat-card full"><span class="stat-label">结束时间</span><span class="stat-value" id="stat-end-time">${fmtDate(lastTime)}</span></div>
@@ -2234,6 +2251,94 @@ class App {
       if (!box.contains(e.target)) closeModal();
     });
     document.getElementById('stats-close-btn').addEventListener('click', closeModal);
+  }
+
+  /**
+   * 构建海拔剖面数据：累计距离（米）→ 海拔（米），相邻点距离累加
+   * @param {Array} positions 轨迹点 [{lat,lng,altitude?}]
+   * @returns {Array<{x:number,y:number}>} 有海拔的点序列（不足 2 个返回空数组）
+   */
+  _buildElevProfileData(positions) {
+    const data = [];
+    if (!Array.isArray(positions) || positions.length < 2) return data;
+    let cumDist = 0;
+    let prev = null;
+    for (const p of positions) {
+      if (p == null || p.lat == null || p.lng == null) continue;
+      if (prev) cumDist += calcDistance({ lat: prev.lat, lng: prev.lng }, { lat: p.lat, lng: p.lng });
+      prev = { lat: p.lat, lng: p.lng };
+      if (p.altitude != null && Number.isFinite(p.altitude)) {
+        data.push({ x: cumDist, y: p.altitude });
+      }
+    }
+    return data;
+  }
+
+  /**
+   * 初始化海拔剖面图（Chart.js line，横轴累计距离，纵轴海拔）
+   * @param {Array} positions 轨迹点
+   */
+  _initElevProfileChart(positions) {
+    if (this._elevChart) return;
+    const canvas = document.getElementById('elev-profile-canvas');
+    if (!canvas || typeof Chart === 'undefined') return;
+    const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+    const gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
+    const textColor = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
+    this._elevChart = new Chart(canvas, {
+      type: 'line',
+      data: {
+        datasets: [{
+          data: [],
+          borderColor: '#22c55e',
+          backgroundColor: 'rgba(34,197,94,0.15)',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.3,
+          fill: true
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        scales: {
+          x: {
+            type: 'linear',
+            title: { display: true, text: '距离(米)', color: textColor, font: { size: 10 } },
+            grid: { color: gridColor },
+            ticks: { color: textColor, font: { size: 9 }, maxTicksLimit: 6 }
+          },
+          y: {
+            title: { display: true, text: '海拔(米)', color: textColor, font: { size: 10 } },
+            grid: { color: gridColor },
+            ticks: { color: textColor, font: { size: 9 }, maxTicksLimit: 5 }
+          }
+        }
+      }
+    });
+    this._updateElevProfileChart(positions);
+  }
+
+  /**
+   * 更新海拔剖面图数据（modal 复用与弹窗刷新共用）
+   * @param {Array} positions 轨迹点
+   */
+  _updateElevProfileChart(positions) {
+    if (!this._elevChart) return;
+    const data = this._buildElevProfileData(positions);
+    const infoEl = document.getElementById('elev-profile-info');
+    if (infoEl && data.length) {
+      let minAlt = Infinity, maxAlt = -Infinity;
+      for (const d of data) {
+        if (d.y < minAlt) minAlt = d.y;
+        if (d.y > maxAlt) maxAlt = d.y;
+      }
+      infoEl.textContent = `${Math.round(minAlt)}~${Math.round(maxAlt)}m`;
+    }
+    this._elevChart.data.datasets[0].data = data;
+    this._elevChart.update('none');
   }
 
   async _exportReport() {
@@ -2261,6 +2366,7 @@ class App {
         }
       }
       const avgSpeed = durationMs > 0 ? totalDist / (durationMs / 1000) : 0;
+      const elev = TrailAnalysis.analyzeElevation(pos);
 
       const fmtDate = (ts) => {
         if (!ts) return '--';
@@ -2280,7 +2386,7 @@ class App {
 
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const W = 800 * dpr;
-      const H = 900 * dpr;
+      const H = 1120 * dpr;
       const S = dpr;
 
       const canvas = document.createElement('canvas');
@@ -2464,9 +2570,10 @@ class App {
       }
 
       const statsY = mapY + mapH + 16 * S;
+      const statsH = 200 * S;
       ctx.fillStyle = isDark ? '#16213e' : '#ffffff';
       ctx.beginPath();
-      ctx.roundRect(mapX, statsY, mapW, 160 * S, 12 * S);
+      ctx.roundRect(mapX, statsY, mapW, statsH, 12 * S);
       ctx.fill();
 
       ctx.fillStyle = isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.9)';
@@ -2478,6 +2585,9 @@ class App {
         { label: '总时长', value: fmtDuration(durationMs) },
         { label: '平均速度', value: avgSpeed > 0 ? (avgSpeed * 3.6).toFixed(1) + ' km/h' : '--' },
         { label: '最高速度', value: hasSpeed ? (maxSpeed * 3.6).toFixed(1) + ' km/h' : '--' },
+        { label: '最高海拔', value: elev.hasAltitude ? elev.maxAlt + ' m' : '--' },
+        { label: '累计爬升', value: elev.hasAltitude ? '+' + elev.gain + ' m' : '--' },
+        { label: '累计下降', value: elev.hasAltitude ? '-' + elev.loss + ' m' : '--' },
         { label: '轨迹点数', value: String(pos.length) },
       ];
 
@@ -2495,6 +2605,104 @@ class App {
         ctx.fillText(statItems[i].value, sx, sy + 22 * S);
         ctx.fillStyle = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
         ctx.font = `${12 * S}px "HarmonyOS Sans", sans-serif`;
+      }
+
+      // ── 海拔剖面图（手绘：累计距离 → 海拔折线 + 渐变填充） ──
+      const elevY = statsY + statsH + 16 * S;
+      const elevH = 180 * S;
+      ctx.fillStyle = isDark ? '#16213e' : '#ffffff';
+      ctx.beginPath();
+      ctx.roundRect(mapX, elevY, mapW, elevH, 12 * S);
+      ctx.fill();
+
+      ctx.fillStyle = isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.9)';
+      ctx.font = `${16 * S}px "HarmonyOS Sans", sans-serif`;
+      ctx.fillText(' 海拔剖面', mapX + 16 * S, elevY + 32 * S);
+
+      const elevData = this._buildElevProfileData(pos);
+      if (elevData.length >= 2) {
+        let minAlt = Infinity, maxAlt = -Infinity, maxDist = 0;
+        for (const d of elevData) {
+          if (d.y < minAlt) minAlt = d.y;
+          if (d.y > maxAlt) maxAlt = d.y;
+          if (d.x > maxDist) maxDist = d.x;
+        }
+        if (minAlt === maxAlt) { minAlt -= 5; maxAlt += 5; }
+        const altPad = (maxAlt - minAlt) * 0.15;
+        minAlt -= altPad; maxAlt += altPad;
+
+        const plotX = mapX + 48 * S;
+        const plotY = elevY + 48 * S;
+        const plotW = mapW - 72 * S;
+        const plotH = elevH - 72 * S;
+        const toX = (x) => plotX + (maxDist > 0 ? (x / maxDist) * plotW : plotW / 2);
+        const toY = (y) => plotY + ((maxAlt - y) / (maxAlt - minAlt)) * plotH;
+
+        // 网格横线 + 海拔刻度
+        ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
+        ctx.lineWidth = S;
+        ctx.fillStyle = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)';
+        ctx.font = `${10 * S}px "HarmonyOS Sans", sans-serif`;
+        ctx.textAlign = 'right';
+        for (let g = 0; g <= 4; g++) {
+          const gy = plotY + (g / 4) * plotH;
+          ctx.beginPath();
+          ctx.moveTo(plotX, gy);
+          ctx.lineTo(plotX + plotW, gy);
+          ctx.stroke();
+          const altVal = maxAlt - (g / 4) * (maxAlt - minAlt);
+          ctx.fillText(Math.round(altVal) + 'm', plotX - 6 * S, gy + 4 * S);
+        }
+        ctx.textAlign = 'left';
+        ctx.fillText('0m', plotX - 6 * S, plotY + plotH + 14 * S);
+        ctx.textAlign = 'right';
+        ctx.fillText(formatDistance(maxDist), plotX + plotW, plotY + plotH + 14 * S);
+        ctx.textAlign = 'left';
+
+        // 折线 + 渐变填充
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(toX(elevData[0].x), toY(elevData[0].y));
+        for (let i = 1; i < elevData.length; i++) {
+          ctx.lineTo(toX(elevData[i].x), toY(elevData[i].y));
+        }
+        ctx.strokeStyle = isDark ? '#4ade80' : '#16a34a';
+        ctx.lineWidth = 2 * S;
+        ctx.stroke();
+        // 填充（折线闭合到底部）
+        ctx.lineTo(plotX + plotW, plotY + plotH);
+        ctx.lineTo(plotX, plotY + plotH);
+        ctx.closePath();
+        const grad = ctx.createLinearGradient(0, plotY, 0, plotY + plotH);
+        grad.addColorStop(0, isDark ? 'rgba(74,222,128,0.35)' : 'rgba(22,163,74,0.25)');
+        grad.addColorStop(1, 'rgba(74,222,128,0.02)');
+        ctx.fillStyle = grad;
+        ctx.fill();
+        ctx.restore();
+
+        // 最高/最低点标注
+        let hiPt = elevData[0], loPt = elevData[0];
+        for (const d of elevData) {
+          if (d.y > hiPt.y) hiPt = d;
+          if (d.y < loPt.y) loPt = d;
+        }
+        ctx.fillStyle = '#ef4444';
+        ctx.beginPath();
+        ctx.arc(toX(hiPt.x), toY(hiPt.y), 4 * S, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.font = `${10 * S}px "HarmonyOS Sans", sans-serif`;
+        ctx.fillText('最高 ' + Math.round(hiPt.y) + 'm', toX(hiPt.x) + 6 * S, toY(hiPt.y) - 6 * S);
+        ctx.fillStyle = '#22c55e';
+        ctx.beginPath();
+        ctx.arc(toX(loPt.x), toY(loPt.y), 4 * S, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillText('最低 ' + Math.round(loPt.y) + 'm', toX(loPt.x) + 6 * S, toY(loPt.y) + 14 * S);
+      } else {
+        ctx.fillStyle = isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)';
+        ctx.font = `${13 * S}px "HarmonyOS Sans", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText('轨迹无海拔数据', mapX + mapW / 2, elevY + elevH / 2);
+        ctx.textAlign = 'left';
       }
 
       ctx.fillStyle = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)';
@@ -2752,13 +2960,15 @@ class App {
           time: this.gpsManager.calibratedNow,
           accuracy: pos.accuracy || 0,
           speed: pos.speed,
-          heading: pos.heading
+          heading: pos.heading,
+          altitude: pos.altitude
         });
         if (added) {
           this._trailDirty = true;
           this.mapManager.setTrail(this._getTrailPositions());
           this.mapManager.setRealtimeKeyPoints(TrailAnalysis.analyzeKeyPoints(this.trail.positions));
           this._updateTrailUI();
+          if (this._isWatching) this._updateElevProfileChart(this.trail.positions);
         }
       }
 

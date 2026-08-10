@@ -171,6 +171,64 @@
   color: var(--warning);
 }
 
+/* ── 海拔剖面图（轨迹统计弹窗） ── */
+.elev-profile-section {
+  margin-top: 12px;
+}
+.elev-profile-section.hidden {
+  display: none;
+}
+.elev-profile-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px 6px;
+  user-select: none;
+}
+.elev-profile-title {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.elev-profile-info {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  text-align: right;
+  margin-left: auto;
+}
+.elev-profile-body {
+  height: 120px;
+  padding: 0 4px 6px;
+  transition: height 0.2s;
+  overflow: hidden;
+}
+.elev-profile-body.collapsed {
+  height: 0;
+  padding: 0 4px;
+}
+.elev-profile-body canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+.elev-profile-toggle {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  margin-left: auto;
+  transition: transform 0.2s;
+}
+.elev-profile-toggle.collapsed {
+  transform: rotate(-90deg);
+}
+/* 记录页内与速度曲线面板对齐 */
+#tab-record .elev-profile-section {
+  margin: 6px 12px 8px;
+}
+
 /* ── 确认弹窗（通用） ── */
 .confirm-body {
   text-align: center;
