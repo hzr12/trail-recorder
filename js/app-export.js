@@ -2,7 +2,8 @@
  * 途刻 TraceCraft - 报告导出模块
  * =============================================
  * 通过 App.prototype.* 挂载到 App（须在 app-core.js 之后加载）：
- *  - _exportReport: 活动报告导出（Canvas 手绘地图瓦片 + 统计 + 海拔剖面）
+ *  - _exportReport: 活动报告导出（Canvas 手绘地图瓦片 + 统计 + 海拔剖面 + 速度剖面）
+ *  - _buildSpeedProfileData: 构建速度剖面数据（累计距离 → 速度，报告导出用）
  */
 
 App.prototype._exportReport = async function () {
@@ -225,7 +226,6 @@ App.prototype._exportReport = async function () {
       { label: '最高海拔', value: elev.hasAltitude ? elev.maxAlt + ' m' : '--' },
       { label: '累计爬升', value: elev.hasAltitude ? '+' + elev.gain + ' m' : '--' },
       { label: '累计下降', value: elev.hasAltitude ? '-' + elev.loss + ' m' : '--' },
-      { label: '轨迹点数', value: String(pos.length) },
     ];
 
     ctx.fillStyle = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
@@ -342,6 +342,96 @@ App.prototype._exportReport = async function () {
       ctx.textAlign = 'left';
     }
 
+    // ── 速度剖面图（手绘：累计距离 → 速度折线 + 渐变填充） ──
+    const speedY = elevY + elevH + 16 * S;
+    const speedH = 180 * S;
+    ctx.fillStyle = isDark ? '#16213e' : '#ffffff';
+    ctx.beginPath();
+    ctx.roundRect(mapX, speedY, mapW, speedH, 12 * S);
+    ctx.fill();
+
+    ctx.fillStyle = isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.9)';
+    ctx.font = `${16 * S}px "HarmonyOS Sans", sans-serif`;
+    ctx.fillText(' 速度剖面', mapX + 16 * S, speedY + 32 * S);
+
+    const speedData = this._buildSpeedProfileData(pos);
+    if (speedData.length >= 2) {
+      let minV = Infinity, maxV = -Infinity, maxDist = 0;
+      for (const d of speedData) {
+        if (d.y < minV) minV = d.y;
+        if (d.y > maxV) maxV = d.y;
+        if (d.x > maxDist) maxDist = d.x;
+      }
+      minV = Math.min(0, minV); // 速度纵轴从 0 起
+      if (minV === maxV) { minV -= 1; maxV += 1; }
+      const vPad = (maxV - minV) * 0.15;
+      minV -= vPad; maxV += vPad;
+
+      const plotX = mapX + 48 * S;
+      const plotY = speedY + 48 * S;
+      const plotW = mapW - 72 * S;
+      const plotH = speedH - 72 * S;
+      const toX3 = (x) => plotX + (maxDist > 0 ? (x / maxDist) * plotW : plotW / 2);
+      const toY3 = (v) => plotY + ((maxV - v) / (maxV - minV)) * plotH;
+
+      // 网格横线 + 速度刻度（km/h）
+      ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
+      ctx.lineWidth = S;
+      ctx.fillStyle = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)';
+      ctx.font = `${10 * S}px "HarmonyOS Sans", sans-serif`;
+      ctx.textAlign = 'right';
+      for (let g = 0; g <= 4; g++) {
+        const gy = plotY + (g / 4) * plotH;
+        ctx.beginPath();
+        ctx.moveTo(plotX, gy);
+        ctx.lineTo(plotX + plotW, gy);
+        ctx.stroke();
+        const vVal = maxV - (g / 4) * (maxV - minV);
+        ctx.fillText(Math.round(vVal * 3.6) + 'km/h', plotX - 6 * S, gy + 4 * S);
+      }
+      ctx.textAlign = 'left';
+      ctx.fillText('0m', plotX - 6 * S, plotY + plotH + 14 * S);
+      ctx.textAlign = 'right';
+      ctx.fillText(formatDistance(maxDist), plotX + plotW, plotY + plotH + 14 * S);
+      ctx.textAlign = 'left';
+
+      // 折线 + 渐变填充（琥珀色，与海拔绿区分）
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(toX3(speedData[0].x), toY3(speedData[0].y));
+      for (let i = 1; i < speedData.length; i++) {
+        ctx.lineTo(toX3(speedData[i].x), toY3(speedData[i].y));
+      }
+      ctx.strokeStyle = isDark ? '#fbbf24' : '#d97706';
+      ctx.lineWidth = 2 * S;
+      ctx.stroke();
+      ctx.lineTo(plotX + plotW, plotY + plotH);
+      ctx.lineTo(plotX, plotY + plotH);
+      ctx.closePath();
+      const gradV = ctx.createLinearGradient(0, plotY, 0, plotY + plotH);
+      gradV.addColorStop(0, isDark ? 'rgba(251,191,36,0.35)' : 'rgba(217,119,6,0.25)');
+      gradV.addColorStop(1, 'rgba(251,191,36,0.02)');
+      ctx.fillStyle = gradV;
+      ctx.fill();
+      ctx.restore();
+
+      // 最高速点标注
+      let hiPt = speedData[0];
+      for (const d of speedData) if (d.y > hiPt.y) hiPt = d;
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.arc(toX3(hiPt.x), toY3(hiPt.y), 4 * S, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = `${10 * S}px "HarmonyOS Sans", sans-serif`;
+      ctx.fillText('最高 ' + (hiPt.y * 3.6).toFixed(1) + 'km/h', toX3(hiPt.x) + 6 * S, toY3(hiPt.y) - 6 * S);
+    } else {
+      ctx.fillStyle = isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)';
+      ctx.font = `${13 * S}px "HarmonyOS Sans", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText('轨迹无速度数据', mapX + mapW / 2, speedY + speedH / 2);
+      ctx.textAlign = 'left';
+    }
+
     ctx.fillStyle = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)';
     ctx.font = `${11 * S}px "HarmonyOS Sans", sans-serif`;
     ctx.textAlign = 'right';
@@ -399,6 +489,28 @@ App.prototype._exportReport = async function () {
     console.error('[Export] 报告导出失败:', e);
     Toast.show(' 导出报告失败');
   }
+};
+
+/**
+ * 构建速度剖面数据：累计距离 → 速度（m/s），与 _buildElevProfileData 同构。
+ * 只收集有 speed 的轨迹点（缺失点跳过，横轴累计距离保持全局连续）。
+ * @param {Array} positions 轨迹点（报告用原始采样点 trail.positions）
+ * @returns {Array<{x:number,y:number}>} 有速度的点序列（不足 2 个返回空数组）
+ */
+App.prototype._buildSpeedProfileData = function (positions) {
+  const data = [];
+  if (!Array.isArray(positions) || positions.length < 2) return data;
+  let cumDist = 0;
+  let prev = null;
+  for (const p of positions) {
+    if (p == null || p.lat == null || p.lng == null) continue;
+    if (prev) cumDist += calcDistance({ lat: prev.lat, lng: prev.lng }, { lat: p.lat, lng: p.lng });
+    prev = { lat: p.lat, lng: p.lng };
+    if (p.speed != null && Number.isFinite(p.speed)) {
+      data.push({ x: cumDist, y: p.speed });
+    }
+  }
+  return data;
 };
 
 /**

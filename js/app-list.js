@@ -607,7 +607,9 @@ App.prototype._syncBatchToolbar = function () {
   const total = this._historySelected.size + this._replaySelected.size;
   const countEl = bar.querySelector('.batch-count');
   if (countEl) countEl.textContent = total > 0 ? `已选 ${total} 条` : '未选择';
-  bar.querySelector('.batch-export').disabled = total === 0;
+  // 合集一次最多导出 2 条：超过时按钮仍可点，由 _exportSelectedImages 弹出 toast 提示
+  const exportBtn = bar.querySelector('.batch-export');
+  exportBtn.disabled = total === 0;
   bar.querySelector('.batch-merge').disabled = total < 2;
   const deleteBtn = bar.querySelector('.batch-delete');
   if (deleteBtn) deleteBtn.disabled = total === 0;
@@ -678,6 +680,10 @@ App.prototype._computeTrailStats = function (positions) {
 App.prototype._exportSelectedImages = function () {
   const ids = Array.from(new Set([...this._historySelected, ...this._replaySelected]));
   if (ids.length === 0) return;
+  if (ids.length > 2) {
+    Toast.show('轨迹合集一次最多导出 2 条');
+    return;
+  }
   Toast.show('正在生成轨迹合集卡片…');
   Storage.loadTrailsByIds(ids).then(async (trails) => {
     if (!trails || trails.length === 0) {

@@ -1559,14 +1559,13 @@ class MapManager {
     ctx.roundRect(32, panelY - 26, W - 64, panelH, 24);
     ctx.fill();
 
-    // 距离（大字）+ 时长/均速/最高速/点数
+    // 距离（大字）+ 时长/均速/最高速（不含点数）
     const fmtSpeed = (v) => (v > 0 ? (v * 3.6).toFixed(1) + ' km/h' : '--');
     const statCols = [
       { label: '距离', value: formatDistance(stats.distance), big: true },
       { label: '时长', value: formatDurationShort(stats.duration), big: false },
       { label: '均速', value: fmtSpeed(stats.avgSpeed), big: false },
-      { label: '最高速', value: fmtSpeed(stats.maxSpeed), big: false },
-      { label: '点数', value: String(stats.points), big: false }
+      { label: '最高速', value: fmtSpeed(stats.maxSpeed), big: false }
     ];
     const colW = (W - 64) / statCols.length;
     statCols.forEach((col, i) => {
