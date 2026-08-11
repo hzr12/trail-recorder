@@ -155,21 +155,15 @@ App.prototype._updateStatusBar = function (force) {
   const weakBadge = this.gpsManager.isWeakSignal
     ? ' <span class="gnss-weak-badge" title="GNSS 信号弱，已自动降低定位频率省电">⚠ 信号弱</span>'
     : '';
-  // 定位源三态标识：GNSS（原生芯片接管）/ Web（浏览器定位顶上）/ IMU（GPS 丢失惯性推算）
-  // 推算态优先级最高：位置由 IMU 短时推算，GPS 仍在后台重捕
-  const deadReckoning = this.gpsManager.isDeadReckoning;
+  // 定位源双态标识：GNSS（原生芯片接管）/ Web（浏览器定位顶上）
   const isGnssSource = this.gpsManager.gpsSource === 'GNSS';
   let sourceTitle = isGnssSource
     ? '原生 GNSS 芯片接管（卫星数足够且 DOP 良好）'
     : '浏览器 Geolocation 定位顶上（无 GNSS 或信号弱）';
-  if (deadReckoning) {
-    sourceTitle = 'GPS 信号丢失，IMU 惯性航迹推算中（短时，恢复后自动接回 GPS）';
-  } else if (!isGnssSource && this._lastAccuracy != null) {
+  if (!isGnssSource && this._lastAccuracy != null) {
     sourceTitle += `，当前精度 ±${Math.round(this._lastAccuracy)}m`;
   }
-  const sourceBadge = deadReckoning
-    ? `<span class="gps-source imu" title="${sourceTitle}">IMU</span>`
-    : `<span class="gps-source ${isGnssSource ? 'gnss' : 'web'}" title="${sourceTitle}">${isGnssSource ? 'GPS' : '网络'}</span>`;
+  const sourceBadge = `<span class="gps-source ${isGnssSource ? 'gnss' : 'web'}" title="${sourceTitle}">${isGnssSource ? 'GPS' : '网络'}</span>`;
   // 跟随模式独立为按钮，避免整条状态栏误触切换
   const followIcon = ` <button class="gps-follow-toggle${this._followMode ? ' active' : ''}" title="切换地图跟随">${this._followMode ? '跟随中' : '跟随'}</button>`;
 

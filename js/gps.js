@@ -643,8 +643,6 @@ class KalmanFilter {
  * 保护机制（与单模型一致，全部保留）：精度冻结(acc>IMM_FREEZE_ACC)、
  * 时间重置(dt≤0||>60)、重锚(>IMM_REANCHOR_M)、Huber 鲁棒（每模型 update
  * 内降权）、模型速度模量限幅(IMM_SPEED_LIMIT)。
- *
- * IMU 融合预留：feedImu() 空接口（阶段二/三接入，见 CONFIG.IMM_*）。
  */
 class ImmFilter {
   constructor() {
@@ -668,10 +666,11 @@ class ImmFilter {
     this._speedPrior = C.IMM_SPEED_PRIOR !== false;
     this._huberK = C.GPS_HUBER_K != null ? C.GPS_HUBER_K : 2.0;
     this._lastHuberK = this._huberK > 0 ? this._huberK : 0;
-    // IMU 加速度注入（阶段二）：注入强度 IMU_ACC_TRUST、幅值限幅 IMU_ACC_CLAMP。
-    // _imuAcc 为待注入 ENU 加速度 [ax, ay]，由 feedImu() 设置，单次 update 消费后清空。
-    this._imuTrust = (C.IMU_ACC_TRUST != null) ? Math.min(1, Math.max(0, C.IMU_ACC_TRUST)) : 0.6;
-    this._imuAccClamp = (C.IMU_ACC_CLAMP != null) ? Math.abs(C.IMU_ACC_CLAMP) : 30;
+
+    // IMU 定位校准（仅加速度注入 CA 模型预测，航向仍由 GPS 权威）
+    // _imuAcc 为待消费的水平 ENU 加速度 [axE, axN]（m/s²），feedImu() 写入、update() 单次消费
+    this._imuTrust = C.IMU_ACC_TRUST != null ? Math.min(1, Math.max(0, C.IMU_ACC_TRUST)) : 0.6;
+    this._imuAccClamp = C.IMU_ACC_CLAMP != null ? C.IMU_ACC_CLAMP : 30;
     this._imuAcc = null;
 
     // 三模型 × 两轴状态（x 轴 [x,vx,ax]，y 轴 [y,vy,ay]）
@@ -701,7 +700,7 @@ class ImmFilter {
     this._lastTime = 0;
     this._initialized = false;
     this._lastFiltered = null;
-    // 输出混合加速度估计（IMU 融合预留：阶段三航迹推算用）
+    // 输出混合加速度估计
     this._ax = 0;
     this._ay = 0;
 
@@ -791,6 +790,30 @@ class ImmFilter {
   }
 
   /**
+   * 注入 IMU 水平 ENU 加速度（定位校准，仅运动学先验）。
+   * 由 GPSManager 在每次 update() 前调用；无 IMU 数据时不要调用（保持纯 GPS）。
+   * @param {number[]} accEnu 水平加速度 [东向, 北向]（m/s²），已 1s 聚合 + 低通
+   */
+  feedImu(accEnu) {
+    if (!Array.isArray(accEnu) || accEnu.length < 2) return;
+    const ae = Number(accEnu[0]);
+    const an = Number(accEnu[1]);
+    if (!isFinite(ae) || !isFinite(an)) return;
+    const c = this._imuAccClamp;
+    this._imuAcc = [
+      Math.max(-c, Math.min(c, ae)),
+      Math.max(-c, Math.min(c, an))
+    ];
+  }
+
+  /** 读取并清空待注入加速度（单次消费：update() 开头调用） */
+  _consumeImuAcc() {
+    const acc = this._imuAcc;
+    this._imuAcc = null;
+    return acc;
+  }
+
+  /**
    * 更新测量值 → 返回滤波后结果（IMM 单步）。
    * 接口与 KalmanFilter.update 完全一致，GPSManager 调用点零改动。
    * @param {number} zLat 测量纬度
@@ -839,9 +862,7 @@ class ImmFilter {
     const hk = (this._lastHuberK = this._huberKFor(speedFactor, accClamped));
 
     // ── IMM 单步（x/y 两轴解耦，各为独立 3×3 子问题）──
-    // IMU 加速度由 feedImu() 缓存，本步消费后清空（单次测量只注入一次）
-    const imuAcc = this._imuAcc;
-    this._imuAcc = null;
+    const imuAcc = this._consumeImuAcc();
     this._immStep(mx, my, R, hk, dt, speed || 0, imuAcc);
 
     // ── 输出：模型概率加权混合 ──
@@ -882,6 +903,7 @@ class ImmFilter {
    * @param {number} hk Huber 阈值 K（≤0 禁用）
    * @param {number} dt 时间间隔（秒）
    * @param {number} speed GPS 上报速度（m/s，用于速度辅助模型先验）
+   * @param {number[]} [imuAcc] 待注入水平 ENU 加速度 [axE, axN]（m/s²），仅 CA 模型消费
    */
   _immStep(mx, my, R, hk, dt, speed, imuAcc) {
     const T = this._T, mu = this._mu;
@@ -968,17 +990,17 @@ class ImmFilter {
       }
 
       // ---- x 轴 predict（3×3 恒加速模型 F=[1,dt,½dt²; 0,1,dt; 0,0,1]，离散白噪声加速度 Q）----
-      // IMU 加速度注入（仅 CA 模型 m=2）：x⁻ = F·x̂ + G·a_imu，G=[½dt², dt, 1]ᵀ。
-      // 运动已由输入描述，CA 的过程噪声 Q 按 IMU_ACC_TRUST 同步缩小（保 0.3 下限防过度自信）。
-      // STILL/CV 不注入——低速/匀速下 IMU 噪声会被放大成虚假机动。
-      const isCA = m === 2;
-      const axI = (imuAcc && isCA) ? imuAcc[0] * this._imuTrust : 0;
-      const ayI = (imuAcc && isCA) ? imuAcc[1] * this._imuTrust : 0;
-      const qScale = (imuAcc && isCA) ? Math.max(0.3, 1 - this._imuTrust * 0.7) : 1;
-      const qa = this._q[m] * qScale;
+      // IMU 加速度注入（仅 CA 模型 m=2）：运动学先验 x⁻=F·x̂+G·a_imu，
+      // 位置 +½dt²·a、速度 +dt·a、加速度状态保持模型自持（GPS 残差驱动）；
+      // 注入期间 CA 模型 Q 同步缩小（更信 IMU 运动学预测），低机动时更平滑。
+      const qa = this._q[m];
       const qa2 = qa * qa;
-      const q00 = 0.25 * qa2 * d4, q01 = 0.5 * qa2 * d3, q02 = 0.5 * qa2 * d2,
-            q11 = qa2 * d2, q12 = qa2 * dt, q22 = qa2;
+      const useImu = (m === 2 && imuAcc);
+      const axI = useImu ? imuAcc[0] * this._imuTrust : 0;
+      const ayI = useImu ? imuAcc[1] * this._imuTrust : 0;
+      const qScale = useImu ? Math.max(0.3, 1 - this._imuTrust * 0.7) : 1;
+      const q00 = 0.25 * qa2 * d4 * qScale, q01 = 0.5 * qa2 * d3 * qScale, q02 = 0.5 * qa2 * d2 * qScale,
+            q11 = qa2 * d2 * qScale, q12 = qa2 * dt * qScale, q22 = qa2 * qScale;
       const P = this._mPx, Pp = this._Pp;
       const A00 = P[0] + dt * P[3] + h * P[6];
       const A01 = P[1] + dt * P[4] + h * P[7];
@@ -996,10 +1018,10 @@ class ImmFilter {
       Pp[6] = Pp[2];
       Pp[7] = Pp[5];
       Pp[8] = P[8] + q22;
-      // 预测状态（CA 叠加 IMU 加速度控制项：位置 +½dt²·a、速度 +dt·a、加速度更新为 a）
+      // 预测状态（CA 模型：位置 +dt·v +½dt²·a、速度 +dt·a、加速度保持；IMU 注入叠加运动学先验）
       const px = this._mxs[0] + this._mxs[1] * dt + this._mxs[2] * h + h * axI;
       const pvx = this._mxs[1] + this._mxs[2] * dt + dt * axI;
-      const pax = this._mxs[2] + axI;
+      const pax = this._mxs[2];
 
       // ---- x 轴 update（观测只测位置 H=[1,0,0]，S 为标量）----
       const S = Pp[0] + R;
@@ -1049,7 +1071,7 @@ class ImmFilter {
       Pp[8] = Py[8] + q22;
       const py = this._mys[0] + this._mys[1] * dt + this._mys[2] * h + h * ayI;
       const pvy = this._mys[1] + this._mys[2] * dt + dt * ayI;
-      const pay = this._mys[2] + ayI;
+      const pay = this._mys[2];
 
       const Sy = Pp[0] + R;
       if (!(Sy > 0) || !isFinite(Sy)) { this._degradeReset(mx, my); return; }
@@ -1133,169 +1155,6 @@ class ImmFilter {
   }
 
   /**
-   * 推算专用 IMM 预测步：交互混合 → 各模型独立 CA 预测（含 IMU 注入）。
-   * 与 _immStep 的「1/1b/2 步（转移概率 + 速度先验 + 混合 + 预测）」逻辑等价，
-   * 仅跳过位置观测 update/似然。推算期每个 1s 聚合样本调用一次，预测协方差 P⁻
-   * 直接写回 _Px/_Py，保证推算结束后 update() 可直接接续。概率更新由调用方
-   * 基于速度先验修正后的 c̄ 完成（predictOnly 内）。
-   * 注意：与 _immStep 的 predict 段需同步维护，改动时两端保持一致。
-   * @param {number} dt 时间间隔（秒）
-   * @param {number} speed 当前运动速度（m/s，速度辅助先验；推算期用滤波器混合速度）
-   * @param {Float64Array|number[]} [imuAcc] ENU 加速度 [ax, ay]（仅注入 CA 模型）
-   */
-  _predictIMM(dt, speed, imuAcc) {
-    const T = this._T, mu = this._mu;
-
-    // ── 1. 转移预测概率 c̄_i = Σ_j T[i][j]·μ_j ──
-    for (let i = 0; i < 3; i++) {
-      this._cbar[i] = T[i][0] * mu[0] + T[i][1] * mu[1] + T[i][2] * mu[2];
-      if (!(this._cbar[i] > 0) || !isFinite(this._cbar[i])) this._cbar[i] = 1e-12;
-    }
-    this._cbarRaw[0] = this._cbar[0];
-    this._cbarRaw[1] = this._cbar[1];
-    this._cbarRaw[2] = this._cbar[2];
-
-    // ── 1b. 速度辅助模型先验（与 _immStep 完全一致）──
-    if (this._speedPrior) {
-      const spd = speed > 0 ? speed : 0;
-      const pS = 1 / (1 + spd * spd / 4);
-      const dC = spd - 2.5;
-      const pC = 1 / (1 + dC * dC / 4);
-      const dA = spd - 7;
-      const pA = 1 / (1 + dA * dA / 9);
-      const ps = pS + pC + pA;
-      if (ps > 0 && isFinite(ps)) {
-        this._cbar[0] *= pS / ps;
-        this._cbar[1] *= pC / ps;
-        this._cbar[2] *= pA / ps;
-        const cs = this._cbar[0] + this._cbar[1] + this._cbar[2];
-        if (cs > 0 && isFinite(cs)) {
-          this._cbar[0] /= cs; this._cbar[1] /= cs; this._cbar[2] /= cs;
-        }
-      }
-    }
-
-    // IMU 加速度幅值限幅（推算期 accEnu 来自 1s 聚合均值，未预限幅，此处兜底）
-    const c = this._imuAccClamp;
-    let axIn = 0, ayIn = 0;
-    if (imuAcc && imuAcc.length >= 2 && isFinite(imuAcc[0]) && isFinite(imuAcc[1])) {
-      axIn = Math.max(-c, Math.min(c, imuAcc[0]));
-      ayIn = Math.max(-c, Math.min(c, imuAcc[1]));
-    }
-
-    const d2 = dt * dt, d3 = dt * d2, d4 = dt * d3;
-    const h = 0.5 * d2; // ½dt²
-
-    // ── 2. 逐模型：混合输入 → 预测 ──
-    for (let m = 0; m < 3; m++) {
-      // 混合权重 μ_{j|i} = T[i][j]·μ_j / c̄_i（用未修正 c̄ 归一，保证 Σ_j μ_{j|i} = 1）
-      const ci = this._cbarRaw[m];
-      this._w[0] = T[m][0] * mu[0] / ci;
-      this._w[1] = T[m][1] * mu[1] / ci;
-      this._w[2] = T[m][2] * mu[2] / ci;
-
-      // ---- x 轴：混合状态/协方差 ----
-      const w0 = this._w[0], w1 = this._w[1], w2 = this._w[2];
-      this._mxs[0] = w0 * this._sx[0][0] + w1 * this._sx[1][0] + w2 * this._sx[2][0];
-      this._mxs[1] = w0 * this._sx[0][1] + w1 * this._sx[1][1] + w2 * this._sx[2][1];
-      this._mxs[2] = w0 * this._sx[0][2] + w1 * this._sx[1][2] + w2 * this._sx[2][2];
-      for (let a = 0; a < 3; a++) {
-        for (let b = a; b < 3; b++) {
-          let s = 0;
-          for (let j = 0; j < 3; j++) {
-            const da = this._sx[j][a] - this._mxs[a];
-            const db = this._sx[j][b] - this._mxs[b];
-            s += this._w[j] * (this._Px[j][a * 3 + b] + da * db);
-          }
-          this._mPx[a * 3 + b] = s;
-          this._mPx[b * 3 + a] = s;
-        }
-      }
-      // ---- y 轴：混合状态/协方差 ----
-      this._mys[0] = w0 * this._sy[0][0] + w1 * this._sy[1][0] + w2 * this._sy[2][0];
-      this._mys[1] = w0 * this._sy[0][1] + w1 * this._sy[1][1] + w2 * this._sy[2][1];
-      this._mys[2] = w0 * this._sy[0][2] + w1 * this._sy[1][2] + w2 * this._sy[2][2];
-      for (let a = 0; a < 3; a++) {
-        for (let b = a; b < 3; b++) {
-          let s = 0;
-          for (let j = 0; j < 3; j++) {
-            const da = this._sy[j][a] - this._mys[a];
-            const db = this._sy[j][b] - this._mys[b];
-            s += this._w[j] * (this._Py[j][a * 3 + b] + da * db);
-          }
-          this._mPy[a * 3 + b] = s;
-          this._mPy[b * 3 + a] = s;
-        }
-      }
-
-      // ---- x 轴 predict（与 _immStep 一致：CA 叠加 IMU 加速度，Q 同步缩放）----
-      const isCA = m === 2;
-      const ax = isCA ? axIn * this._imuTrust : 0;
-      const ay = isCA ? ayIn * this._imuTrust : 0;
-      const qScale = isCA ? Math.max(0.3, 1 - this._imuTrust * 0.7) : 1;
-      const qa = this._q[m] * qScale;
-      const qa2 = qa * qa;
-      const q00 = 0.25 * qa2 * d4, q01 = 0.5 * qa2 * d3, q02 = 0.5 * qa2 * d2,
-            q11 = qa2 * d2, q12 = qa2 * dt, q22 = qa2;
-      const P = this._mPx, Pp = this._Pp;
-      const A00 = P[0] + dt * P[3] + h * P[6];
-      const A01 = P[1] + dt * P[4] + h * P[7];
-      const A02 = P[2] + dt * P[5] + h * P[8];
-      const A10 = P[3] + dt * P[6];
-      const A11 = P[4] + dt * P[7];
-      const A12 = P[5] + dt * P[8];
-      Pp[0] = A00 + dt * A01 + h * A02 + q00;
-      Pp[1] = A01 + dt * A02 + q01;
-      Pp[2] = A02 + q02;
-      Pp[3] = Pp[1];
-      Pp[4] = A11 + dt * A12 + q11;
-      Pp[5] = A12 + q12;
-      Pp[6] = Pp[2];
-      Pp[7] = Pp[5];
-      Pp[8] = P[8] + q22;
-      const px = this._mxs[0] + this._mxs[1] * dt + this._mxs[2] * h + h * ax;
-      const pvx = this._mxs[1] + this._mxs[2] * dt + dt * ax;
-      const pax = this._mxs[2] + ax;
-      const sx = this._sx[m];
-      sx[0] = px; sx[1] = pvx; sx[2] = pax;
-      // P⁻ 写回（无 update，直接保存预测协方差供下步混合）
-      this._Px[m].set(Pp);
-
-      // ---- y 轴 predict（与 x 轴完全对称）----
-      const Py = this._mPy;
-      const By00 = Py[0] + dt * Py[3] + h * Py[6];
-      const By01 = Py[1] + dt * Py[4] + h * Py[7];
-      const By02 = Py[2] + dt * Py[5] + h * Py[8];
-      const By10 = Py[3] + dt * Py[6];
-      const By11 = Py[4] + dt * Py[7];
-      const By12 = Py[5] + dt * Py[8];
-      Pp[0] = By00 + dt * By01 + h * By02 + q00;
-      Pp[1] = By01 + dt * By02 + q01;
-      Pp[2] = By02 + q02;
-      Pp[3] = Pp[1];
-      Pp[4] = By11 + dt * By12 + q11;
-      Pp[5] = By12 + q12;
-      Pp[6] = Pp[2];
-      Pp[7] = Pp[5];
-      Pp[8] = Py[8] + q22;
-      const py = this._mys[0] + this._mys[1] * dt + this._mys[2] * h + h * ay;
-      const pvy = this._mys[1] + this._mys[2] * dt + dt * ay;
-      const pay = this._mys[2] + ay;
-      const syv = this._sy[m];
-      syv[0] = py; syv[1] = pvy; syv[2] = pay;
-      this._Py[m].set(Pp);
-
-      // 模型速度模量限幅（_immStep 在 update 后限幅；推算无 update，预测速度直接限幅）
-      const spd = Math.hypot(sx[1], syv[1]);
-      if (spd > this._speedLimit) {
-        const k = this._speedLimit / spd;
-        sx[1] *= k;
-        syv[1] *= k;
-      }
-    }
-  }
-
-  /**
    * 数值退化兜底（理论不可达：S=P⁻[0][0]+R，R≥9 恒正）：所有模型接受测量、
    * 协方差恢复初始、概率恢复先验。与单模型「奇异保护→init」语义一致。
    * @param {number} mx x 轴测量（米）
@@ -1336,100 +1195,190 @@ class ImmFilter {
     }
   }
 
-  /**
-   * IMU 惯性导航融合：接收地理坐标系（ENU）线性加速度并缓存，供下一次
-   * update() 注入 CA 模型的预测阶段（阶段二加速度注入）。
-   * 不做姿态旋转（由上层 ImuManager 完成），本方法只负责幅值限幅与缓存。
-   * @param {Float64Array|number[]} accEnu 地理坐标系线性加速度 [ax, ay, az]（m/s²）
-   * @param {Float64Array|number[]} [gyro] 陀螺仪角速度（rad/s，当前不参与融合）
-   * @param {number} [dt] 采样间隔（秒，当前不参与，注入发生在 GPS update 的 dt 上）
-   * @returns {boolean} 是否已接受加速度
-   */
-  feedImu(accEnu, gyro, dt) {
-    if (!accEnu || accEnu.length < 2) return false;
-    const ax = accEnu[0], ay = accEnu[1];
-    if (!isFinite(ax) || !isFinite(ay)) return false;
-    const c = this._imuAccClamp;
-    this._imuAcc = [Math.max(-c, Math.min(c, ax)), Math.max(-c, Math.min(c, ay))];
-    return true;
+}
+
+/**
+ * IMU 惯性传感器管理器 — 仅定位校准（加速度注入辅助滤波）。
+ *
+ * 职责收窄（本次重引入的唯一形态）：
+ *  - 只消费 TYPE_LINEAR_ACCELERATION（去重力线性加速度）→ rotation 四元数旋转到 ENU
+ *    地理系 → 1s 窗口均值 → 一阶低通 → 供 GPSManager 在每次滤波 update 前 feedImu()
+ *    注入 ImmFilter CA 模型预测（仅运动学先验，GPS 仍是位置权威）。
+ *  - 不参与航向解算：heading 完全由 GPS 权威（_resolveHeading），IMU 不读陀螺仪融合。
+ *  - 不做航迹推算：无 setHighFrequency / onSample 推算路径 / predictOnly / DR 状态机。
+ *  - web 端无 Capacitor 插件 → hasData=false，静默跳过，纯 GPS 行为零回归。
+ *  - 生命周期随 GPSManager 的 watch 启停（startWatching → start，stopWatching → stop）。
+ */
+class ImuManager {
+  constructor() {
+    const C = (typeof CONFIG !== 'undefined' && CONFIG) || {};
+    this._enabled = C.IMU_ENABLED !== false;
+    this._feedInterval = C.IMU_FEED_INTERVAL_MS != null ? C.IMU_FEED_INTERVAL_MS : 1000;
+    this._feedMaxAge = C.IMU_FEED_MAX_AGE_MS != null ? C.IMU_FEED_MAX_AGE_MS : 2000;
+    const alpha = C.IMU_ACC_LPF_ALPHA != null ? C.IMU_ACC_LPF_ALPHA : 0.4;
+    this._lpfAlpha = Math.min(1, Math.max(0, alpha));
+    this._clamp = C.IMU_ACC_CLAMP != null ? C.IMU_ACC_CLAMP : 30;
+
+    this._plugin = null;       // Capacitor.Plugins.ImuData 引用（web 端为 null）
+    this._listening = false;   // 插件监听是否已启动
+    this._starting = null;     // start() 的 Promise（防并发启动）
+    this._handle = null;       // imuSample 事件监听器句柄
+
+    // 1s 聚合窗口（ENU 三轴累加）
+    this._winAcc = [0, 0, 0];
+    this._winCount = 0;
+    this._winStart = 0;
+    // 最新输出：低通后的水平 ENU 加速度 [东, 北]（m/s²），无数据为 null
+    this._lastAccEnu = null;
+    this._lastSampleTime = 0;  // 最近一次 IMU 事件时间戳（新鲜度判断）
+  }
+
+  /** 是否可用（web 无插件 → false） */
+  get hasData() {
+    return !!(this._plugin && this._listening);
+  }
+
+  /** 探测 Capacitor ImuData 插件（web 端 Capacitor 未注入时静默跳过，零回归） */
+  _tryInitPlugin() {
+    if (!this._enabled) return;
+    try {
+      const cap = typeof Capacitor !== 'undefined' ? Capacitor : null;
+      const plugins = cap && cap.Plugins ? cap.Plugins : null;
+      if (plugins && plugins.ImuData && typeof plugins.ImuData.startImuListening === 'function') {
+        this._plugin = plugins.ImuData;
+      }
+    } catch (_) {}
+  }
+
+  /** 启动监听（25Hz 事件流），重复调用自动忽略 */
+  start() {
+    if (!this._enabled || !this._plugin || this._listening || this._starting) {
+      return Promise.resolve(false);
+    }
+    this._starting = (async () => {
+      try {
+        // 先注册监听器再启动：Java 端注册传感器后立即开始回调（25Hz），
+        // 避免首批 imuSample 事件在监听器注册前被丢弃（与 GNSS 处理一致）。
+        // Capacitor v3+ 的 addListener 返回 Promise<PluginListenerHandle>，必须 await。
+        this._handle = await this._plugin.addListener('imuSample', (s) => this._onSample(s));
+        try {
+          await this._plugin.startImuListening();
+        } catch (e) {
+          // 启动失败 → 清理监听器，退化为不注入
+          try { if (this._handle && this._handle.remove) this._handle.remove(); } catch (_) {}
+          this._handle = null;
+          throw e;
+        }
+        this._listening = true;
+        this._resetWindow();
+        return true;
+      } catch (err) {
+        if (CONFIG.DEBUG) console.warn('[IMU] 监听启动失败', err && err.message || err);
+        return false;
+      } finally {
+        this._starting = null;
+      }
+    })();
+    return this._starting;
+  }
+
+  /** 停止监听（释放传感器 + 清空缓存，防止陈旧数据注入） */
+  stop() {
+    this._starting = null;
+    if (!this._plugin) return;
+    this._listening = false;
+    try {
+      if (this._handle) {
+        if (typeof this._handle.remove === 'function') this._handle.remove();
+        this._handle = null;
+      }
+    } catch (_) { this._handle = null; }
+    try { this._plugin.stopImuListening(); } catch (_) {}
+    this._lastAccEnu = null;
+    this._lastSampleTime = 0;
+    this._resetWindow();
   }
 
   /**
-   * 阶段三：GPS 丢失时的短时航迹推算（完整 IMM 预测，无位置观测）。
-   * 每个 1s 聚合样本走 _predictIMM（交互混合 + 各模型独立 CA 预测 + IMU 注入），
-   * 概率由速度辅助先验 + 转移概率重算（无位置似然，退化为纯先验归一化）——
-   * 模型概率不再冻结、各模型状态不再被单一混合值抹平，保持独立演化。
-   * 推算结束后 GPS 恢复，update() 可直接接续（各模型状态/协方差已连续传播）。
-   * @param {number} time 时间戳（毫秒，与 update 同一时间基准）
-   * @param {Float64Array|number[]} [accEnu] ENU 加速度 [ax, ay]（m/s²，可空→不注入，仅靠模型自身推进）
-   * @returns {{lat: number, lng: number}|null} 推算坐标（未初始化/时间异常返回 null）
+   * 获取最新水平 ENU 加速度 [东, 北]（m/s²，已聚合 + 低通 + 限幅）。
+   * 未启动 / 无数据 / 事件流过期（超过 IMU_FEED_MAX_AGE_MS 无新样本）→ 返回 null，
+   * 调用方据此跳过注入（GPS 暂停节流或 IMU 中断时不喂陈旧数据）。
    */
-  predictOnly(time, accEnu) {
-    if (!this._initialized) return null;
-    const dt = (time - this._lastTime) / 1000;
-    this._lastTime = time;
-    if (!(dt > 0) || !isFinite(dt) || dt > 60) return this._lastFiltered;
+  getLatestAccEnu() {
+    if (!this._listening || !this._lastAccEnu) return null;
+    if (this._lastSampleTime <= 0 || Date.now() - this._lastSampleTime > this._feedMaxAge) return null;
+    return this._lastAccEnu;
+  }
 
-    // 速度辅助先验输入：推进前概率加权混合速度（推算期无 GPS speed，用滤波器状态）
-    let vx = 0, vy = 0;
-    for (let m = 0; m < 3; m++) {
-      vx += this._mu[m] * this._sx[m][1];
-      vy += this._mu[m] * this._sy[m][1];
-    }
-    const speed = Math.hypot(vx, vy);
+  _resetWindow() {
+    this._winAcc[0] = 0;
+    this._winAcc[1] = 0;
+    this._winAcc[2] = 0;
+    this._winCount = 0;
+    this._winStart = 0;
+  }
 
-    // 完整 IMM 预测步（交互混合 + 各模型独立 CA 预测 + IMU 注入 + 速度先验修正 c̄）
-    this._predictIMM(dt, speed, accEnu);
+  /** 25Hz 事件：聚合 → 满窗口输出均值 → 低通 */
+  _onSample(sample) {
+    if (!sample || typeof sample !== 'object') return;
+    const ax = Number(sample.ax), ay = Number(sample.ay), az = Number(sample.az);
+    if (!isFinite(ax) || !isFinite(ay) || !isFinite(az)) return;
+    const q = sample.rotation;
+    if (!Array.isArray(q) || q.length < 4) return; // 无姿态 → 不做错误旋转（安全降级）
+    const accEnu = this._rotateAccToEnu([ax, ay, az], q);
+    if (!accEnu) return;
 
-    // 概率更新：无位置观测 → 退化为纯先验 μ_i = c̄_i / Σ c̄_j（c̄ 已含速度先验修正）
-    const s = this._cbar[0] + this._cbar[1] + this._cbar[2];
-    if (!(s > 0) || !isFinite(s)) {
-      this._mu[0] = this._mu0[0];
-      this._mu[1] = this._mu0[1];
-      this._mu[2] = this._mu0[2];
-    } else {
-      this._mu[0] = this._cbar[0] / s;
-      this._mu[1] = this._cbar[1] / s;
-      this._mu[2] = this._cbar[2] / s;
-    }
-    // 概率下界保护（防浮点死锁到 0，与 _immStep 第 3 步一致）
-    const minP = this._minProb;
-    if (this._mu[0] < minP || this._mu[1] < minP || this._mu[2] < minP) {
-      this._mu[0] = Math.max(this._mu[0], minP);
-      this._mu[1] = Math.max(this._mu[1], minP);
-      this._mu[2] = Math.max(this._mu[2], minP);
-      const sm = this._mu[0] + this._mu[1] + this._mu[2];
-      this._mu[0] /= sm; this._mu[1] /= sm; this._mu[2] /= sm;
-    }
+    const now = Date.now();
+    this._lastSampleTime = now;
+    if (this._winCount === 0) this._winStart = now;
+    this._winAcc[0] += accEnu[0];
+    this._winAcc[1] += accEnu[1];
+    this._winAcc[2] += accEnu[2];
+    this._winCount++;
 
-    // 输出：概率加权混合（推进后各模型状态 × 新概率）
-    let x = 0, y = 0, ax = 0, ay = 0;
-    vx = 0; vy = 0;
-    for (let m = 0; m < 3; m++) {
-      const w = this._mu[m];
-      x += w * this._sx[m][0];
-      y += w * this._sy[m][0];
-      vx += w * this._sx[m][1];
-      vy += w * this._sy[m][1];
-      ax += w * this._sx[m][2];
-      ay += w * this._sy[m][2];
+    if (this._winCount > 0 && now - this._winStart >= this._feedInterval) {
+      const inv = 1 / this._winCount;
+      const meanE = this._winAcc[0] * inv;
+      const meanN = this._winAcc[1] * inv;
+      const meanU = this._winAcc[2] * inv;
+      this._winAcc[0] = 0; this._winAcc[1] = 0; this._winAcc[2] = 0;
+      this._winCount = 0;
+      this._winStart = now;
+      // 一阶低通（α=1 全信最新均值，α=0 保持旧值）+ 限幅
+      const a = this._lpfAlpha;
+      const pe = this._lastAccEnu ? this._lastAccEnu[0] : meanE;
+      const pn = this._lastAccEnu ? this._lastAccEnu[1] : meanN;
+      const e = Math.max(-this._clamp, Math.min(this._clamp, pe + a * (meanE - pe)));
+      const n = Math.max(-this._clamp, Math.min(this._clamp, pn + a * (meanN - pn)));
+      this._lastAccEnu = [e, n];
     }
-    // 输出速度模量限幅（防御性，模型内已限幅）
-    const spd = Math.hypot(vx, vy);
-    if (spd > this._speedLimit) {
-      const k = this._speedLimit / spd;
-      vx *= k;
-      vy *= k;
-    }
-    this._ax = ax;
-    this._ay = ay;
+  }
 
-    const filtered = {
-      lat: this._refLat + y / M_PER_DEG,
-      lng: this._refLng + x / (M_PER_DEG * this._cosLat)
-    };
-    this._lastFiltered = filtered;
-    return filtered;
+  /**
+   * 四元数旋转：设备系加速度 → 世界系 ENU（纯数学旋转工具，与航向解算无关）。
+   * q = [w,x,y,z] 单位四元数，v' = q·v·q⁻¹，用简化公式
+   *   t = 2·(xyz × v)，v' = v + w·t + xyz × t
+   * @param {number[]} v 设备系线性加速度 [ax,ay,az]
+   * @param {number[]} q 姿态四元数 [w,x,y,z]
+   * @returns {number[]|null} ENU 加速度 [E,N,U]，四元数非法返回 null
+   */
+  _rotateAccToEnu(v, q) {
+    const qw = Number(q[0]), qx = Number(q[1]), qy = Number(q[2]), qz = Number(q[3]);
+    if (!isFinite(qw) || !isFinite(qx) || !isFinite(qy) || !isFinite(qz)) return null;
+    let norm = qw * qw + qx * qx + qy * qy + qz * qz;
+    if (!(norm > 0) || !isFinite(norm)) return null;
+    norm = Math.sqrt(norm);
+    const x = qx / norm, y = qy / norm, z = qz / norm, w = qw / norm;
+    // t = 2·(xyz × v)
+    const t1 = 2 * (y * v[2] - z * v[1]);
+    const t2 = 2 * (z * v[0] - x * v[2]);
+    const t3 = 2 * (x * v[1] - y * v[0]);
+    // v' = v + w·t + xyz × t
+    return [
+      v[0] + w * t1 + (y * t3 - z * t2),
+      v[1] + w * t2 + (z * t1 - x * t3),
+      v[2] + w * t3 + (x * t2 - y * t1)
+    ];
   }
 }
 
@@ -1698,193 +1647,6 @@ class AltRtsSmoother {
   }
 }
 
-/**
- * IMU 惯性导航管理器 — 原生 ImuData 插件桥接 + 姿态旋转 + 按需聚合。
- *
- * 两个消费模式（由 GPSManager 切换）：
- *  1. 低频注入（阶段二，默认）：25Hz 原始事件 → 四元数旋转到 ENU 地理系
- *     → 1s 窗口均值聚合 → getLatestAccEnu() 供 GPS update 前 feedImu()。
- *  2. 推算（阶段三）：推算期间 setHighFrequency(true)，同样按 1s 窗口聚合，
- *     每个窗口结束触发一次 onSample 回调，由 GPSManager 推进 ImmFilter.predictOnly()
- *     走完整 IMM 预测（与 GPS 秒级步长对齐，概率由速度先验重算而非冻结）。
- *
- * 姿态旋转：TYPE_LINEAR_ACCELERATION 是设备系（已去重力），配合 ROTATION_VECTOR
- * 四元数 [w,x,y,z]（设备系→ENU 世界系）旋转即得地理系加速度，与 IMM 局部米坐标
- * 天然对齐（x 东 / y 北）。无姿态数据（旧机型无 ROTATION_VECTOR）→ 返回 null，
- * 上层退化为不注入/不推算（安全侧）。
- */
-class ImuManager {
-  constructor() {
-    const C = (typeof CONFIG !== 'undefined' && CONFIG) || {};
-    this._enabled = C.IMU_ENABLED !== false;
-    this._feedInterval = C.IMU_FEED_INTERVAL_MS != null ? C.IMU_FEED_INTERVAL_MS : 1000;
-    this._lpfAlpha = C.IMU_ACC_LPF_ALPHA != null ? Math.min(1, Math.max(0, C.IMU_ACC_LPF_ALPHA)) : 0.4;
-
-    this._plugin = null;       // Capacitor.Plugins.ImuData 引用
-    this._listening = false;
-    this._starting = null;     // start() 的 Promise（防并发）
-    this._handle = null;       // imuSample 事件监听句柄
-    this._initError = null;
-    this._lastSample = null;   // 最近原始样本（hasData 判断 + 推算新鲜度）
-    this._lastAccEnu = null;   // 最近聚合/低通后的 ENU 加速度 [ax, ay, az]
-    this._windowAcc = [0, 0, 0]; // 1s 聚合窗口累加
-    this._windowCount = 0;
-    this._windowStart = 0;
-    this._highFreq = false;    // 推算模式：1s 聚合窗口结束时触发 onSample
-    this.onSample = null;      // 推算模式回调 (sample, accEnu, nowMs) => void（每 1s 窗口一次）
-  }
-
-  /** 探测 Capacitor ImuData 插件（仅存引用，不启动监听） */
-  _tryInitPlugin() {
-    if (!this._enabled) return;
-    if (typeof Capacitor === 'undefined' || !Capacitor.Plugins) {
-      this._initError = 'not_capacitor';
-      return;
-    }
-    const plugin = Capacitor.Plugins.ImuData;
-    if (!plugin) {
-      this._initError = 'plugin_not_registered';
-      return;
-    }
-    this._plugin = plugin;
-  }
-
-  /** 是否有可用数据（监听已激活且收到过样本） */
-  hasData() {
-    return this._listening && this._lastSample != null;
-  }
-
-  /**
-   * 启动 IMU 监听（25Hz）。无插件/禁用时静默跳过（web 端零回归）。
-   */
-  async start() {
-    if (!this._enabled || this._listening) return;
-    if (!this._plugin) this._tryInitPlugin();
-    if (!this._plugin) return;
-    if (this._starting) return this._starting;
-    this._starting = (async () => {
-      try {
-        // 先注册监听再 start：防止第一批事件在 listener 就绪前被丢弃（与 GNSS 相同竞态）
-        this._handle = await this._plugin.addListener('imuSample', (e) => this._onSample(e));
-        await this._plugin.startImuListening();
-        this._listening = true;
-        this._initError = null;
-        this._resetWindow();
-        if (CONFIG.DEBUG) console.log('[Imu] IMU 监听已激活（25Hz）');
-      } catch (err) {
-        this._initError = err.message || 'start_failed';
-        console.warn('[Imu] IMU 插件激活失败:', err.message);
-        if (this._handle) { try { this._handle.remove(); } catch (_) {} }
-        this._handle = null;
-        this._listening = false;
-      } finally {
-        this._starting = null;
-      }
-    })();
-    return this._starting;
-  }
-
-  /**
-   * 停止监听并释放。重置窗口与缓存，退出高频模式。
-   */
-  async stop() {
-    if (this._listening) {
-      try { await this._plugin.stopImuListening(); } catch (_) {}
-    }
-    if (this._handle) { try { this._handle.remove(); } catch (_) {} }
-    this._handle = null;
-    this._listening = false;
-    this._highFreq = false;
-    this._lastSample = null;
-    this._resetWindow();
-  }
-
-  /**
-   * 切换消费模式（推算开始/结束由 GPSManager 调用）。
-   * @param {boolean} v true=推算（每 1s 窗口结束触发 onSample），false=注入（仅更新 _lastAccEnu 供 feedImu）
-   */
-  setHighFrequency(v) {
-    if (this._highFreq === !!v) return;
-    this._highFreq = !!v;
-    this._resetWindow();
-  }
-
-  /** 读取最近一次聚合/低通后的 ENU 加速度（GPS update 前 feedImu 用） */
-  getLatestAccEnu() {
-    return this._lastAccEnu;
-  }
-
-  _resetWindow() {
-    this._windowAcc = [0, 0, 0];
-    this._windowCount = 0;
-    this._windowStart = 0;
-    this._lastAccEnu = null;
-  }
-
-  /** 事件入口：姿态旋转 → 1s 窗口聚合 → 按模式输出 */
-  _onSample(sample) {
-    if (!sample) return;
-    this._lastSample = sample;
-    const raw = this._rotateAccToEnu(sample);
-    if (!raw) return;
-    const now = Date.now();
-
-    // 聚合窗口（阶段二注入 & 阶段三推算共用 1s 步长，与 GPS 秒级步长对齐）
-    if (this._windowCount === 0) this._windowStart = now;
-    this._windowAcc[0] += raw[0];
-    this._windowAcc[1] += raw[1];
-    this._windowAcc[2] += raw[2];
-    this._windowCount++;
-    if (now - this._windowStart >= this._feedInterval) {
-      const n = Math.max(1, this._windowCount);
-      const avg = [this._windowAcc[0] / n, this._windowAcc[1] / n, this._windowAcc[2] / n];
-      // 对窗口均值再做一阶低通（IMU_ACC_LPF_ALPHA：0=直接用均值，1=全信最新均值）
-      this._lastAccEnu = this._lpf(avg);
-      this._windowAcc = [0, 0, 0];
-      this._windowCount = 0;
-      this._windowStart = now;
-      // 推算模式：每个 1s 窗口结束触发一次 onSample，GPSManager 驱动 predictOnly 走完整 IMM 预测
-      if (this._highFreq && this.onSample) {
-        this.onSample(sample, this._lastAccEnu, now);
-      }
-    }
-  }
-
-  /** 一阶低通（对 1s 窗口均值平滑，抑制窗口间跳变） */
-  _lpf(raw) {
-    const a = this._lpfAlpha;
-    if (!this._lastAccEnu) return [raw[0], raw[1], raw[2]];
-    return [
-      a * raw[0] + (1 - a) * this._lastAccEnu[0],
-      a * raw[1] + (1 - a) * this._lastAccEnu[1],
-      a * raw[2] + (1 - a) * this._lastAccEnu[2]
-    ];
-  }
-
-  /**
-   * 设备系线性加速度 → ENU 地理系（四元数旋转，Rodrigues 公式）。
-   * 无姿态数据（rotation 空/非法）→ 返回 null（上层安全退化）。
-   */
-  _rotateAccToEnu(s) {
-    const q = s.rotation;
-    if (!Array.isArray(q) || q.length < 4) return null;
-    const w = q[0], x = q[1], y = q[2], z = q[3];
-    const vx = s.ax, vy = s.ay, vz = s.az;
-    if (!isFinite(w) || !isFinite(x) || !isFinite(y) || !isFinite(z)) return null;
-    if (!isFinite(vx) || !isFinite(vy) || !isFinite(vz)) return null;
-    // t = 2·(q_v × v)
-    const tx = 2 * (y * vz - z * vy);
-    const ty = 2 * (z * vx - x * vz);
-    const tz = 2 * (x * vy - y * vx);
-    // v' = v + w·t + (q_v × t)
-    return [
-      vx + w * tx + (y * tz - z * ty),
-      vy + w * ty + (z * tx - x * tz),
-      vz + w * tz + (x * ty - y * tx)
-    ];
-  }
-}
-
 class GPSManager {
   constructor() {
     this.watchId = null;
@@ -1980,24 +1742,11 @@ class GPSManager {
     this._weakCnt = 0;                 // 弱信号持续计数（GNSS 事件约 1s/次）
     this._strongCnt = 0;               // 强信号持续计数（滞回恢复）
 
-    // IMU 惯性导航（阶段二加速度注入 + 阶段三 GPS 丢失短时推算）
+    // IMU 惯性传感器（仅定位校准：加速度注入辅助滤波，随 watch 生命周期启停）
     this._imuManager = new ImuManager();
-    this._imuStarted = false;          // IMU 监听是否已启动（随 watch 生命周期）
-    this._deadReckoning = false;       // 推算状态
-    this._drStartTime = 0;             // 推算开始时间戳（毫秒）
-    this._drLastTime = 0;              // 推算最近推进时间戳（毫秒）
-    this._drLastLat = null;            // 推算最近输出纬度（WGS84，UI/航向用）
-    this._drLastLng = null;            // 推算最近输出经度（WGS84，UI/航向用）
-    this._drHeading = null;            // 推算期航向（由推进方位角实时更新）
-    this._fixCount = 0;                // 本次会话有效 GPS fix 计数（IMU_MIN_FIXES 门槛）
-    this.onDeadReckoningChange = null; // 推算状态变更回调 (active: boolean) => void
-    this.onDeadReckonPosition = null;  // 推算位置回调 (pos) => void（仅 UI 展示，不落轨迹）
-    // 推算推进：IMU 高频样本到达时驱动 filter.predictOnly（仅推算期生效）
-    this._imuManager.onSample = (sample, accEnu, now) => {
-      if (!this._deadReckoning || !accEnu) return;
-      this._advanceDeadReckoning(accEnu, now);
-    };
-    this._imuManager._tryInitPlugin();
+    this._imuStarted = false;          // 本次 watch 会话内 IMU 是否已启动
+    this._imuManager._tryInitPlugin(); // web 无插件 → 静默零回归
+
   }
 
   /**
@@ -2123,11 +1872,8 @@ class GPSManager {
       // 由外部在适当时机调用 startGnss()
     }
 
-    // 省电模式下同步关闭 IMU（含退出推算）；退出省电后由 startWatching 重新激活
-    if (next && this._imuStarted) {
-      if (CONFIG.DEBUG) console.log('[GPS] 省电模式：关闭 IMU 监听');
-      this._stopImu();
-    }
+    // 省电模式：IMU 同步关闭（节省传感器耗电 + 暂停校准），退出时随 watch 重启自动恢复
+    if (next) this._stopImu();
 
     if (this.isWatching) {
       this.stopWatching();
@@ -2164,13 +1910,6 @@ class GPSManager {
   }
 
   /**
-   * 是否处于 IMU 短时航迹推算（GPS 丢失中）
-   */
-  get isDeadReckoning() {
-    return this._deadReckoning;
-  }
-
-  /**
    * 获取当前节流间隔（毫秒）
    */
   get currentInterval() {
@@ -2202,140 +1941,6 @@ class GPSManager {
     }
     this._gnssPlugin = plugin;
     if (CONFIG.DEBUG) console.log('[GPS] GNSS 插件已探测到，等待 startGnss() 激活');
-  }
-
-  /* ── IMU 短时航迹推算状态机（阶段三）──────────────── */
-
-  /**
-   * 尝试进入推算：GPS 精度崩坏（>IMU_ACC_FREEZE）且卫星不足（<IMU_SAT_MIN）时，
-   * IMU 按 1s 窗口聚合，每窗口触发 predictOnly 做 ≤IMU_DEAD_RECKON_MAX_MS 的短时推算
-   * （完整 IMM 预测，概率由速度先验重算）。
-   * 前置门槛：IMU 有数据、滤波器支持推算、已累计 ≥IMU_MIN_FIXES 个有效 fix、非省电。
-   * @param {object} pos 最近一次滤波后位置（WGS84）
-   * @param {number} accuracy 定位精度（米）
-   * @returns {boolean} 是否进入推算
-   */
-  _maybeEnterDeadReckoning(pos, accuracy) {
-    if (this._powerSaving) return false;
-    if (!this._imuManager || !this._imuManager.hasData()) return false;
-    if (!this._filter || typeof this._filter.predictOnly !== 'function') return false;
-    if (this._fixCount < CONFIG.IMU_MIN_FIXES) return false;
-    // 触发条件：精度超阈值；GNSS 已激活时还需卫星不足（避免信号好时误判丢失）
-    if (!(accuracy > CONFIG.IMU_ACC_FREEZE)) return false;
-    const sat = this.gnssUsedCount;
-    if (this._gnssListeningStarted && sat >= CONFIG.IMU_SAT_MIN) return false;
-    this._enterDeadReckoning(pos);
-    return true;
-  }
-
-  /**
-   * 超时看门狗兜底入口：GPS 彻底断信号（watchPosition 回调停止）时，位置回调里的
-   * _maybeEnterDeadReckoning 不再有机会执行，由 _startTimeoutWatch 在检测到超时后主动调用。
-   * 参考点取最近一次可信 fix（currentPosition），精度视为无限大（必然 >IMU_ACC_FREEZE）。
-   * 前置门槛与 _maybeEnterDeadReckoning 对齐，不满足时静默返回，不影响既有超时降级流程。
-   */
-  _tryEnterDeadReckoningFromTimeout() {
-    if (this._deadReckoning) return;
-    const pos = this.currentPosition;
-    if (!pos || !isFinite(pos.lat) || !isFinite(pos.lng)) return;
-    if (this._powerSaving) return;
-    if (!this._imuManager || !this._imuManager.hasData()) return;
-    if (!this._filter || typeof this._filter.predictOnly !== 'function') return;
-    if (this._fixCount < CONFIG.IMU_MIN_FIXES) return;
-    // 卫星仍充足 → 只是暂时性延迟，不进推算
-    if (this._gnssListeningStarted && this.gnssUsedCount >= CONFIG.IMU_SAT_MIN) return;
-    if (CONFIG.DEBUG) console.log('[GPS] 超时看门狗触发 IMU 航迹推算（watch 无回调）');
-    this._enterDeadReckoning(pos);
-  }
-
-  /** 进入推算：锁定参考点、切 IMU 推算聚合模式（1s 窗口驱动）、通知 UI */
-  _enterDeadReckoning(pos) {
-    this._deadReckoning = true;
-    const now = Date.now();
-    this._drStartTime = now;
-    this._drLastTime = now;
-    this._drLastLat = pos.lat;
-    this._drLastLng = pos.lng;
-    this._drHeading = (pos.heading != null && isFinite(pos.heading)) ? pos.heading : null;
-    if (this._imuManager) this._imuManager.setHighFrequency(true);
-    if (CONFIG.DEBUG) console.log('[GPS] 进入 IMU 航迹推算（GPS 丢失）');
-    if (this.onDeadReckoningChange) this.onDeadReckoningChange(true);
-  }
-
-  /**
-   * 推算推进：每个 1s 聚合窗口结束（ImuManager.onSample）驱动 filter.predictOnly
-   * 走完整 IMM 预测（交互混合 + 各模型独立 CA 预测 + IMU 注入，概率速度先验重算）。
-   * 超出时长上限 → 强制退出；预测失败 → 退出避免死循环。
-   * 推算坐标走独立 onDeadReckonPosition 通知 UI（不写轨迹，纯积分漂移不可信）。
-   * @param {Float64Array|number[]} accEnu ENU 加速度 [ax, ay]
-   * @param {number} now 时间戳（毫秒）
-   */
-  _advanceDeadReckoning(accEnu, now) {
-    if (!this._deadReckoning) return;
-    if (now - this._drStartTime > CONFIG.IMU_DEAD_RECKON_MAX_MS) {
-      this._exitDeadReckoning(false);
-      return;
-    }
-    const filtered = this._filter.predictOnly(now, accEnu);
-    if (!filtered) {
-      this._exitDeadReckoning(false);
-      return;
-    }
-    // 推进方位角 → 推算期航向（地图箭头/状态栏方向跟随）
-    if (this._drLastLat != null && this._drLastLng != null) {
-      const from = { lat: this._drLastLat, lng: this._drLastLng };
-      const moved = calcDistance(from, filtered);
-      if (moved > 0.5) {
-        this._drHeading = calcBearing(from, filtered);
-      }
-    }
-    this._drLastLat = filtered.lat;
-    this._drLastLng = filtered.lng;
-    this._drLastTime = now;
-    if (this.onDeadReckonPosition) {
-      this.onDeadReckonPosition({
-        lat: filtered.lat,
-        lng: filtered.lng,
-        accuracy: null,           // 推算坐标不可信 → 隐藏精度圆
-        speed: null,              // 速度由滤波器内部状态持有，不对外发布
-        heading: this._drHeading,
-        timestamp: now,
-        deadReckoned: true
-      });
-    }
-  }
-
-  /**
-   * 退出推算：恢复 1s 聚合注入模式、清推算状态、通知 UI。
-   * @param {boolean} [recovered] true=GPS 恢复重锚退出；false=超时/异常强制退出
-   */
-  _exitDeadReckoning(recovered) {
-    if (!this._deadReckoning) return;
-    this._deadReckoning = false;
-    this._drStartTime = 0;
-    this._drLastTime = 0;
-    if (this._imuManager) this._imuManager.setHighFrequency(false);
-    if (CONFIG.DEBUG) console.log('[GPS] 退出 IMU 航迹推算' + (recovered ? '（GPS 恢复重锚）' : '（超时/异常）'));
-    if (this.onDeadReckoningChange) this.onDeadReckoningChange(false);
-  }
-
-  /**
-   * 启动 IMU 监听（追踪开始时随 watch 一起激活；省电模式不启动）。
-   */
-  _startImu() {
-    if (this._powerSaving || this._imuStarted) return;
-    this._imuStarted = true;
-    this._imuManager.start().catch(() => {});
-  }
-
-  /**
-   * 停止 IMU 监听（追踪停止/省电时）。若在推算中则先退出推算。
-   */
-  _stopImu() {
-    if (!this._imuStarted) return;
-    this._imuStarted = false;
-    this._exitDeadReckoning();
-    this._imuManager.stop().catch(() => {});
   }
 
   /**
@@ -2888,10 +2493,6 @@ class GPSManager {
     // 弱信号状态机仅在 GNSS 激活且无初始化错误时运行（异常状态不得误判弱信号）
     if (!this._gnssListeningStarted || this._gnssInitError) return;
     this._evaluateWeakSignal();
-    // 推算中卫星恢复 → 退出推算，等下一次 GPS fix 重锚校正
-    if (this._deadReckoning && this.gnssUsedCount >= CONFIG.IMU_RECOVER_SAT) {
-      this._exitDeadReckoning(true);
-    }
     // 卫星状态变化 → 重估定位源（节流内置）
     this._maybeEvaluateSource();
   }
@@ -3044,10 +2645,6 @@ class GPSManager {
       if (elapsed > this._getCurrentTimeout()) {
         this._consecutiveTimeouts++;
         if (CONFIG.DEBUG) console.warn(`[GPS] 超时 #${this._consecutiveTimeouts}（${(elapsed / 1000).toFixed(0)}s 无新位置）`);
-        // ── IMU 推算兜底（阶段三补盲）：GPS 彻底断信号时 watchPosition 回调停止触发，
-        //    位置回调里的 _maybeEnterDeadReckoning 失去执行机会，改由超时看门狗主动触发。
-        //    不满足门槛（无 IMU 数据/省电/未达 fix 数/卫星仍充足）时静默跳过，不影响降级流程。
-        this._tryEnterDeadReckoningFromTimeout();
         if (!this._downgraded && this._consecutiveTimeouts >= CONFIG.GPS_TIMEOUT_MAX_FAILURES) {
           this._downgrade();
         }
@@ -3340,15 +2937,17 @@ class GPSManager {
           });
         }
 
-        // ── IMU 加速度注入（阶段二）：GPS update 前把最近 1s 聚合的 ENU 加速度
-        // 喂给滤波器，CA 模型预测时叠加运动学先验。无 IMU 数据时静默跳过（纯 GPS 不变）。
-        const imuAcc = this._imuManager.getLatestAccEnu();
-        if (imuAcc && typeof this._filter.feedImu === 'function') {
-          this._filter.feedImu(imuAcc);
-        }
-
         // ── 2D 卡尔曼滤波实时平滑 ──
         if (this._useFilter && pos.accuracy > 0) {
+          // ── IMU 定位校准：加速度注入 CA 模型预测（仅线性加速度，航向仍由 GPS 权威）──
+          // 无 IMU 数据（web 无插件 / 事件流过期 / 未启动）→ getLatestAccEnu() 返回 null，
+          // 跳过注入，纯 GPS 行为不变。注入值单次消费，不影响 pos.heading。
+          if (this._imuManager) {
+            const imuAcc = this._imuManager.getLatestAccEnu();
+            if (imuAcc && typeof this._filter.feedImu === 'function') {
+              this._filter.feedImu(imuAcc);
+            }
+          }
           // 用收到时刻而非 position.timestamp：maximumAge 缓存/重复 fix 的旧时间戳
           // 会使 dt ≤ 0 触发滤波器重置，平滑被静默关闭
           const ts = now;
@@ -3364,18 +2963,8 @@ class GPSManager {
         }
 
         this.currentPosition = pos;
-        this._fixCount++;       // 有效 fix 计数（IMU_MIN_FIXES 推算门槛）
         this._resetTimeouts(); // 收到位置 → 重置超时计数
         this._updateAdaptiveInterval(pos.speed); // 按本次速度调下次节流间隔
-        // ── IMU 推算状态机（阶段三）：推算中收到好 fix/卫星恢复 → 重锚退出；
-        //    否则精度恶化 + 卫星不足 → 进入短时推算 ──
-        if (this._deadReckoning) {
-          if ((pos.accuracy != null && pos.accuracy < CONFIG.IMU_RECOVER_ACC) || this.gnssUsedCount >= CONFIG.IMU_RECOVER_SAT) {
-            this._exitDeadReckoning(true);
-          }
-        } else {
-          this._maybeEnterDeadReckoning(pos, pos.accuracy || 10);
-        }
         if (this.onPositionChange) this.onPositionChange(pos);
       },
       (error) => {
@@ -3400,7 +2989,7 @@ class GPSManager {
     );
 
     this._startTimeoutWatch(); // 启动超时检测
-    this._startImu(); // 启动 IMU 监听（省电模式内部跳过，stopWatching 时自动停止）
+    this._startImu();          // IMU 随 watch 生命周期启动（仅定位校准）
     if (this.onWatchStart) this.onWatchStart();
   }
 
@@ -3419,10 +3008,27 @@ class GPSManager {
     this._consecutiveTimeouts = 0;
     this._stopTimeoutWatch();
     this._stopRecoveryTimer();
-    // 新会话重新计数 fix；IMU 随 watch 生命周期启停（内部会退出推算，如有）
-    this._fixCount = 0;
-    this._stopImu();
+    this._stopImu();           // IMU 随 watch 停止（释放传感器 + 清缓存）
     if (this.onWatchStop) this.onWatchStop();
+  }
+
+  /**
+   * 启动 IMU（仅定位校准：加速度注入辅助滤波）。
+   * 重复调用自动忽略（_startImu 幂等）；web 无插件时 ImuManager.start 静默返回。
+   */
+  _startImu() {
+    if (!this._imuManager || this._imuStarted) return;
+    this._imuStarted = true;
+    this._imuManager.start();
+  }
+
+  /**
+   * 停止 IMU（释放传感器 + 清空缓存，防止陈旧数据注入）。
+   */
+  _stopImu() {
+    if (!this._imuManager) return;
+    this._imuStarted = false;
+    this._imuManager.stop();
   }
 
   /**
@@ -3432,7 +3038,6 @@ class GPSManager {
     this._destroyed = true;
     this.stopWatching();
     this.stopGnss();
-    this._stopImu();
     this._cleanupBatteryMonitor();
   }
 

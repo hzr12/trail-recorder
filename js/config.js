@@ -166,21 +166,18 @@ const CONFIG = {
   IMM_SPEED_PRIOR: true,             // 速度辅助模型先验（用 GPS 上报 speed 软门控模型切换，弥补纯位置观测辨识慢）
   IMM_MIN_PROB: 1e-6,                // 模型概率下界（防浮点死锁）
 
-  // ----- IMU 惯性导航融合（阶段二：加速度注入 / 阶段三：GPS 丢失短时推算）-----
-  // 阶段二：原生 ImuData 插件 25Hz 采集 → JS 姿态旋转到 ENU → 1Hz 聚合注入 CA 模型，
-  // 只做运动学先验，GPS 仍是位置权威。阶段三：accuracy 超阈值 + 卫星不足时，
-  // IMU 临时切高频做 predictOnly 短时航迹推算（15s 上限，超过强制回冻结等 GPS）。
-  IMU_ENABLED: true,               // IMU 总开关（false 完全禁用；web 无插件零回归）
-  IMU_FEED_INTERVAL_MS: 1000,      // 阶段二：加速度注入节流（1Hz，对齐 GPS 秒级步长）
-  IMU_ACC_LPF_ALPHA: 0.4,          // 对 1s 聚合窗口均值再做低通（0=直接用均值，1=全信最新均值）
-  IMU_ACC_TRUST: 0.6,              // 注入强度（0=纯 GPS 不动 CA，1=完全信任 IMU 加速度）
-  IMU_ACC_CLAMP: 30,               // 加速度幅值限幅（m/s²，防传感器粗差拖垮预测）
-  IMU_MIN_FIXES: 3,                // 触发推算所需最少有效 GPS fix 数（确保有初速）
-  IMU_SAT_MIN: 4,                  // 触发推算：参与定位卫星数上限（低于才可能推算）
-  IMU_ACC_FREEZE: 600,             // 触发推算：accuracy 阈值（米；低于 IMM_FREEZE_ACC=1750，精度显著恶化即提前介入推算，滤波本身仍在 1750m 内正常更新）
-  IMU_DEAD_RECKON_MAX_MS: 15000,   // 推算时长上限（纯积分漂移物理上限，超过强制回冻结；15s 内零偏 0.03 情形误差约 3.4m）
-  IMU_RECOVER_ACC: 100,            // 退出推算：accuracy 恢复阈值（米）
-  IMU_RECOVER_SAT: 6,              // 退出推算：卫星数恢复阈值（滞回，高于触发阈值）
+  // ----- IMU 惯性导航融合（仅定位校准：加速度注入辅助滤波，不做航迹推算）-----
+  // 职责收窄：只消费 TYPE_LINEAR_ACCELERATION（去重力线性加速度），用 rotation 四元数
+  // 旋转到 ENU 地理系 → 1s 窗口均值 → 一阶低通 → 注入 ImmFilter 的 CA 模型预测
+  // （x⁻=F·x̂+G·a_imu，仅运动学先验，GPS 仍是位置权威）。
+  // 航向完全由 GPS 权威（NMEA VTG/RMC + 浏览器 coords.heading），IMU 不参与航向解算；
+  // 不做 GPS 丢失时的纯推算（无 predictOnly / DR 状态机）。web 端无插件零回归。
+  IMU_ENABLED: true,               // IMU 总开关（false 完全禁用；web 无插件自动跳过）
+  IMU_FEED_INTERVAL_MS: 1000,      // 加速度聚合窗口（1Hz，对齐 GPS 秒级步长）
+  IMU_FEED_MAX_AGE_MS: 2000,       // 聚合值新鲜度上限：超时视为过期不注入（防陈旧数据）
+  IMU_ACC_LPF_ALPHA: 0.4,          // 1s 均值后一阶低通系数（0=保持旧值，1=全信最新均值）
+  IMU_ACC_TRUST: 0.6,              // 注入强度（0=纯 GPS，1=完全信任 IMU 加速度）
+  IMU_ACC_CLAMP: 30,               // 加速度幅值限幅（m/s²，防传感器粗差）
 
   // ----- 海拔独立滤波（完全自洽，不依赖水平滤波/Huber/RTS 机制）-----
   // 四级融合：L1 源头质量门(_resolveAltitude) → L2 1D 自适应卡尔曼(AltKalmanFilter)
