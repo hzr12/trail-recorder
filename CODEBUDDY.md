@@ -4,7 +4,7 @@
 
 途刻 TraceCraft：一个**纯前端**的轨迹记录/回放 PWA（无构建工具、无框架、无测试套件），核心是腾讯地图 + GPS 追踪。根目录是可直接用静态服务器打开的 web 应用；`native/` 是 Capacitor 封装的 Android 壳（含 GNSS 卫星数据插件 `GnssData` 与 IMU 惯性传感器插件 `ImuData`）。
 
-**重要**：`native/web/` 是根目录资源的**手工同步副本**（当前与根目录不一致），用于打进 APK。修改根目录 `index.html`/`js/`/`css/` 后，如需发布 Android 版要手动把对应资源复制到 `native/web/`。`old/` 是历史遗留备份目录，不要改动。
+**重要**：`native/web/` 是根目录资源的**手工同步副本**（当前与根目录不一致），用于打进 APK。修改根目录 `index.html`/`js/`/`css/` 后，如需发布 Android 版要手动把对应资源复制到 `native/web/`。
 
 ## 常用命令
 

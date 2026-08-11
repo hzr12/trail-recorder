@@ -294,7 +294,6 @@ trail-recorder/
 │   └── capacitor.config.json
 ├── scripts/
 │   └── generate_android_icons.py   # Android 图标生成
-├── old/                    # 历史遗留备份目录（勿改）
 ├── LICENSE                 # MIT
 └── CODEBUDDY.md            # AI 协作项目说明
 ```
