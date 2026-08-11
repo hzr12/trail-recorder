@@ -175,7 +175,7 @@ const CONFIG = {
   // IMU 临时切高频做 predictOnly 短时航迹推算（15s 上限，超过强制回冻结等 GPS）。
   IMU_ENABLED: true,               // IMU 总开关（false 完全禁用；web 无插件零回归）
   IMU_FEED_INTERVAL_MS: 1000,      // 阶段二：加速度注入节流（1Hz，对齐 GPS 秒级步长）
-  IMU_ACC_LPF_ALPHA: 0.4,          // 推算模式逐点低通系数（0=不过滤，1=全信最新）
+  IMU_ACC_LPF_ALPHA: 0.4,          // 对 1s 聚合窗口均值再做低通（0=直接用均值，1=全信最新均值）
   IMU_ACC_TRUST: 0.6,              // 注入强度（0=纯 GPS 不动 CA，1=完全信任 IMU 加速度）
   IMU_ACC_CLAMP: 30,               // 加速度幅值限幅（m/s²，防传感器粗差拖垮预测）
   IMU_MIN_FIXES: 3,                // 触发推算所需最少有效 GPS fix 数（确保有初速）

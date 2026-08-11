@@ -1133,6 +1133,169 @@ class ImmFilter {
   }
 
   /**
+   * 推算专用 IMM 预测步：交互混合 → 各模型独立 CA 预测（含 IMU 注入）。
+   * 与 _immStep 的「1/1b/2 步（转移概率 + 速度先验 + 混合 + 预测）」逻辑等价，
+   * 仅跳过位置观测 update/似然。推算期每个 1s 聚合样本调用一次，预测协方差 P⁻
+   * 直接写回 _Px/_Py，保证推算结束后 update() 可直接接续。概率更新由调用方
+   * 基于速度先验修正后的 c̄ 完成（predictOnly 内）。
+   * 注意：与 _immStep 的 predict 段需同步维护，改动时两端保持一致。
+   * @param {number} dt 时间间隔（秒）
+   * @param {number} speed 当前运动速度（m/s，速度辅助先验；推算期用滤波器混合速度）
+   * @param {Float64Array|number[]} [imuAcc] ENU 加速度 [ax, ay]（仅注入 CA 模型）
+   */
+  _predictIMM(dt, speed, imuAcc) {
+    const T = this._T, mu = this._mu;
+
+    // ── 1. 转移预测概率 c̄_i = Σ_j T[i][j]·μ_j ──
+    for (let i = 0; i < 3; i++) {
+      this._cbar[i] = T[i][0] * mu[0] + T[i][1] * mu[1] + T[i][2] * mu[2];
+      if (!(this._cbar[i] > 0) || !isFinite(this._cbar[i])) this._cbar[i] = 1e-12;
+    }
+    this._cbarRaw[0] = this._cbar[0];
+    this._cbarRaw[1] = this._cbar[1];
+    this._cbarRaw[2] = this._cbar[2];
+
+    // ── 1b. 速度辅助模型先验（与 _immStep 完全一致）──
+    if (this._speedPrior) {
+      const spd = speed > 0 ? speed : 0;
+      const pS = 1 / (1 + spd * spd / 4);
+      const dC = spd - 2.5;
+      const pC = 1 / (1 + dC * dC / 4);
+      const dA = spd - 7;
+      const pA = 1 / (1 + dA * dA / 9);
+      const ps = pS + pC + pA;
+      if (ps > 0 && isFinite(ps)) {
+        this._cbar[0] *= pS / ps;
+        this._cbar[1] *= pC / ps;
+        this._cbar[2] *= pA / ps;
+        const cs = this._cbar[0] + this._cbar[1] + this._cbar[2];
+        if (cs > 0 && isFinite(cs)) {
+          this._cbar[0] /= cs; this._cbar[1] /= cs; this._cbar[2] /= cs;
+        }
+      }
+    }
+
+    // IMU 加速度幅值限幅（推算期 accEnu 来自 1s 聚合均值，未预限幅，此处兜底）
+    const c = this._imuAccClamp;
+    let axIn = 0, ayIn = 0;
+    if (imuAcc && imuAcc.length >= 2 && isFinite(imuAcc[0]) && isFinite(imuAcc[1])) {
+      axIn = Math.max(-c, Math.min(c, imuAcc[0]));
+      ayIn = Math.max(-c, Math.min(c, imuAcc[1]));
+    }
+
+    const d2 = dt * dt, d3 = dt * d2, d4 = dt * d3;
+    const h = 0.5 * d2; // ½dt²
+
+    // ── 2. 逐模型：混合输入 → 预测 ──
+    for (let m = 0; m < 3; m++) {
+      // 混合权重 μ_{j|i} = T[i][j]·μ_j / c̄_i（用未修正 c̄ 归一，保证 Σ_j μ_{j|i} = 1）
+      const ci = this._cbarRaw[m];
+      this._w[0] = T[m][0] * mu[0] / ci;
+      this._w[1] = T[m][1] * mu[1] / ci;
+      this._w[2] = T[m][2] * mu[2] / ci;
+
+      // ---- x 轴：混合状态/协方差 ----
+      const w0 = this._w[0], w1 = this._w[1], w2 = this._w[2];
+      this._mxs[0] = w0 * this._sx[0][0] + w1 * this._sx[1][0] + w2 * this._sx[2][0];
+      this._mxs[1] = w0 * this._sx[0][1] + w1 * this._sx[1][1] + w2 * this._sx[2][1];
+      this._mxs[2] = w0 * this._sx[0][2] + w1 * this._sx[1][2] + w2 * this._sx[2][2];
+      for (let a = 0; a < 3; a++) {
+        for (let b = a; b < 3; b++) {
+          let s = 0;
+          for (let j = 0; j < 3; j++) {
+            const da = this._sx[j][a] - this._mxs[a];
+            const db = this._sx[j][b] - this._mxs[b];
+            s += this._w[j] * (this._Px[j][a * 3 + b] + da * db);
+          }
+          this._mPx[a * 3 + b] = s;
+          this._mPx[b * 3 + a] = s;
+        }
+      }
+      // ---- y 轴：混合状态/协方差 ----
+      this._mys[0] = w0 * this._sy[0][0] + w1 * this._sy[1][0] + w2 * this._sy[2][0];
+      this._mys[1] = w0 * this._sy[0][1] + w1 * this._sy[1][1] + w2 * this._sy[2][1];
+      this._mys[2] = w0 * this._sy[0][2] + w1 * this._sy[1][2] + w2 * this._sy[2][2];
+      for (let a = 0; a < 3; a++) {
+        for (let b = a; b < 3; b++) {
+          let s = 0;
+          for (let j = 0; j < 3; j++) {
+            const da = this._sy[j][a] - this._mys[a];
+            const db = this._sy[j][b] - this._mys[b];
+            s += this._w[j] * (this._Py[j][a * 3 + b] + da * db);
+          }
+          this._mPy[a * 3 + b] = s;
+          this._mPy[b * 3 + a] = s;
+        }
+      }
+
+      // ---- x 轴 predict（与 _immStep 一致：CA 叠加 IMU 加速度，Q 同步缩放）----
+      const isCA = m === 2;
+      const ax = isCA ? axIn * this._imuTrust : 0;
+      const ay = isCA ? ayIn * this._imuTrust : 0;
+      const qScale = isCA ? Math.max(0.3, 1 - this._imuTrust * 0.7) : 1;
+      const qa = this._q[m] * qScale;
+      const qa2 = qa * qa;
+      const q00 = 0.25 * qa2 * d4, q01 = 0.5 * qa2 * d3, q02 = 0.5 * qa2 * d2,
+            q11 = qa2 * d2, q12 = qa2 * dt, q22 = qa2;
+      const P = this._mPx, Pp = this._Pp;
+      const A00 = P[0] + dt * P[3] + h * P[6];
+      const A01 = P[1] + dt * P[4] + h * P[7];
+      const A02 = P[2] + dt * P[5] + h * P[8];
+      const A10 = P[3] + dt * P[6];
+      const A11 = P[4] + dt * P[7];
+      const A12 = P[5] + dt * P[8];
+      Pp[0] = A00 + dt * A01 + h * A02 + q00;
+      Pp[1] = A01 + dt * A02 + q01;
+      Pp[2] = A02 + q02;
+      Pp[3] = Pp[1];
+      Pp[4] = A11 + dt * A12 + q11;
+      Pp[5] = A12 + q12;
+      Pp[6] = Pp[2];
+      Pp[7] = Pp[5];
+      Pp[8] = P[8] + q22;
+      const px = this._mxs[0] + this._mxs[1] * dt + this._mxs[2] * h + h * ax;
+      const pvx = this._mxs[1] + this._mxs[2] * dt + dt * ax;
+      const pax = this._mxs[2] + ax;
+      const sx = this._sx[m];
+      sx[0] = px; sx[1] = pvx; sx[2] = pax;
+      // P⁻ 写回（无 update，直接保存预测协方差供下步混合）
+      this._Px[m].set(Pp);
+
+      // ---- y 轴 predict（与 x 轴完全对称）----
+      const Py = this._mPy;
+      const By00 = Py[0] + dt * Py[3] + h * Py[6];
+      const By01 = Py[1] + dt * Py[4] + h * Py[7];
+      const By02 = Py[2] + dt * Py[5] + h * Py[8];
+      const By10 = Py[3] + dt * Py[6];
+      const By11 = Py[4] + dt * Py[7];
+      const By12 = Py[5] + dt * Py[8];
+      Pp[0] = By00 + dt * By01 + h * By02 + q00;
+      Pp[1] = By01 + dt * By02 + q01;
+      Pp[2] = By02 + q02;
+      Pp[3] = Pp[1];
+      Pp[4] = By11 + dt * By12 + q11;
+      Pp[5] = By12 + q12;
+      Pp[6] = Pp[2];
+      Pp[7] = Pp[5];
+      Pp[8] = Py[8] + q22;
+      const py = this._mys[0] + this._mys[1] * dt + this._mys[2] * h + h * ay;
+      const pvy = this._mys[1] + this._mys[2] * dt + dt * ay;
+      const pay = this._mys[2] + ay;
+      const syv = this._sy[m];
+      syv[0] = py; syv[1] = pvy; syv[2] = pay;
+      this._Py[m].set(Pp);
+
+      // 模型速度模量限幅（_immStep 在 update 后限幅；推算无 update，预测速度直接限幅）
+      const spd = Math.hypot(sx[1], syv[1]);
+      if (spd > this._speedLimit) {
+        const k = this._speedLimit / spd;
+        sx[1] *= k;
+        syv[1] *= k;
+      }
+    }
+  }
+
+  /**
    * 数值退化兜底（理论不可达：S=P⁻[0][0]+R，R≥9 恒正）：所有模型接受测量、
    * 协方差恢复初始、概率恢复先验。与单模型「奇异保护→init」语义一致。
    * @param {number} mx x 轴测量（米）
@@ -1192,12 +1355,13 @@ class ImmFilter {
   }
 
   /**
-   * 阶段三：GPS 丢失时的短时航迹推算（只预测、不更新）。
-   * 用当前概率加权混合状态 + IMU 加速度推进位置，跳过 update/似然/概率更新；
-   * 模型概率保持最后一次 GPS 修正后的收敛值。推算结果同步写回各模型状态，
-   * 保证推算结束（GPS 恢复）后 update 可直接接续，无需重置。
+   * 阶段三：GPS 丢失时的短时航迹推算（完整 IMM 预测，无位置观测）。
+   * 每个 1s 聚合样本走 _predictIMM（交互混合 + 各模型独立 CA 预测 + IMU 注入），
+   * 概率由速度辅助先验 + 转移概率重算（无位置似然，退化为纯先验归一化）——
+   * 模型概率不再冻结、各模型状态不再被单一混合值抹平，保持独立演化。
+   * 推算结束后 GPS 恢复，update() 可直接接续（各模型状态/协方差已连续传播）。
    * @param {number} time 时间戳（毫秒，与 update 同一时间基准）
-   * @param {Float64Array|number[]} [accEnu] ENU 加速度 [ax, ay]（m/s²，可空→用混合加速度估计）
+   * @param {Float64Array|number[]} [accEnu] ENU 加速度 [ax, ay]（m/s²，可空→不注入，仅靠模型自身推进）
    * @returns {{lat: number, lng: number}|null} 推算坐标（未初始化/时间异常返回 null）
    */
   predictOnly(time, accEnu) {
@@ -1206,49 +1370,59 @@ class ImmFilter {
     this._lastTime = time;
     if (!(dt > 0) || !isFinite(dt) || dt > 60) return this._lastFiltered;
 
-    // 概率加权混合当前状态（推算期间概率固定，保持收敛值）
-    let x = 0, y = 0, vx = 0, vy = 0;
+    // 速度辅助先验输入：推进前概率加权混合速度（推算期无 GPS speed，用滤波器状态）
+    let vx = 0, vy = 0;
+    for (let m = 0; m < 3; m++) {
+      vx += this._mu[m] * this._sx[m][1];
+      vy += this._mu[m] * this._sy[m][1];
+    }
+    const speed = Math.hypot(vx, vy);
+
+    // 完整 IMM 预测步（交互混合 + 各模型独立 CA 预测 + IMU 注入 + 速度先验修正 c̄）
+    this._predictIMM(dt, speed, accEnu);
+
+    // 概率更新：无位置观测 → 退化为纯先验 μ_i = c̄_i / Σ c̄_j（c̄ 已含速度先验修正）
+    const s = this._cbar[0] + this._cbar[1] + this._cbar[2];
+    if (!(s > 0) || !isFinite(s)) {
+      this._mu[0] = this._mu0[0];
+      this._mu[1] = this._mu0[1];
+      this._mu[2] = this._mu0[2];
+    } else {
+      this._mu[0] = this._cbar[0] / s;
+      this._mu[1] = this._cbar[1] / s;
+      this._mu[2] = this._cbar[2] / s;
+    }
+    // 概率下界保护（防浮点死锁到 0，与 _immStep 第 3 步一致）
+    const minP = this._minProb;
+    if (this._mu[0] < minP || this._mu[1] < minP || this._mu[2] < minP) {
+      this._mu[0] = Math.max(this._mu[0], minP);
+      this._mu[1] = Math.max(this._mu[1], minP);
+      this._mu[2] = Math.max(this._mu[2], minP);
+      const sm = this._mu[0] + this._mu[1] + this._mu[2];
+      this._mu[0] /= sm; this._mu[1] /= sm; this._mu[2] /= sm;
+    }
+
+    // 输出：概率加权混合（推进后各模型状态 × 新概率）
+    let x = 0, y = 0, ax = 0, ay = 0;
+    vx = 0; vy = 0;
     for (let m = 0; m < 3; m++) {
       const w = this._mu[m];
       x += w * this._sx[m][0];
       y += w * this._sy[m][0];
       vx += w * this._sx[m][1];
       vy += w * this._sy[m][1];
+      ax += w * this._sx[m][2];
+      ay += w * this._sy[m][2];
     }
-    // IMU 加速度优先（限幅），无则用混合加速度估计兜底
-    const c = this._imuAccClamp;
-    let axI = 0, ayI = 0;
-    if (accEnu && accEnu.length >= 2 && isFinite(accEnu[0]) && isFinite(accEnu[1])) {
-      axI = Math.max(-c, Math.min(c, accEnu[0]));
-      ayI = Math.max(-c, Math.min(c, accEnu[1]));
-    } else {
-      for (let m = 0; m < 3; m++) {
-        axI += this._mu[m] * this._sx[m][2];
-        ayI += this._mu[m] * this._sy[m][2];
-      }
-    }
-
-    // 恒加速度推进：位置 +v·dt + ½a·dt²，速度 +a·dt
-    const h = 0.5 * dt * dt;
-    x += vx * dt + axI * h;
-    y += vy * dt + ayI * h;
-    vx += axI * dt;
-    vy += ayI * dt;
-
-    // 速度模量限幅（与 update 一致）
+    // 输出速度模量限幅（防御性，模型内已限幅）
     const spd = Math.hypot(vx, vy);
     if (spd > this._speedLimit) {
       const k = this._speedLimit / spd;
       vx *= k;
       vy *= k;
     }
-    // 写回各模型状态（保持一致性，推算结束可直接接续 GPS update）
-    for (let m = 0; m < 3; m++) {
-      this._sx[m][0] = x; this._sx[m][1] = vx; this._sx[m][2] = axI;
-      this._sy[m][0] = y; this._sy[m][1] = vy; this._sy[m][2] = ayI;
-    }
-    this._ax = axI;
-    this._ay = ayI;
+    this._ax = ax;
+    this._ay = ay;
 
     const filtered = {
       lat: this._refLat + y / M_PER_DEG,
@@ -1530,8 +1704,9 @@ class AltRtsSmoother {
  * 两个消费模式（由 GPSManager 切换）：
  *  1. 低频注入（阶段二，默认）：25Hz 原始事件 → 四元数旋转到 ENU 地理系
  *     → 1s 窗口均值聚合 → getLatestAccEnu() 供 GPS update 前 feedImu()。
- *  2. 高频推算（阶段三）：推算期间 setHighFrequency(true)，逐事件低通即出，
- *     每个样本触发 onSample 回调由 GPSManager 推进 ImmFilter.predictOnly()。
+ *  2. 推算（阶段三）：推算期间 setHighFrequency(true)，同样按 1s 窗口聚合，
+ *     每个窗口结束触发一次 onSample 回调，由 GPSManager 推进 ImmFilter.predictOnly()
+ *     走完整 IMM 预测（与 GPS 秒级步长对齐，概率由速度先验重算而非冻结）。
  *
  * 姿态旋转：TYPE_LINEAR_ACCELERATION 是设备系（已去重力），配合 ROTATION_VECTOR
  * 四元数 [w,x,y,z]（设备系→ENU 世界系）旋转即得地理系加速度，与 IMM 局部米坐标
@@ -1555,8 +1730,8 @@ class ImuManager {
     this._windowAcc = [0, 0, 0]; // 1s 聚合窗口累加
     this._windowCount = 0;
     this._windowStart = 0;
-    this._highFreq = false;    // 推算模式：逐事件输出而非 1s 聚合
-    this.onSample = null;      // 推算模式回调 (sample, accEnu, nowMs) => void
+    this._highFreq = false;    // 推算模式：1s 聚合窗口结束时触发 onSample
+    this.onSample = null;      // 推算模式回调 (sample, accEnu, nowMs) => void（每 1s 窗口一次）
   }
 
   /** 探测 Capacitor ImuData 插件（仅存引用，不启动监听） */
@@ -1626,7 +1801,7 @@ class ImuManager {
 
   /**
    * 切换消费模式（推算开始/结束由 GPSManager 调用）。
-   * @param {boolean} v true=高频逐事件输出（推算），false=1s 聚合注入
+   * @param {boolean} v true=推算（每 1s 窗口结束触发 onSample），false=注入（仅更新 _lastAccEnu 供 feedImu）
    */
   setHighFrequency(v) {
     if (this._highFreq === !!v) return;
@@ -1646,7 +1821,7 @@ class ImuManager {
     this._lastAccEnu = null;
   }
 
-  /** 事件入口：姿态旋转 → 低通/聚合 → 按模式输出 */
+  /** 事件入口：姿态旋转 → 1s 窗口聚合 → 按模式输出 */
   _onSample(sample) {
     if (!sample) return;
     this._lastSample = sample;
@@ -1654,14 +1829,7 @@ class ImuManager {
     if (!raw) return;
     const now = Date.now();
 
-    if (this._highFreq) {
-      // 推算模式：逐点低通即出，并触发 onSample（GPSManager 推进 predictOnly）
-      this._lastAccEnu = this._lpf(raw);
-      if (this.onSample) this.onSample(sample, this._lastAccEnu, now);
-      return;
-    }
-
-    // 聚合模式（阶段二）：1s 窗口均值
+    // 聚合窗口（阶段二注入 & 阶段三推算共用 1s 步长，与 GPS 秒级步长对齐）
     if (this._windowCount === 0) this._windowStart = now;
     this._windowAcc[0] += raw[0];
     this._windowAcc[1] += raw[1];
@@ -1669,14 +1837,20 @@ class ImuManager {
     this._windowCount++;
     if (now - this._windowStart >= this._feedInterval) {
       const n = Math.max(1, this._windowCount);
-      this._lastAccEnu = [this._windowAcc[0] / n, this._windowAcc[1] / n, this._windowAcc[2] / n];
+      const avg = [this._windowAcc[0] / n, this._windowAcc[1] / n, this._windowAcc[2] / n];
+      // 对窗口均值再做一阶低通（IMU_ACC_LPF_ALPHA：0=直接用均值，1=全信最新均值）
+      this._lastAccEnu = this._lpf(avg);
       this._windowAcc = [0, 0, 0];
       this._windowCount = 0;
       this._windowStart = now;
+      // 推算模式：每个 1s 窗口结束触发一次 onSample，GPSManager 驱动 predictOnly 走完整 IMM 预测
+      if (this._highFreq && this.onSample) {
+        this.onSample(sample, this._lastAccEnu, now);
+      }
     }
   }
 
-  /** 一阶低通（推算模式逐点平滑） */
+  /** 一阶低通（对 1s 窗口均值平滑，抑制窗口间跳变） */
   _lpf(raw) {
     const a = this._lpfAlpha;
     if (!this._lastAccEnu) return [raw[0], raw[1], raw[2]];
@@ -2034,7 +2208,8 @@ class GPSManager {
 
   /**
    * 尝试进入推算：GPS 精度崩坏（>IMU_ACC_FREEZE）且卫星不足（<IMU_SAT_MIN）时，
-   * 用 IMU 高频样本推进 predictOnly 做 ≤IMU_DEAD_RECKON_MAX_MS 的短时推算。
+   * IMU 按 1s 窗口聚合，每窗口触发 predictOnly 做 ≤IMU_DEAD_RECKON_MAX_MS 的短时推算
+   * （完整 IMM 预测，概率由速度先验重算）。
    * 前置门槛：IMU 有数据、滤波器支持推算、已累计 ≥IMU_MIN_FIXES 个有效 fix、非省电。
    * @param {object} pos 最近一次滤波后位置（WGS84）
    * @param {number} accuracy 定位精度（米）
@@ -2073,7 +2248,7 @@ class GPSManager {
     this._enterDeadReckoning(pos);
   }
 
-  /** 进入推算：锁定参考点、切 IMU 高频逐事件模式、通知 UI */
+  /** 进入推算：锁定参考点、切 IMU 推算聚合模式（1s 窗口驱动）、通知 UI */
   _enterDeadReckoning(pos) {
     this._deadReckoning = true;
     const now = Date.now();
@@ -2088,8 +2263,9 @@ class GPSManager {
   }
 
   /**
-   * 推算推进：IMU 高频样本到达时驱动 filter.predictOnly（只预测不更新）。
-   * 超出时长上限 → 强制退出回冻结；预测失败 → 退出避免死循环。
+   * 推算推进：每个 1s 聚合窗口结束（ImuManager.onSample）驱动 filter.predictOnly
+   * 走完整 IMM 预测（交互混合 + 各模型独立 CA 预测 + IMU 注入，概率速度先验重算）。
+   * 超出时长上限 → 强制退出；预测失败 → 退出避免死循环。
    * 推算坐标走独立 onDeadReckonPosition 通知 UI（不写轨迹，纯积分漂移不可信）。
    * @param {Float64Array|number[]} accEnu ENU 加速度 [ax, ay]
    * @param {number} now 时间戳（毫秒）
