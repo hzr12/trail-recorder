@@ -164,7 +164,7 @@ const CONFIG = {
   IMM_ACC_VAR: 4,                    // 初始加速度方差（米²/s⁴，适度初始不确定度）
   IMM_REANCHOR_M: 3000,              // 距参考点超此距离重锚（米，与单模型一致）
   IMM_SPEED_LIMIT: 120,              // 模型速度模量限幅（m/s ≈ 432km/h）
-  IMM_FREEZE_ACC: 2000,              // 精度超此值冻结在最后可信位置（米，放宽：2km 内均正常滤波）
+  IMM_FREEZE_ACC: 1750,              // 精度超此值冻结在最后可信位置（米，放宽：1750m 内均正常滤波）
   IMM_LIKELIHOOD_TEMP: 2.0,          // 模型似然温度 γ（Λ^γ 放大模型差异，加速强模型主导；1 为标准 IMM）
   IMM_SPEED_PRIOR: true,             // 速度辅助模型先验（用 GPS 上报 speed 软门控模型切换，弥补纯位置观测辨识慢）
   IMM_MIN_PROB: 1e-6,                // 模型概率下界（防浮点死锁）
@@ -172,7 +172,7 @@ const CONFIG = {
   // ----- IMU 惯性导航融合（阶段二：加速度注入 / 阶段三：GPS 丢失短时推算）-----
   // 阶段二：原生 ImuData 插件 25Hz 采集 → JS 姿态旋转到 ENU → 1Hz 聚合注入 CA 模型，
   // 只做运动学先验，GPS 仍是位置权威。阶段三：accuracy 超阈值 + 卫星不足时，
-  // IMU 临时切高频做 predictOnly 短时航迹推算（8s 上限，超过强制回冻结等 GPS）。
+  // IMU 临时切高频做 predictOnly 短时航迹推算（15s 上限，超过强制回冻结等 GPS）。
   IMU_ENABLED: true,               // IMU 总开关（false 完全禁用；web 无插件零回归）
   IMU_FEED_INTERVAL_MS: 1000,      // 阶段二：加速度注入节流（1Hz，对齐 GPS 秒级步长）
   IMU_ACC_LPF_ALPHA: 0.4,          // 推算模式逐点低通系数（0=不过滤，1=全信最新）
@@ -180,8 +180,8 @@ const CONFIG = {
   IMU_ACC_CLAMP: 30,               // 加速度幅值限幅（m/s²，防传感器粗差拖垮预测）
   IMU_MIN_FIXES: 3,                // 触发推算所需最少有效 GPS fix 数（确保有初速）
   IMU_SAT_MIN: 4,                  // 触发推算：参与定位卫星数上限（低于才可能推算）
-  IMU_ACC_FREEZE: 750,             // 触发推算：accuracy 阈值（米；低于 IMM_FREEZE_ACC=2000，精度显著恶化即提前介入推算，滤波本身仍在 2km 内正常更新）
-  IMU_DEAD_RECKON_MAX_MS: 8000,    // 推算时长上限（纯积分漂移物理上限，超过强制回冻结）
+  IMU_ACC_FREEZE: 600,             // 触发推算：accuracy 阈值（米；低于 IMM_FREEZE_ACC=1750，精度显著恶化即提前介入推算，滤波本身仍在 1750m 内正常更新）
+  IMU_DEAD_RECKON_MAX_MS: 15000,   // 推算时长上限（纯积分漂移物理上限，超过强制回冻结；15s 内零偏 0.03 情形误差约 3.4m）
   IMU_RECOVER_ACC: 100,            // 退出推算：accuracy 恢复阈值（米）
   IMU_RECOVER_SAT: 6,              // 退出推算：卫星数恢复阈值（滞回，高于触发阈值）
 
