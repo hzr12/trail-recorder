@@ -5,9 +5,6 @@
  */
 
 const CONFIG = {
-  // 腾讯地图 API 密钥
-  MAP_KEY: 'OB4BZ-D4W3U-B7VVO-4PJWW-6TKDJ-WPB77',
-
   // 默认地图中心（广州塔）
   DEFAULT_CENTER: { lat: 23.1291, lng: 113.2644 },
 

@@ -1,1 +1,0 @@
--keep class com.hzr.circlemap.plugins.gnss.** { *; }
