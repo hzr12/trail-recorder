@@ -66,14 +66,14 @@ class ImuManager {
     } catch (_) {}
   }
 
-  /** 启动监听（25Hz 事件流），重复调用自动忽略 */
+  /** 启动监听（10Hz 事件流，取决于原生 sensorDelay 档），重复调用自动忽略 */
   start() {
     if (!this._enabled || !this._plugin || this._listening || this._starting) {
       return Promise.resolve(false);
     }
     this._starting = (async () => {
       try {
-        // 先注册监听器再启动：Java 端注册传感器后立即开始回调（25Hz），
+        // 先注册监听器再启动：Java 端注册传感器后立即开始回调（10Hz），
         // 避免首批 imuSample 事件在监听器注册前被丢弃（与 GNSS 处理一致）。
         // Capacitor v3+ 的 addListener 返回 Promise<PluginListenerHandle>，必须 await。
         this._handle = await this._plugin.addListener('imuSample', (s) => this._onSample(s));
@@ -137,7 +137,7 @@ class ImuManager {
   }
 
   /**
-   * 25Hz 事件：滑窗聚合（桶式环形缓冲）→ 低通。
+   * 10Hz 事件：滑窗聚合（桶式环形缓冲）→ 低通。
    * 每样本累加进「当前绝对桶号」对应桶，窗口为最近 _feedInterval 内所有桶；
    * 均值持续更新，GPS fix 任意时刻到达都能取到最新近 1s 均值。
    */

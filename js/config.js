@@ -189,6 +189,7 @@ const CONFIG = {
   IMU_ACC_LPF_ALPHA: 0.4,          // 窗口均值后一阶低通系数（0=保持旧值，1=全信最新均值）
   IMU_ACC_TRUST: 0.6,              // 注入强度（0=纯 GPS，1=完全信任 IMU 加速度）
   IMU_ACC_CLAMP: 30,               // 加速度幅值限幅（m/s²，防传感器粗差）
+  IMU_MIN_USED_SATS: 5,            // 参与定位（解算中）卫星数阈值：仅当 usedInFix 卫星数 > 此值时才启用 IMU
 
   // ----- 海拔独立滤波（完全自洽，不依赖水平滤波/Huber/RTS 机制）-----
   // 四级融合：L1 源头质量门(_resolveAltitude) → L2 1D 自适应卡尔曼(AltKalmanFilter)

@@ -854,6 +854,8 @@ class GPSManager {
     this._satStatsCache = this._computeSatStats(this._gnssSatellites);
     // 卫星数据变化 → 通知 UI（卫星天顶图等），即使监听未就绪也推送（用于隐藏空态）
     if (this.onSatellitesChange) this.onSatellitesChange(this._gnssSatellites);
+    // 卫星数变化 → 动态同步 IMU 启停（解算中卫星数 > IMU_MIN_USED_SATS 才开启）
+    this._syncImuState();
     // 弱信号状态机仅在 GNSS 激活且无初始化错误时运行（异常状态不得误判弱信号）
     if (!this._gnssListeningStarted || this._gnssInitError) return;
     this._evaluateWeakSignal();
@@ -1357,7 +1359,7 @@ class GPSManager {
     );
 
     this._startTimeoutWatch(); // 启动超时检测
-    this._startImu();          // IMU 随 watch 生命周期启动（仅定位校准）
+    this._syncImuState();      // IMU 按条件启动（仅定位校准；需 usedInFix 卫星数 > IMU_MIN_USED_SATS）
     if (this.onWatchStart) this.onWatchStart();
   }
 
@@ -1400,6 +1402,26 @@ class GPSManager {
     if (!this._imuManager) return;
     this._imuStarted = false;
     this._imuManager.stop();
+  }
+
+  /**
+   * IMU 是否应当运行：web 无插件 / 未 watch / 省电模式 → 不运行；
+   * 仅当参与定位（解算中 usedInFix）卫星数 > IMU_MIN_USED_SATS 才启用。
+   * @returns {boolean}
+   */
+  _imuShouldRun() {
+    if (!this._imuManager || !this.isWatching || this._powerSaving) return false;
+    return this.gnssUsedCount > CONFIG.IMU_MIN_USED_SATS;
+  }
+
+  /**
+   * 按当前条件同步 IMU 启停状态（随卫星数 / 省电 / watch 生命周期动态切换）：
+   * 满足条件则启动，否则停止（停止会清空缓存，防止陈旧加速度注入）。
+   */
+  _syncImuState() {
+    if (!this._imuManager) return;
+    if (this._imuShouldRun()) this._startImu();
+    else this._stopImu();
   }
 
   /**
