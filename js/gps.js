@@ -1202,8 +1202,9 @@ class ImmFilter {
  *
  * 职责收窄（本次重引入的唯一形态）：
  *  - 只消费 TYPE_LINEAR_ACCELERATION（去重力线性加速度）→ rotation 四元数旋转到 ENU
- *    地理系 → 1s 窗口均值 → 一阶低通 → 供 GPSManager 在每次滤波 update 前 feedImu()
- *    注入 ImmFilter CA 模型预测（仅运动学先验，GPS 仍是位置权威）。
+ *    地理系 → 滑窗均值（近 IMU_FEED_INTERVAL_MS 窗口，分桶环形缓冲持续输出）→ 一阶
+ *    低通 → 供 GPSManager 在每次滤波 update 前 feedImu() 注入 ImmFilter CA 模型预测
+ *    （仅运动学先验，GPS 仍是位置权威）。
  *  - 不参与航向解算：heading 完全由 GPS 权威（_resolveHeading），IMU 不读陀螺仪融合。
  *  - 不做航迹推算：无 setHighFrequency / onSample 推算路径 / predictOnly / DR 状态机。
  *  - web 端无 Capacitor 插件 → hasData=false，静默跳过，纯 GPS 行为零回归。
@@ -1224,10 +1225,17 @@ class ImuManager {
     this._starting = null;     // start() 的 Promise（防并发启动）
     this._handle = null;       // imuSample 事件监听器句柄
 
-    // 1s 聚合窗口（ENU 三轴累加）
-    this._winAcc = [0, 0, 0];
-    this._winCount = 0;
-    this._winStart = 0;
+    // 滑窗聚合（桶式环形缓冲，预分配防 GC）：窗口时长=IMU_FEED_INTERVAL_MS，
+    // 均分为 IMU_WIN_BUCKETS 个桶。每样本累加进当前桶，窗口随绝对桶号滑动，
+    // 均值持续更新——GPS fix 任意时刻到达都能取到「最近 1s」均值（取代旧整窗
+    // 「满窗才输出」，避免注入用上跨窗旧值）。
+    const buckets = C.IMU_WIN_BUCKETS != null ? C.IMU_WIN_BUCKETS : 4;
+    this._bucketCount = Math.max(1, Math.min(32, Math.round(buckets)));
+    this._bucketMs = this._feedInterval / this._bucketCount;
+    this._buckets = [];
+    for (let i = 0; i < this._bucketCount; i++) {
+      this._buckets.push({ bucketIdx: -1, count: 0, sumE: 0, sumN: 0 });
+    }
     // 最新输出：低通后的水平 ENU 加速度 [东, 北]（m/s²），无数据为 null
     this._lastAccEnu = null;
     this._lastSampleTime = 0;  // 最近一次 IMU 事件时间戳（新鲜度判断）
@@ -1311,14 +1319,20 @@ class ImuManager {
   }
 
   _resetWindow() {
-    this._winAcc[0] = 0;
-    this._winAcc[1] = 0;
-    this._winAcc[2] = 0;
-    this._winCount = 0;
-    this._winStart = 0;
+    for (let i = 0; i < this._bucketCount; i++) {
+      const b = this._buckets[i];
+      b.bucketIdx = -1;
+      b.count = 0;
+      b.sumE = 0;
+      b.sumN = 0;
+    }
   }
 
-  /** 25Hz 事件：聚合 → 满窗口输出均值 → 低通 */
+  /**
+   * 25Hz 事件：滑窗聚合（桶式环形缓冲）→ 低通。
+   * 每样本累加进「当前绝对桶号」对应桶，窗口为最近 _feedInterval 内所有桶；
+   * 均值持续更新，GPS fix 任意时刻到达都能取到最新近 1s 均值。
+   */
   _onSample(sample) {
     if (!sample || typeof sample !== 'object') return;
     const ax = Number(sample.ax), ay = Number(sample.ay), az = Number(sample.az);
@@ -1330,28 +1344,44 @@ class ImuManager {
 
     const now = Date.now();
     this._lastSampleTime = now;
-    if (this._winCount === 0) this._winStart = now;
-    this._winAcc[0] += accEnu[0];
-    this._winAcc[1] += accEnu[1];
-    this._winAcc[2] += accEnu[2];
-    this._winCount++;
 
-    if (this._winCount > 0 && now - this._winStart >= this._feedInterval) {
-      const inv = 1 / this._winCount;
-      const meanE = this._winAcc[0] * inv;
-      const meanN = this._winAcc[1] * inv;
-      const meanU = this._winAcc[2] * inv;
-      this._winAcc[0] = 0; this._winAcc[1] = 0; this._winAcc[2] = 0;
-      this._winCount = 0;
-      this._winStart = now;
-      // 一阶低通（α=1 全信最新均值，α=0 保持旧值）+ 限幅
-      const a = this._lpfAlpha;
-      const pe = this._lastAccEnu ? this._lastAccEnu[0] : meanE;
-      const pn = this._lastAccEnu ? this._lastAccEnu[1] : meanN;
-      const e = Math.max(-this._clamp, Math.min(this._clamp, pe + a * (meanE - pe)));
-      const n = Math.max(-this._clamp, Math.min(this._clamp, pn + a * (meanN - pn)));
-      this._lastAccEnu = [e, n];
+    // 绝对桶号（单调递增时间轴）→ 环形索引；桶号变更说明已滑出上一周期
+    const bucketIdx = Math.floor(now / this._bucketMs);
+    const b = this._buckets[bucketIdx % this._bucketCount];
+    if (b.bucketIdx !== bucketIdx) {
+      // 首次使用该桶位（新桶，替换的是更早周期的旧桶）→ 清零重开
+      b.bucketIdx = bucketIdx;
+      b.count = 0;
+      b.sumE = 0;
+      b.sumN = 0;
     }
+    b.count++;
+    b.sumE += accEnu[0];
+    b.sumN += accEnu[1];
+
+    // 窗口 = 最近 _feedInterval：绝对桶号 ≥ 当前桶号 - 桶数 + 1 的桶
+    const winStartBucket = bucketIdx - this._bucketCount + 1;
+    let sumE = 0, sumN = 0, count = 0;
+    for (let i = 0; i < this._bucketCount; i++) {
+      const bb = this._buckets[i];
+      if (bb.bucketIdx >= winStartBucket) {
+        sumE += bb.sumE;
+        sumN += bb.sumN;
+        count += bb.count;
+      }
+    }
+    if (count <= 0) return;
+
+    const inv = 1 / count;
+    const meanE = sumE * inv;
+    const meanN = sumN * inv;
+    // 一阶低通（α=1 全信最新均值，α=0 保持旧值）+ 限幅
+    const a = this._lpfAlpha;
+    const pe = this._lastAccEnu ? this._lastAccEnu[0] : meanE;
+    const pn = this._lastAccEnu ? this._lastAccEnu[1] : meanN;
+    const e = Math.max(-this._clamp, Math.min(this._clamp, pe + a * (meanE - pe)));
+    const n = Math.max(-this._clamp, Math.min(this._clamp, pn + a * (meanN - pn)));
+    this._lastAccEnu = [e, n];
   }
 
   /**
@@ -1746,6 +1776,10 @@ class GPSManager {
     this._imuManager = new ImuManager();
     this._imuStarted = false;          // 本次 watch 会话内 IMU 是否已启动
     this._imuManager._tryInitPlugin(); // web 无插件 → 静默零回归
+
+    // 位置差分航向兜底（GPS 航向缺失/低速时，用滤波后相邻点位移反推航向 + 一阶低通）
+    this._diffHeading = null;          // 低通后的差分航向（度，0~360）
+    this._diffHeadingPos = null;       // 上一次用于差分的滤波后位置 {lat, lng}
 
   }
 
@@ -2962,6 +2996,10 @@ class GPSManager {
           this._filter.reset();
         }
 
+        // 位置差分航向兜底：GPS 航向缺失或低速（步行起步/遮挡）时，用滤波后相邻点
+        // 位移反推航向（atan2(dE,dN)）+ 一阶低通，避免箭头乱抖。仅此路径启用。
+        pos.heading = this._resolveHeadingFallback(pos);
+
         this.currentPosition = pos;
         this._resetTimeouts(); // 收到位置 → 重置超时计数
         this._updateAdaptiveInterval(pos.speed); // 按本次速度调下次节流间隔
@@ -3009,6 +3047,9 @@ class GPSManager {
     this._stopTimeoutWatch();
     this._stopRecoveryTimer();
     this._stopImu();           // IMU 随 watch 停止（释放传感器 + 清缓存）
+    // 重置位置差分航向状态，防止跨会话用陈旧基线推算航向
+    this._diffHeading = null;
+    this._diffHeadingPos = null;
     if (this.onWatchStop) this.onWatchStop();
   }
 
@@ -3527,6 +3568,57 @@ class GPSManager {
       return vtg;
     }
     return browserHeading != null ? browserHeading : null;
+  }
+
+  /**
+   * 位置差分航向兜底：GPS 航向缺失或低速（步行起步/遮挡）时，用滤波后相邻两点的
+   * 位移反推航向（atan2(dE, dN)）并做一阶低通，避免低速时箭头乱抖。
+   * - GPS 航向有效且非低速 → GPS 仍为权威（重置差分状态防遗留旧值）。
+   * - 基线位置始终跟踪最近滤波点，保证高速→低速切换时差分可立即生效。
+   * - 位移过小（静止/冻结）不更新，保持上次方向。
+   * @param {object} pos 已含滤波后 lat/lng、speed、heading（可能 null）的位置对象
+   * @returns {number|null} 航向（度 0~360），无法估计时返回原 GPS 航向
+   */
+  _resolveHeadingFallback(pos) {
+    const C = (typeof CONFIG !== 'undefined' && CONFIG) || {};
+    const minSpeed = C.HEADING_DIFF_MIN_SPEED != null ? C.HEADING_DIFF_MIN_SPEED : 1.0;
+    const minM = C.HEADING_DIFF_MIN_M != null ? C.HEADING_DIFF_MIN_M : 2.0;
+    const alpha = C.HEADING_DIFF_LPF_ALPHA != null ? C.HEADING_DIFF_LPF_ALPHA : 0.3;
+
+    const gpsHeading = pos.heading;
+    const gpsHeadingValid = gpsHeading != null && !isNaN(gpsHeading);
+    const isLowSpeed = pos.speed != null && pos.speed < minSpeed;
+
+    // 基线始终跟踪最近滤波点（无论本次是否走差分）
+    const prev = this._diffHeadingPos;
+    this._diffHeadingPos = { lat: pos.lat, lng: pos.lng };
+
+    // GPS 航向有效 且 非低速 → GPS 权威，清掉差分状态防遗留
+    if (gpsHeadingValid && !isLowSpeed) {
+      this._diffHeading = null;
+      return gpsHeading;
+    }
+
+    // 需要差分兜底（GPS 航向缺失 或 低速）
+    if (!prev) return gpsHeading; // 无历史点 → 无法差分
+
+    const dE = (pos.lng - prev.lng) * M_PER_DEG * Math.cos(pos.lat * DEG2RAD);
+    const dN = (pos.lat - prev.lat) * M_PER_DEG;
+    const dist = Math.hypot(dE, dN);
+    if (dist >= minM) {
+      let raw = Math.atan2(dE, dN) * 180 / Math.PI;
+      if (raw < 0) raw += 360;
+      if (this._diffHeading == null) {
+        this._diffHeading = raw;
+      } else {
+        // 角度一阶低通（处理 0/360 环绕）
+        let delta = raw - this._diffHeading;
+        if (delta > 180) delta -= 360;
+        if (delta < -180) delta += 360;
+        this._diffHeading = (this._diffHeading + alpha * delta + 360) % 360;
+      }
+    }
+    return this._diffHeading != null ? this._diffHeading : gpsHeading;
   }
 
   /**

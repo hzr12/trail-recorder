@@ -231,6 +231,7 @@ k = clamp(k, 1.0, 4.0)                            # 硬上下限兜底
 - **NMEA 解析**（`_parseNmea`）：`$GPRMC`（速度/航向/定位有效/UTC）、`$GPGGA`（海拔/大地水准面分离/fix 质量）、`$GPGSA`（PDOP/HDOP/VDOP）、`$GPVTG`（地面航向/速度）。各语句带有效期窗口（`NMEA_*_MAX_AGE_MS`），过期回退浏览器 coords
 - **速度解算**（`_resolveSpeed`）：VTG 优先 → RMC 交叉验证——相对偏差 >`NMEA_SPEED_CONFLICT_RATIO`(0.3) **且**绝对偏差 >`NMEA_SPEED_CONFLICT_ABS`(2m/s) 判冲突 → 冲突回退浏览器 `coords.speed`（物理测量最可信）
 - **航向解算**（`_resolveHeading`）：VTG 真航向优先 → RMC 交叉验证（偏差 >`NMEA_HEADING_CONFLICT_DEG`(30°) 且速度 ≥`NMEA_HEADING_MIN_SPEED`(1m/s) 才比较，低速航向无意义）→ 浏览器兜底
+- **位置差分航向兜底**（`_resolveHeadingFallback`）：GPS 航向缺失或低速（步行起步/遮挡，`speed < HEADING_DIFF_MIN_SPEED`(1m/s)）时，用滤波后相邻两点的位移反推航向（`atan2(dE,dN)`）并一阶低通（`HEADING_DIFF_LPF_ALPHA`=0.3），避免低速时箭头乱抖；位移 <`HEADING_DIFF_MIN_M`(2m) 不更新（防静止噪声）。GPS 航向有效且非低速时仍以 GPS 为权威
 - **UTC 时钟校准**（`_applyUtcOffset`）：用 RMC UTC 校准本地时钟漂移；新 RMC 相对已校准时钟超窗（`NMEA_UTC_MAX_AGE_MS`=5s）视为陈旧回灌不采纳
 - **源接管**（`evaluateSource`）：`卫星数 ≥ GPS_TAKEOVER_MIN_SATS(4)` 且 `HDOP ≤ GPS_TAKEOVER_HDOP(4)`（HDOP 缺失时以 RMC 有效定位放行）且 GGA fix 有效 → 原生主导；否则浏览器顶上。切换带 `GPS_SOURCE_HOLD_MS`（5s）滞回防抖。native 档**保留高精度 watch**，仅放宽 `maximumAge` 至 `GPS_NATIVE_FALLBACK_MAX_AGE`(30s)——不做低精度，否则 Android 会退回网络定位导致坐标崩坏
 - **弱信号省电**（`_evaluateWeakSignal`）：`卫星数 < GNSS_WEAK_USED_MAX(4)` 且平均信噪比 <`GNSS_WEAK_SNR_MAX`(25dB)，持续 `GNSS_WEAK_HOLD_MS`(30s) 进入弱信号档；恢复需 ≥6 颗且 ≥30dB 持续 `GNSS_RECOVER_HOLD_MS`(10s)（恢复阈值高于进入阈值 → 滞回带防边界抖动）。弱信号档定位心跳拉长至 `GPS_WEAK_SIGNAL_INTERVAL`(120s)，可选 `GPS_WEAK_SIGNAL_LOW_ACCURACY` 降精度（默认关，防失锁）；不关闭 GNSS 监听（需要它监测信号恢复）
@@ -252,12 +253,12 @@ interval = clamp(base, GPS_MIN_INTERVAL, GPS_MAX_INTERVAL)
 
 ### IMU 惯性导航（仅定位校准，仅 Android）
 
-**职责收窄**：IMU 只做**加速度注入辅助滤波**，帮滤波器扛住 GPS 短暂精度波动/抖动（隧道、桥底、高楼遮挡时的平滑过渡）；**不做** GPS 丢失时的纯积分航迹推算（无 `predictOnly`/DR 状态机）。**航向完全由 GPS 权威**（NMEA VTG/RMC + 浏览器 `coords.heading`），IMU 不参与航向解算、不读陀螺仪融合。
+**职责收窄**：IMU 只做**加速度注入辅助滤波**，帮滤波器扛住 GPS 短暂精度波动/抖动（隧道、桥底、高楼遮挡时的平滑过渡）；**不做** GPS 丢失时的纯积分航迹推算（无 `predictOnly`/DR 状态机）。**航向由 GPS 权威**（NMEA VTG/RMC + 浏览器 `coords.heading`），GPS 航向缺失/低速（步行起步）时用**位置差分航向兜底**（见下文），IMU 不参与航向解算、不读陀螺仪融合。
 
 原生 `ImuData` 插件 25Hz 采集线性加速度（已去重力）+ 姿态四元数：
 
 - **姿态旋转**（`_rotateAccToEnu`）：设备系 → ENU 地理系，Rodrigues 公式四元数旋转（纯数学工具，与航向解算无关），与 IMM 局部米坐标天然对齐（x 东 / y 北）；旧机型无 `ROTATION_VECTOR`（rotation 空/非法）→ 返回 null，上层安全退化
-- **按需聚合**：1s 窗口均值（`IMU_FEED_INTERVAL_MS`=1000，与 GPS 秒级步长对齐）→ 一阶低通 `IMU_ACC_LPF_ALPHA`（0.4，α 越大越信新聚合均值）→ 幅值限幅 `IMU_ACC_CLAMP`（30m/s²，防传感器粗差）
+- **滑窗聚合**：近 `IMU_FEED_INTERVAL_MS`(1000ms) 滑窗均值（分 `IMU_WIN_BUCKETS`(4) 个桶的环形缓冲，均值持续更新——GPS fix 任意时刻到达都能取到最新近 1s 均值，避免旧整窗「满窗才输出」导致注入用上跨窗旧值）→ 一阶低通 `IMU_ACC_LPF_ALPHA`（0.4，α 越大越信新聚合均值）→ 幅值限幅 `IMU_ACC_CLAMP`（30m/s²，防传感器粗差）
 - **新鲜度门**（`IMU_FEED_MAX_AGE_MS`=2000）：事件流中断/超时（GPS 暂停节流、传感器失效）时 `getLatestAccEnu()` 返回 null，不喂陈旧数据
 - **加速度注入**（`feedImu`）：仅注入 **CA 模型**（STILL/CV 不注入——低速/匀速下 IMU 噪声会被放大成虚假机动）。`x⁻ = F·x̂ + G·a_imu`（`G=[½dt², dt, 0]ᵀ`：只影响位置/速度预测，**加速度状态保持模型自持**——由 GPS 残差驱动学习，避免 IMU 噪声直接污染加速度估计），强度缩放 `IMU_ACC_TRUST`(0.6)，CA 过程噪声同步缩小 `qScale = max(0.3, 1−0.7×trust)`（运动已由输入描述，防过度自信）。只做运动学先验，GPS 仍是位置权威
 - **生命周期**：随 GPSManager watch 启停（`_startImu`/`_stopImu`），省电模式同步关闭；不向 UI 输出任何 IMU 状态（无回调/徽章）
@@ -405,7 +406,8 @@ maxJump = 参考速度 × dt × TRAIL_CLEAN_MAX_JUMP_FACTOR(5) + 基础阈值(10
 | IMM 滤波 | `IMM_*` 全部参数（见上文算法章节） |
 | GNSS 弱信号 | `GNSS_WEAK_USED_MAX`/`GNSS_WEAK_SNR_MAX`/`GNSS_RECOVER_*`（滞回）/`GPS_WEAK_SIGNAL_INTERVAL` |
 | NMEA | `NMEA_*_MAX_AGE_MS`、`NMEA_SPEED_CONFLICT_*`、`NMEA_HEADING_CONFLICT_DEG`、`NMEA_COORD_CONFLICT_*` |
-| IMU | `IMU_*`（开关、注入间隔/新鲜度、聚合低通、注入强度、幅值限幅） |
+| 航向差分兜底 | `HEADING_DIFF_*`（最小位移、低速阈值、低通系数） |
+| IMU | `IMU_*`（开关、滑窗时长/桶数、新鲜度、聚合低通、注入强度、幅值限幅） |
 | 海拔 | `ALT_*`（卡尔曼 R/Q 范围、Huber、速度上限、RTS 权重） |
 | 存储 | `TRAIL_STORAGE_ENGINE`、`DB_NAME`/`DB_VERSION`/`DB_MAX_SIZE`、`LS_MAX_SIZE` |
 | 后台定位 | `BG_LOCATE_INTERVAL_NORMAL`/`POWER_SAVE`、`NATIVE_BG_MIN_INTERVAL` |

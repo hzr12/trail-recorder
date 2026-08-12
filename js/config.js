@@ -136,6 +136,14 @@ const CONFIG = {
   NMEA_COORD_CONFLICT_M: 30,        // 原生 GGA/RMC 经纬度 vs 浏览器点偏差阈值（米），超过标记可疑
   NMEA_COORD_CONFLICT_STREAK: 3,    // 连续 N 次偏差超阈才判定"原生坐标不可信"（防抖）
 
+  // ----- 航向兜底（位置差分，GPS 航向缺失/低速时）-----
+  // GPS 航向（VTG/浏览器 heading）低速或无信号时无意义，导致箭头乱抖。
+  // 用滤波后相邻两点的位移反推航向（atan2(dE, dN)）做兜底，一阶低通平滑。
+  // 位移过小（静止）不更新，保持上次方向；高速且 GPS 航向有效时始终以 GPS 为权威。
+  HEADING_DIFF_MIN_M: 2.0,          // 相邻滤波点位移低于此值（m）不更新差分航向（防静止噪声）
+  HEADING_DIFF_MIN_SPEED: 1.0,      // 低于此速度（m/s）即视为低速，GPS 航向不再可信 → 用差分兜底
+  HEADING_DIFF_LPF_ALPHA: 0.3,      // 差分航向一阶低通系数（0=保持旧值，1=全信最新差分）
+
   // Huber Loss 鲁棒滤波「基准阈值」（标准化残差，无量纲）：0 禁用（纯最小二乘）。
   // |残差|/σ 超过该值的测量被降权（M-估计），抑制 GPS 粗差/漂移点。
   // 实际生效阈值由 KalmanFilter._huberKFor() 按「速度+精度」启发式在此基准上自动缩放
@@ -168,14 +176,17 @@ const CONFIG = {
 
   // ----- IMU 惯性导航融合（仅定位校准：加速度注入辅助滤波，不做航迹推算）-----
   // 职责收窄：只消费 TYPE_LINEAR_ACCELERATION（去重力线性加速度），用 rotation 四元数
-  // 旋转到 ENU 地理系 → 1s 窗口均值 → 一阶低通 → 注入 ImmFilter 的 CA 模型预测
+  // 旋转到 ENU 地理系 → 滑窗均值（近 IMU_FEED_INTERVAL_MS 窗口，分 IMU_WIN_BUCKETS 个桶
+  // 环形缓冲持续输出）→ 一阶低通 → 注入 ImmFilter 的 CA 模型预测
   // （x⁻=F·x̂+G·a_imu，仅运动学先验，GPS 仍是位置权威）。
-  // 航向完全由 GPS 权威（NMEA VTG/RMC + 浏览器 coords.heading），IMU 不参与航向解算；
+  // 航向由 GPS 权威（NMEA VTG/RMC + 浏览器 coords.heading），GPS 航向缺失/低速时由
+  // HEADING_DIFF_* 位置差分兜底；IMU 不参与航向解算。
   // 不做 GPS 丢失时的纯推算（无 predictOnly / DR 状态机）。web 端无插件零回归。
   IMU_ENABLED: true,               // IMU 总开关（false 完全禁用；web 无插件自动跳过）
-  IMU_FEED_INTERVAL_MS: 1000,      // 加速度聚合窗口（1Hz，对齐 GPS 秒级步长）
+  IMU_FEED_INTERVAL_MS: 1000,      // 加速度滑窗聚合时长（1Hz，对齐 GPS 秒级步长）
+  IMU_WIN_BUCKETS: 4,              // 滑窗分桶数（窗口均分，桶粒度=窗口/桶数，滑动输出近 1s 均值）
   IMU_FEED_MAX_AGE_MS: 2000,       // 聚合值新鲜度上限：超时视为过期不注入（防陈旧数据）
-  IMU_ACC_LPF_ALPHA: 0.4,          // 1s 均值后一阶低通系数（0=保持旧值，1=全信最新均值）
+  IMU_ACC_LPF_ALPHA: 0.4,          // 窗口均值后一阶低通系数（0=保持旧值，1=全信最新均值）
   IMU_ACC_TRUST: 0.6,              // 注入强度（0=纯 GPS，1=完全信任 IMU 加速度）
   IMU_ACC_CLAMP: 30,               // 加速度幅值限幅（m/s²，防传感器粗差）
 
