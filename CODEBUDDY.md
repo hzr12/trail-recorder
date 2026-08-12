@@ -17,7 +17,7 @@
 ## 架构总览
 
 无模块化、无打包器，全部通过 `<script>` 按顺序加载的全局类/对象。**加载顺序即依赖顺序**（见 `index.html` 底部）：
-`config.js` → `toast.js` → `storage.js` → `trail.js` → `trail-analysis.js` → `map.js` → `gps.js` → `replay.js` → `app-core.js` → `app-gps-ui.js`。
+`config.js` → `toast.js` → `storage.js` → `trail.js` → `trail-analysis.js` → `map.js` → `gps-kalman.js` → `gps-imm.js` → `gps-alt.js` → `gps-imu.js` → `gps-manager.js` → `replay.js` → `app-core.js` → `app-gps-ui.js`。
 
 ### 核心模块
 
@@ -26,7 +26,11 @@
 - **`js/trail.js`**：`Trail` 类，当前会话轨迹状态（`positions` 数组、记录/暂停开关、采样距离控制）。
 - **`js/trail-analysis.js`**：`TrailAnalysis` 纯函数对象，无 DOM 依赖。`analyzeKeyPoints()`（起点/终点/最高速点）、`analyzeSegments()`（按速度等级自动分段，带防抖）、`analyze()` 综合输出。输入 `{lat, lng, time, speed}` 点数组，是回放分段与关键点标记的数据源。
 - **`js/map.js`**：`MapManager` 类，腾讯地图（`qq.maps`）封装。管理地图实例、Canvas 叠加层（速度着色轨迹线）、我的位置标记/精度圆、关键点标记、轨迹缩略图渲染（`renderTrailThumbnail`/`renderTrailCollage`）。**轨迹线按速度分段批量绘制 polyline**，增量更新基于 `_lastTrailCount` 锚点。所有公开方法都应在 `this.map` 未就绪时安全返回。
-- **`js/gps.js`**：`GPSManager` + `ImmFilter`（交互式多模型实时滤波，6 维×3 模型：静止/CV/恒加速，x/y 两轴解耦成 3×3 子问题优化矩阵运算）+ `KalmanFilter`（仅服务离线 RTS 平滑，独立实例 `_offlineSmoother`，与实时层彻底解耦）+ `ImuManager`（原生 `ImuData` 插件桥接，**仅定位校准**：设备系线性加速度经 rotation 四元数旋转到 ENU 地理系 → **滑窗均值**（近 `IMU_FEED_INTERVAL_MS` 窗口分桶环形缓冲，均值持续更新）→ 一阶低通 → 注入滤波预测）。封装浏览器 Geolocation，支持单次定位、持续追踪、精度降级/恢复、省电模式，回调通过 `onPositionChange`/`onError` 等注入。**IMU 职责收窄为纯加速度注入校准**：`ImmFilter.feedImu()` 把 1Hz 聚合的 ENU 加速度注入 CA 模型预测（`x⁻=F·x̂+G·a_imu`，`G=[½dt²,dt,0]ᵀ` 只影响位置/速度预测，加速度状态保持模型自持；注入期 CA 模型 Q 缩放 `max(0.3, 1−0.7·trust)`；仅运动学先验，GPS 仍是位置权威）。**明确不做**：GPS 丢失航迹推算（无 `predictOnly`/DR 状态机）、IMU 航向解算（航向由 GPS 权威——NMEA VTG/RMC + 浏览器 `coords.heading`，IMU 不读陀螺仪融合；GPS 航向缺失/低速时由 `_resolveHeadingFallback` 用滤波后相邻点位移差分兜底 + 一阶低通）。IMU 随 watch 生命周期启停（`_startImu`/`_stopImu`），省电模式同步关闭；web 端无插件时静默跳过，纯 GPS 零回归。
+- **`js/gps-kalman.js`**：**共享常量定义处**（`DEG2RAD`/`M_PER_DEG`/`S_DET_EPSILON`/`RTS_MIN_DT`，顶层 `var` 挂全局，供 `gps-imm.js`/`gps-manager.js` 引用）+ `KalmanFilter`（二维恒速，**仅服务离线 RTS 平滑**，独立实例 `_offlineSmoother`，与实时层彻底解耦）。
+- **`js/gps-imm.js`**：`ImmFilter`（交互式多模型实时滤波，6 维×3 模型：静止/CV/恒加速，x/y 两轴解耦成 3×3 子问题优化矩阵运算）。**IMU 职责收窄为纯加速度注入校准**：`ImmFilter.feedImu()` 把 1Hz 聚合的 ENU 加速度注入 CA 模型预测（`x⁻=F·x̂+G·a_imu`，`G=[½dt²,dt,0]ᵀ` 只影响位置/速度预测，加速度状态保持模型自持；注入期 CA 模型 Q 缩放 `max(0.3, 1−0.7·trust)`；仅运动学先验，GPS 仍是位置权威）。
+- **`js/gps-alt.js`**：海拔滤波链 `AltKalmanFilter`（1D 自适应卡尔曼）+ `AltFilterPipeline`（实时流水线）+ `AltRtsSmoother`（离线 1D RTS），完全独立于水平滤波。
+- **`js/gps-imu.js`**：`ImuManager`（原生 `ImuData` 插件桥接，**仅定位校准**：设备系线性加速度经 rotation 四元数旋转到 ENU 地理系 → **滑窗均值**（近 `IMU_FEED_INTERVAL_MS` 窗口分桶环形缓冲，均值持续更新）→ 一阶低通 → 注入滤波预测）。**明确不做**：GPS 丢失航迹推算（无 `predictOnly`/DR 状态机）、IMU 航向解算（航向由 GPS 权威——NMEA VTG/RMC + 浏览器 `coords.heading`，IMU 不读陀螺仪融合；GPS 航向缺失/低速时由 `_resolveHeadingFallback` 用滤波后相邻点位移差分兜底 + 一阶低通）。IMU 随 watch 生命周期启停（`_startImu`/`_stopImu`），省电模式同步关闭；web 端无插件时静默跳过，纯 GPS 零回归。
+- **`js/gps-manager.js`**：`GPSManager` 主控制器。封装浏览器 Geolocation，支持单次定位、持续追踪、精度降级/恢复、省电模式、GNSS 卫星/NMEA 增强、速度自适应节流，回调通过 `onPositionChange`/`onError` 等注入。实例化 `ImmFilter`/`KalmanFilter`/`AltFilterPipeline`/`AltRtsSmoother`/`ImuManager` 并协调全部滤波链路。
 - **`js/replay.js`**：`TrailPlayer` 类，requestAnimationFrame 驱动的轨迹回放播放器（1x/1.5x/2x/4x）。支持时间戳插值、进度条 seek、已播放路径高亮、箭头标记指向下一轨迹点（`_updateMarker` 计算方位角旋转）。回调 `onProgress`/`onComplete`/`onFrame`。
 - **`js/app-core.js`**：`App` 主控制器（最大文件 ~100KB）。构造函数创建 `MapManager`/`GPSManager`/`Trail` 并初始化全部状态；`init()` 是启动入口：初始化地图 → `_setupUI()` 绑定事件 → 恢复主题/状态 → 启动 GPS。内含轨迹记录、回放控制、历史列表渲染（`_trailItemHTML` + `_bindTrailItemEvents`）、批量操作、详情弹窗、报告导出等全部业务逻辑。文件底部 `_bootApp()` 在 `DOMContentLoaded` 时实例化 App。
 - **`js/app-gps-ui.js`**：通过 `App.prototype.*` 给 `App` 追加方法：速度曲线（Chart.js）、GPS 状态栏渲染、跟随模式切换。**必须在 `app-core.js` 之后加载**（依赖 `App` 类）。

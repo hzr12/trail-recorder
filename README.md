@@ -137,7 +137,7 @@ npm run build:apk      # gradlew assembleDebug
 
 ## 定位与滤波算法
 
-这是项目的技术核心，全部实现在 `js/gps.js`。整个定位链路分四层：
+这是项目的技术核心，全部实现在 `js/` 下的 5 个拆分文件（`gps-kalman.js` / `gps-imm.js` / `gps-alt.js` / `gps-imu.js` / `gps-manager.js`，按此顺序加载）。整个定位链路分四层：
 
 | 层 | 模块 | 说明 |
 | --- | --- | --- |
@@ -305,7 +305,8 @@ trail-recorder/
 
 ```
 config.js → toast.js → storage.js → trail.js → trail-analysis.js
-→ map.js → gps.js → replay.js → app-core.js → app-gps-ui.js
+→ map.js → gps-kalman.js → gps-imm.js → gps-alt.js → gps-imu.js
+→ gps-manager.js → replay.js → app-core.js → app-gps-ui.js
 （app-list / app-replay / app-export / app-stats / app-weather
   / app-background / app-battery 在 app-core.js 之后按需追加）
 ```
@@ -317,7 +318,11 @@ config.js → toast.js → storage.js → trail.js → trail-analysis.js
 | `trail.js` | `Trail` 类：当前会话轨迹状态（positions、记录/暂停、采样距离控制） |
 | `trail-analysis.js` | `TrailAnalysis` 纯函数：关键点分析、速度等级分段（带防抖）、综合统计 |
 | `map.js` | `MapManager`：腾讯地图封装、Canvas 速度着色轨迹线、位置/精度圆、关键点、缩略图 |
-| `gps.js` | `GPSManager` + `ImmFilter` + `KalmanFilter`（离线 RTS）+ `ImuManager` + 海拔滤波链 |
+| `gps-kalman.js` | 共享常量（`DEG2RAD`/`M_PER_DEG`/`S_DET_EPSILON`/`RTS_MIN_DT`，var 顶层）+ `KalmanFilter`（离线 RTS） |
+| `gps-imm.js` | `ImmFilter`：交互式多模型实时滤波 |
+| `gps-alt.js` | `AltKalmanFilter`/`AltFilterPipeline`/`AltRtsSmoother`：海拔滤波链 |
+| `gps-imu.js` | `ImuManager`：IMU 加速度注入校准 |
+| `gps-manager.js` | `GPSManager`：主控制器（Geolocation + GNSS + 电量监控 + 节流） |
 | `replay.js` | `TrailPlayer`：requestAnimationFrame 驱动回放（倍速/seek/跟随/箭头） |
 | `app-core.js` | `App` 主控制器：初始化、事件绑定、记录/回放/历史/详情/报告业务逻辑 |
 | `app-*.js` | 通过 `App.prototype.*` 追加功能：列表、回放控制、导出报告、统计/海拔、天气、后台定位、电池、GPS UI |
