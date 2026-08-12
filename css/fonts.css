@@ -1,6 +1,8 @@
 /* ============================================
    HarmonyOS Sans SC — 本地字体声明（仅 Medium 字重）
    SC 版已包含全部拉丁字符，无需单独声明西文字体。
+   已子集化（GB2312 全汉字 + ASCII + 项目静态文本）并转 woff2：
+   体积 7.85MB → 914KB（压缩 ~88%），缺失的生僻字自动回退系统字体。
    ============================================ */
 
 /* 简体中文（含拉丁） */
@@ -9,5 +11,5 @@
   font-style: normal;
   font-weight: normal;
   font-display: swap;
-  src: url('./fonts/HarmonyOS_Sans_SC_Medium.ttf') format('truetype');
+  src: url('./fonts/HarmonyOS_Sans_SC_Medium.woff2') format('woff2');
 }
