@@ -23,11 +23,11 @@ import org.json.JSONException;
  * IMU 惯性传感器数据插件。
  *
  * 桥接 Android SensorManager 的线性加速度、陀螺仪、旋转向量到 JavaScript。
- * 数据用于 GPS 融合：
- *   - 阶段二：加速度注入 CA 模型（JS 侧 1Hz 聚合）
- *   - 阶段三：GPS 丢失时短时航迹推算（JS 侧按事件频率 25Hz 高频积分）
+ * 数据用于 GPS 融合（仅辅助定位）：
+ *   - 加速度注入 CA 模型（JS 侧 1Hz 聚合）：线性加速度旋转 ENU 后作为运动学
+ *     先验注入滤波预测，GPS 仍是位置权威；不做航迹推算、不参与航向解算。
  *
- * 采样率：40000µs ≈ 25Hz（SENSOR_DELAY_GAME 是 50Hz，这里显式降半档省电）。
+ * 采样率：100000µs ≈ 10Hz（辅助定位 1s 窗口聚合 10 个样本已足够，显式低频省电）。
  * 事件:
  *   - "imuSample" : ImuSample — 每次线性加速度到达时推送一份合并样本
  *
@@ -43,8 +43,8 @@ import org.json.JSONException;
 public class ImuSensorPlugin extends Plugin implements SensorEventListener {
 
     private static final String TAG = "ImuSensorPlugin";
-    // 25Hz ≈ 40ms/样本；比 SENSOR_DELAY_GAME(20ms/50Hz) 降半档省电，兼顾推算精度
-    private static final int SAMPLING_PERIOD_US = 40000;
+    // 10Hz ≈ 100ms/样本；辅助定位 1s 窗口聚合 10 个样本已足够，显式低频省电
+    private static final int SAMPLING_PERIOD_US = 100000;
 
     private SensorManager sensorManager;
     private Sensor linearAccelSensor;
@@ -92,7 +92,7 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
     // ──────────────────────────────────────────────
 
     /**
-     * 开始监听 IMU 传感器数据（25Hz）。
+     * 开始监听 IMU 传感器数据（10Hz）。
      */
     @PluginMethod
     public void startImuListening(PluginCall call) {
@@ -108,7 +108,7 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
             registerSensor(linearAccelSensor);
             registerSensor(gyroSensor);
             registerSensor(rotationSensor);
-            Log.d(TAG, "IMU listening started (25Hz)");
+            Log.d(TAG, "IMU listening started (10Hz)");
             call.resolve();
         } catch (Exception e) {
             unregisterAll();
@@ -192,7 +192,7 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
     }
 
     /**
-     * 每次线性加速度到达时装配一份完整样本推送（约 25Hz）。
+     * 每次线性加速度到达时装配一份完整样本推送（约 10Hz）。
      * 陀螺仪/旋转向量可能晚于首次加速度到达，此时用最近缓存值。
      */
     private void publishSample() {
@@ -272,7 +272,7 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
         // 传主线程 Handler：@PluginMethod 在 Capacitor 线程池执行，需指定 Looper 保证回调线程一致
         Handler mainHandler = new Handler(Looper.getMainLooper());
         boolean ok = sensorManager.registerListener(this, sensor, SAMPLING_PERIOD_US, mainHandler);
-        Log.d(TAG, "Registered sensor type=" + sensor.getType() + " @25Hz ok=" + ok);
+        Log.d(TAG, "Registered sensor type=" + sensor.getType() + " @10Hz ok=" + ok);
     }
 
     private void unregisterAll() {

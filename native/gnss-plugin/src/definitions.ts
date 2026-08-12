@@ -70,7 +70,7 @@ export interface ImuSample {
 
 export interface ImuDataPlugin {
   /**
-   * 开始监听 IMU 传感器（线性加速度 + 陀螺仪 + 旋转向量，25Hz）。
+   * 开始监听 IMU 传感器（线性加速度 + 陀螺仪 + 旋转向量，10Hz）。
    * 惯性传感器无需权限。
    */
   startImuListening(): Promise<void>;

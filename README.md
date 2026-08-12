@@ -144,7 +144,7 @@ npm run build:apk      # gradlew assembleDebug
 | 实时水平定位 | `ImmFilter`（IMM） | 6 维状态 × 3 模型交互式多模型滤波，x/y 解耦 |
 | 离线水平平滑 | `KalmanFilter`（RTS） | 独立 4 维单模型，保存前反向平滑 |
 | 海拔链 | `AltKalmanFilter`/`AltFilterPipeline`/`AltRtsSmoother` | 1D 四级融合，完全独立自洽 |
-| 传感器增强 | `ImuManager` + GNSS 插件 | IMU 注入/推算 + NMEA/卫星增强 |
+| 传感器增强 | `ImuManager` + GNSS 插件 | IMU 加速度注入校准 + NMEA/卫星增强 |
 
 ### 实时定位：IMM 交互式多模型滤波
 
@@ -248,23 +248,21 @@ interval = clamp(base, GPS_MIN_INTERVAL, GPS_MAX_INTERVAL)
 弱信号:   interval = max(interval, GPS_WEAK_SIGNAL_INTERVAL)
 ```
 
-**超时看门狗**（`_startTimeoutWatch`）：当前超时阈值 `= max(降级?GPS_LOW_ACCURACY_TIMEOUT:GPS_WATCH_TIMEOUT, 当前节流间隔+5s)`（对齐自适应间隔，避免 Android duty-cycle 下正常慢 fix 被误判超时）；连续 `GPS_TIMEOUT_MAX_FAILURES`(5) 次超时 → `_downgrade()` 降级。每次超时检查还会调用 `_tryEnterDeadReckoningFromTimeout` 尝试 IMU 推算兜底。
+**超时看门狗**（`_startTimeoutWatch`）：当前超时阈值 `= max(降级?GPS_LOW_ACCURACY_TIMEOUT:GPS_WATCH_TIMEOUT, 当前节流间隔+5s)`（对齐自适应间隔，避免 Android duty-cycle 下正常慢 fix 被误判超时）；连续 `GPS_TIMEOUT_MAX_FAILURES`(5) 次超时 → `_downgrade()` 降级。
 
-### IMU 惯性导航（阶段二/三，仅 Android）
+### IMU 惯性导航（仅定位校准，仅 Android）
 
-原生 `ImuData` 插件 25Hz 采集线性加速度（已去重力）+ 陀螺仪 + 姿态四元数：
+**职责收窄**：IMU 只做**加速度注入辅助滤波**，帮滤波器扛住 GPS 短暂精度波动/抖动（隧道、桥底、高楼遮挡时的平滑过渡）；**不做** GPS 丢失时的纯积分航迹推算（无 `predictOnly`/DR 状态机）。**航向完全由 GPS 权威**（NMEA VTG/RMC + 浏览器 `coords.heading`），IMU 不参与航向解算、不读陀螺仪融合。
 
-- **姿态旋转**（`_rotateAccToEnu`）：设备系 → ENU 地理系，Rodrigues 公式四元数旋转，与 IMM 局部米坐标天然对齐（x 东 / y 北）；旧机型无 `ROTATION_VECTOR`（rotation 空/非法）→ 返回 null，上层安全退化
-- **按需聚合**：1s 窗口均值（`IMU_FEED_INTERVAL_MS`=1000，与 GPS 秒级步长对齐）→ 一阶低通 `IMU_ACC_LPF_ALPHA`（0.4，抑制窗口间跳变；0=直接用均值，1=全信最新均值）
-- **阶段二 注入**（`feedImu`）：仅注入 **CA 模型**（STILL/CV 不注入——低速/匀速下 IMU 噪声会被放大成虚假机动）。`x⁻ = F·x̂ + G·a_imu`（`G=[½dt², dt, 1]ᵀ`），强度缩放 `IMU_ACC_TRUST`(0.6)，幅值限幅 `IMU_ACC_CLAMP`(30m/s² 防传感器粗差拖垮预测)，CA 过程噪声同步缩小 `qScale = max(0.3, 1−0.7×trust)`（运动已由输入描述，防过度自信）。只做运动学先验，GPS 仍是位置权威
-- **阶段三 航迹推算**（`predictOnly`）：GPS 丢失时切高频（`setHighFrequency(true)`），每 1s 聚合窗口走**完整 IMM 预测**（交互混合 + 各模型独立 CA 预测 + IMU 注入，概率由速度先验重算而非冻结），预测协方差写回保证恢复后 `update()` 可直接接续
-  - **触发**（`_maybeEnterDeadReckoning`）：`accuracy > IMU_ACC_FREEZE`(600m，早于滤波冻结线提前介入) 且（无 GNSS 或参与卫星 <`IMU_SAT_MIN`(4)）且 fix 数 ≥`IMU_MIN_FIXES`(3)（确保有初速）；省电模式不触发
-  - **watch 断流兜底**：`_tryEnterDeadReckoningFromTimeout` 由超时看门狗触发（GPS 彻底断信号时位置回调失去执行入口，参考点取最近一次可信 fix）
-  - **推进**（`_advanceDeadReckoning`）：推算坐标走独立 `onDeadReckonPosition` 通知（`accuracy=null` 隐藏精度圆、速度不对外发布、**不写轨迹**——纯积分漂移不可信）
-  - **上限**：`IMU_DEAD_RECKON_MAX_MS`（15s，纯积分漂移物理上限，超出强制回冻结；15s 内零偏 0.03 情形误差约 3.4m）
-  - **退出**（`_exitDeadReckoning`）：GPS 恢复（`accuracy < IMU_RECOVER_ACC`(100m) 且卫星 ≥`IMU_RECOVER_SAT`(6)，滞回高于触发阈值）→ 一次 GPS fix 重锚无缝接回
+原生 `ImuData` 插件 25Hz 采集线性加速度（已去重力）+ 姿态四元数：
 
-> Web 端无 IMU/GNSS 插件（插件提供 Web stub），自动零回归。
+- **姿态旋转**（`_rotateAccToEnu`）：设备系 → ENU 地理系，Rodrigues 公式四元数旋转（纯数学工具，与航向解算无关），与 IMM 局部米坐标天然对齐（x 东 / y 北）；旧机型无 `ROTATION_VECTOR`（rotation 空/非法）→ 返回 null，上层安全退化
+- **按需聚合**：1s 窗口均值（`IMU_FEED_INTERVAL_MS`=1000，与 GPS 秒级步长对齐）→ 一阶低通 `IMU_ACC_LPF_ALPHA`（0.4，α 越大越信新聚合均值）→ 幅值限幅 `IMU_ACC_CLAMP`（30m/s²，防传感器粗差）
+- **新鲜度门**（`IMU_FEED_MAX_AGE_MS`=2000）：事件流中断/超时（GPS 暂停节流、传感器失效）时 `getLatestAccEnu()` 返回 null，不喂陈旧数据
+- **加速度注入**（`feedImu`）：仅注入 **CA 模型**（STILL/CV 不注入——低速/匀速下 IMU 噪声会被放大成虚假机动）。`x⁻ = F·x̂ + G·a_imu`（`G=[½dt², dt, 0]ᵀ`：只影响位置/速度预测，**加速度状态保持模型自持**——由 GPS 残差驱动学习，避免 IMU 噪声直接污染加速度估计），强度缩放 `IMU_ACC_TRUST`(0.6)，CA 过程噪声同步缩小 `qScale = max(0.3, 1−0.7×trust)`（运动已由输入描述，防过度自信）。只做运动学先验，GPS 仍是位置权威
+- **生命周期**：随 GPSManager watch 启停（`_startImu`/`_stopImu`），省电模式同步关闭；不向 UI 输出任何 IMU 状态（无回调/徽章）
+
+> Web 端无 IMU/GNSS 插件（插件提供 Web stub），自动零回归——纯 GPS 行为不变。
 
 ---
 
@@ -407,7 +405,7 @@ maxJump = 参考速度 × dt × TRAIL_CLEAN_MAX_JUMP_FACTOR(5) + 基础阈值(10
 | IMM 滤波 | `IMM_*` 全部参数（见上文算法章节） |
 | GNSS 弱信号 | `GNSS_WEAK_USED_MAX`/`GNSS_WEAK_SNR_MAX`/`GNSS_RECOVER_*`（滞回）/`GPS_WEAK_SIGNAL_INTERVAL` |
 | NMEA | `NMEA_*_MAX_AGE_MS`、`NMEA_SPEED_CONFLICT_*`、`NMEA_HEADING_CONFLICT_DEG`、`NMEA_COORD_CONFLICT_*` |
-| IMU | `IMU_*`（开关、注入间隔、聚合低通、推算阈值与上限） |
+| IMU | `IMU_*`（开关、注入间隔/新鲜度、聚合低通、注入强度、幅值限幅） |
 | 海拔 | `ALT_*`（卡尔曼 R/Q 范围、Huber、速度上限、RTS 权重） |
 | 存储 | `TRAIL_STORAGE_ENGINE`、`DB_NAME`/`DB_VERSION`/`DB_MAX_SIZE`、`LS_MAX_SIZE` |
 | 后台定位 | `BG_LOCATE_INTERVAL_NORMAL`/`POWER_SAVE`、`NATIVE_BG_MIN_INTERVAL` |
