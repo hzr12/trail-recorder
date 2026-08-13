@@ -67,12 +67,21 @@ class ImuManager {
     const rotMaxDt = C.IMU_ROT_MAX_DT_MS != null ? C.IMU_ROT_MAX_DT_MS : 200;
     this._rotMaxDtNs = Math.max(0, rotMaxDt) * 1e6; // 毫秒 → 纳秒（与传感器时间戳同单位）
 
-    // 方向 6：U 轴偏置/抖动统计——重力泄漏量级估计（水平注入衰减依据）
+    // 方向 6：偏置/抖动统计——重力泄漏 + 三轴零偏估计（水平注入衰减依据）
     this._uRmsAlpha = Math.min(1, Math.max(0, C.IMU_U_RMS_LPF_ALPHA != null ? C.IMU_U_RMS_LPF_ALPHA : 0.2));
     this._uBiasAlpha = Math.min(1, Math.max(0, C.IMU_U_BIAS_LPF_ALPHA != null ? C.IMU_U_BIAS_LPF_ALPHA : 0.05));
     this._uBiasLowRmsMax = C.IMU_U_BIAS_LOW_RMS_MAX != null ? C.IMU_U_BIAS_LOW_RMS_MAX : 1.0;
     this._uRms = 0;   // U 轴短期抖动 RMS（低通）
     this._uBias = 0;  // U 轴长期偏置（低动态时更新，反映姿态误差导致的恒定重力泄漏）
+    // 方向 6 扩展：E/N 轴零偏在线估计（传感器固有直流偏置，静止时 LINEAR_ACCELERATION
+    // 应≈0，但实际有恒定偏移；不扣除会被滑窗均值+低通保留成持续虚假加速度注入 CA 预测，
+    // 导致长期缓慢漂移）。仅"真静止"时学习（见 _stillSpeed），与 U 轴偏置共用该判定。
+    this._eBias = 0;  // E 轴长期零偏（静止时更新）
+    this._nBias = 0;  // N 轴长期零偏（静止时更新）
+    this._biasStillSpeed = C.IMU_BIAS_STILL_SPEED != null ? C.IMU_BIAS_STILL_SPEED : 0.3; // GPS 速度 < 此值视为静止
+    this._biasStillCount = 0; // 连续静止样本计数（偏置可信度：达到阈值才启用扣除）
+    this._biasMinStill = C.IMU_BIAS_MIN_STILL != null ? C.IMU_BIAS_MIN_STILL : 30; // 至少 N 帧静止才启用扣除
+    this._gpsSpeed = null; // 最近一次 GPS 速度（由 GPSManager.setGpsSpeed 注入，静止判定）
 
     // 方向 5 增强：水平 E/N 注入是否需要 GPS 航向可靠。单靠加速度计不可观测航向
     // （绕重力轴旋转无信息），航向缺失/低速时水平方向会差一个未知固定角 → 错误
@@ -88,6 +97,32 @@ class ImuManager {
    */
   setHeadingReliable(reliable) {
     this._headingReliable = this._requireHeading ? !!reliable : true;
+  }
+
+  /**
+   * 注入最近一次 GPS 解算速度（m/s，可能为 null）。
+   * 用于 E/N/U 零偏估计的"真静止"判定：只有 GPS 速度低于 IMU_BIAS_STILL_SPEED 时
+   * 才更新偏置，避免把运动加速度学进偏置（比单看 U 轴抖动 RMS 更准）。
+   * 由 GPSManager 在每次 fix 时与 setHeadingReliable 一并调用。
+   * @param {number|null} speed GPS 解算速度（m/s）
+   */
+  setGpsSpeed(speed) {
+    this._gpsSpeed = (speed == null || !isFinite(speed)) ? null : speed;
+  }
+
+  /**
+   * 当前是否处于"真静止"——偏置学习的唯一安全窗口。
+   * 双判据：U 轴抖动 RMS 低（设备垂直动态小）+ GPS 速度低于静止阈值。
+   * 任一不满足都不更新偏置，防止运动污染（方向 6 扩展）。
+   */
+  _isStill() {
+    const gpsStill = this._gpsSpeed == null || this._gpsSpeed < this._biasStillSpeed;
+    return this._uRms < this._uBiasLowRmsMax && gpsStill;
+  }
+
+  /** E/N/U 三轴零偏是否已足够可信（静止样本累积达标），启用扣除 */
+  get biasReady() {
+    return this._biasStillCount >= this._biasMinStill;
   }
 
   /** 是否可用（web 无插件 → false） */
@@ -168,6 +203,10 @@ class ImuManager {
     this._rotBuf.length = 0;
     this._uRms = 0;
     this._uBias = 0;
+    this._eBias = 0;
+    this._nBias = 0;
+    this._biasStillCount = 0;
+    this._gpsSpeed = null;
     this._resetWindow();
   }
 
@@ -217,16 +256,29 @@ class ImuManager {
   }
 
   /**
-   * 方向 6：U 轴偏置/抖动统计。
+   * 方向 6：三轴零偏/抖动统计（重力泄漏 + E/N/U 零偏在线估计）。
    *  - _uRms：短期抖动（低通 |u|），反映垂直动态/设备晃动。
-   *  - _uBias：长期偏置，仅低动态时更新（防运动加速度污染），反映姿态误差
-   *    导致的恒定重力泄漏量级。
+   *  - _uBias：U 轴长期偏置，仅"真静止"时更新（防运动加速度污染），反映姿态误差
+   *    导致的恒定重力泄漏量级（供 tiltLeakFactor 衰减水平注入）。
+   *  - _eBias/_nBias：E/N 轴零偏，同样仅"真静止"时更新，扣除后避免持续虚假加速度
+   *    注入 CA 预测导致长期漂移。
+   *  - _biasStillCount：连续静止帧计数（偏置可信度），仅达阈值后 biasReady 才启用扣除，
+   *    避免运动段误学偏置立即污染输出。
+   * @param {number} e 聚合后 E 轴加速度（m/s²）
+   * @param {number} n 聚合后 N 轴加速度（m/s²）
    * @param {number} u 聚合后 U 轴加速度（m/s²）
    */
-  _updateUStats(u) {
+  _updateBiasStats(e, n, u) {
     this._uRms += this._uRmsAlpha * (Math.abs(u) - this._uRms);
-    if (this._uRms < this._uBiasLowRmsMax) {
+    if (this._isStill()) {
       this._uBias += this._uBiasAlpha * (u - this._uBias);
+      this._eBias += this._uBiasAlpha * (e - this._eBias);
+      this._nBias += this._uBiasAlpha * (n - this._nBias);
+      if (this._biasStillCount < this._biasMinStill) this._biasStillCount++;
+    } else {
+      // 非静止：偏置冻结（不学不遗忘），可信度随脱离静止缓慢衰减，
+      // 防止一次长运动永久禁用扣除而偏置已过时（温漂场景）。
+      if (this._biasStillCount > 0) this._biasStillCount--;
     }
   }
 
@@ -294,17 +346,24 @@ class ImuManager {
     const meanE = sumE * inv;
     const meanN = sumN * inv;
     const meanU = sumU * inv;
-    // 方向 6：U 轴偏置/抖动统计（重力泄漏量级估计，供注入端衰减水平信任）
-    this._updateUStats(meanU);
+    // 方向 6：三轴零偏/抖动统计（重力泄漏量级 + E/N/U 零偏估计，供注入端衰减/扣除）
+    this._updateBiasStats(meanE, meanN, meanU);
 
     // 一阶低通（α=1 全信最新均值，α=0 保持旧值）+ 绝对安全上限限幅
     // （注入前的速度分级 clamp 在 ImmFilter/AltKalmanFilter 侧按 GPS 速度动态收紧）
+    // E/N 轴扣除在线零偏（biasReady 后启用）：剔除传感器固有直流偏移，防止持续虚假
+    // 加速度注入 CA 预测导致长期漂移。U 轴偏置不在此扣除——它反映重力泄漏，交由
+    // tiltLeakFactor 衰减水平注入（垂直 U 注入仍用原始均值，由 GPS 海拔权威零基准校正）。
+    const eBias = this.biasReady ? this._eBias : 0;
+    const nBias = this.biasReady ? this._nBias : 0;
+    const meanE0 = meanE - eBias;
+    const meanN0 = meanN - nBias;
     const a = this._lpfAlpha;
-    const pe = this._lastAccEnu ? this._lastAccEnu[0] : meanE;
-    const pn = this._lastAccEnu ? this._lastAccEnu[1] : meanN;
+    const pe = this._lastAccEnu ? this._lastAccEnu[0] : meanE0;
+    const pn = this._lastAccEnu ? this._lastAccEnu[1] : meanN0;
     const pu = this._lastAccEnu ? this._lastAccEnu[2] : meanU;
-    const e = Math.max(-this._clamp, Math.min(this._clamp, pe + a * (meanE - pe)));
-    const n = Math.max(-this._clamp, Math.min(this._clamp, pn + a * (meanN - pn)));
+    const e = Math.max(-this._clamp, Math.min(this._clamp, pe + a * (meanE0 - pe)));
+    const n = Math.max(-this._clamp, Math.min(this._clamp, pn + a * (meanN0 - pn)));
     const u = Math.max(-this._clamp, Math.min(this._clamp, pu + a * (meanU - pu)));
     this._lastAccEnu = [e, n, u];
   }

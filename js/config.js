@@ -218,6 +218,8 @@ const CONFIG = {
   IMU_U_RMS_LPF_ALPHA: 0.2,        // U 轴抖动 RMS 一阶低通系数（垂直动态检测）
   IMU_U_BIAS_LPF_ALPHA: 0.05,      // U 轴偏置慢速低通系数（姿态误差 → 重力泄漏到水平轴的量级估计）
   IMU_U_BIAS_LOW_RMS_MAX: 1.0,     // 仅当 U 轴 RMS 低于此值（m/s²，低动态）才更新偏置（防运动加速度污染）
+  IMU_BIAS_STILL_SPEED: 0.3,       // 零偏学习"真静止"的 GPS 速度阈值（m/s）：速度低于此且 U 轴低动态才更新 E/N/U 零偏
+  IMU_BIAS_MIN_STILL: 30,          // 偏置可信度门槛：连续静止帧数达此值才启用 E/N 零偏扣除（防运动段误学立即污染）
 
   // ----- 海拔独立滤波（完全自洽，不依赖水平滤波/Huber/RTS 机制）-----
   // 四级融合：L1 源头质量门(_resolveAltitude) → L2 1D 自适应卡尔曼(AltKalmanFilter)

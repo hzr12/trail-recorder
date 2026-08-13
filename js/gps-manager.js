@@ -1296,6 +1296,8 @@ class GPSManager {
           (hdrSrc === 'vtg' || hdrSrc === 'browser') &&
           (pos.speed == null || pos.speed >= CONFIG.HEADING_DIFF_MIN_SPEED);
         if (this._imuManager) this._imuManager.setHeadingReliable(hdrReliable);
+        // 注入 GPS 速度供 IMU 零偏估计的"真静止"判定（方向 6 扩展：E/N 轴零偏仅静止时学习）
+        if (this._imuManager) this._imuManager.setGpsSpeed(pos.speed);
 
         // ── IMU 定位校准：三轴加速度一次取用 ──
         // web 无插件 / 事件流过期 / 未启动 → getLatestAccEnu() 返回 null，跳过注入纯 GPS 不变。
