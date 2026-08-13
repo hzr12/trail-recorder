@@ -163,7 +163,7 @@ App.prototype._updateStatusBar = function (force) {
   if (!isGnssSource && this._lastAccuracy != null) {
     sourceTitle += `，当前精度 ±${Math.round(this._lastAccuracy)}m`;
   }
-  const sourceBadge = `<span class="gps-source ${isGnssSource ? 'gnss' : 'web'}" title="${sourceTitle}">${isGnssSource ? 'GPS' : '网络'}</span>`;
+  const sourceBadge = `<span class="gps-source ${isGnssSource ? 'gnss' : 'web'}${this.gpsManager.imuAssistActive ? ' imu-active' : ''}" title="${sourceTitle}${this.gpsManager.imuAssistActive ? '（IMU 惯性校准辅助中）' : ''}">${isGnssSource ? 'GPS' : '网络'}</span>`;
   // 跟随模式独立为按钮，避免整条状态栏误触切换
   const followIcon = ` <button class="gps-follow-toggle${this._followMode ? ' active' : ''}" title="切换地图跟随">${this._followMode ? '跟随中' : '跟随'}</button>`;
 

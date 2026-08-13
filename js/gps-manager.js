@@ -1302,6 +1302,9 @@ class GPSManager {
         // 水平 [E,N] 注入 ImmFilter CA 预测（trust 自适应 + 分级 clamp + 重力泄漏衰减）；
         // 垂直 [U] 注入海拔 CA 融合（GPS 仍是海拔权威，方向 3）。
         const imuAcc = this._imuManager ? this._imuManager.getLatestAccEnu() : null;
+        // IMU 辅助状态：本帧有可用三轴加速度（参与海拔/水平注入）即为辅助激活。
+        // web 无插件 / 事件流过期 → imuAcc 为 null → 关闭（状态栏胶囊淡紫发光随之熄灭）。
+        this.imuAssistActive = !!imuAcc;
 
         // ── 海拔独立滤波（L2 自适应卡尔曼 + L3 中值/Huber + IMU 垂直注入）──
         // 垂直 [U] 不依赖航向，始终注入（GPS 仍是海拔权威，方向 3）。
