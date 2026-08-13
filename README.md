@@ -473,12 +473,31 @@ const CONFIG = {
   IMU_WIN_BUCKETS: 4,                // 滑窗分桶数
   IMU_FEED_MAX_AGE_MS: 2000,         // 聚合值新鲜度上限
   IMU_ACC_LPF_ALPHA: 0.4,            // 窗口均值后一阶低通
-  IMU_ACC_TRUST: 0.6,                // 注入强度(0=纯GPS,1=全信IMU)
-  IMU_ACC_CLAMP: 30,                 // 加速度幅值限幅(m/s²)
+  IMU_ACC_TRUST: 0.6,                // 注入强度基础值(0=纯GPS,1=全信IMU;随一致性自适应)
+  IMU_ACC_TRUST_MIN: 0.2,            // trust 自适应下限(一致性冲突/低速噪声时回落)
+  IMU_ACC_TRUST_MAX: 0.8,            // trust 自适应上限(一致性一致时抬升)
+  IMU_TRUST_STEP: 0.08,              // trust 每帧调整步长(方向一致性余弦加权)
+  IMU_TRUST_LOWSPEED_RETURN: 0.05,   // 低速(<0.5m/s)时 trust 回归基础值速率
+  IMU_ACC_CLAMP: 30,                 // 加速度绝对安全上限(m/s²,防传感器粗差)
+  IMU_ACC_CLAMP_LEVELS: [            // 注入 clamp 按 GPS 速度分级(静止收紧防噪声、高速放宽保机动)
+    { maxSpeed: 1, clamp: 1.0 }, { maxSpeed: 3, clamp: 3.0 },
+    { maxSpeed: 8, clamp: 6.0 }, { maxSpeed: Infinity, clamp: 10.0 },
+  ],
   IMU_MIN_USED_SATS: 5,              // 启用 IMU 所需的最少解算中卫星数(usedInFix > 此值才开启)
+  IMU_ROT_MAX_DT_MS: 200,            // 姿态-加速度最大时间差(毫秒,超窗视为不匹配降级)
+  IMU_ROT_BUF_MAX: 32,               // 姿态环形缓冲容量(姿态约 5-10Hz,32 条≈3-6s)
+  IMU_U_RMS_LPF_ALPHA: 0.2,          // U 轴抖动 RMS 一阶低通系数
+  IMU_U_BIAS_LPF_ALPHA: 0.05,        // U 轴偏置慢速低通系数(重力泄漏量级估计)
+  IMU_U_BIAS_LOW_RMS_MAX: 1.0,       // 仅当 U 轴 RMS 低于此值(m/s²)才更新偏置
 
-  // —— 海拔独立滤波（四级融合）——
+  // —— 海拔独立滤波（四级融合 + IMU 垂直注入）——
   ALT_FILTER_ENABLED: true,
+  ALT_IMU_ENABLED: true,             // 海拔 IMU 融合(U 轴垂直加速度注入 CA 模型)总开关
+  ALT_IMU_TRUST: 0.5,                // 垂直注入强度(0=纯GPS,1=全信;U 轴依赖姿态四元数,略保守)
+  ALT_IMU_U_CLAMP_LEVELS: [          // 垂直注入 clamp 按 GPS 速度分级
+    { maxSpeed: 1, clamp: 2.0 }, { maxSpeed: 3, clamp: 4.0 },
+    { maxSpeed: 8, clamp: 8.0 }, { maxSpeed: Infinity, clamp: 10.0 },
+  ],
   ALT_FILTER_RTS_ENABLED: true,
   ALT_KALMAN_R_BASE: 64,             // 垂直观测噪声方差基准(~8m²)
   ALT_KALMAN_R_MIN: 16,              // 自适应 R 下限(~4m²)
@@ -768,27 +787,33 @@ CA:    F=[[1,dt,dt²/2],[0,1,dt],[0,0,1]]
 - **速度限幅**：模型速度模量 `> IMM_SPEED_LIMIT(120m/s)` 截断。
 - **概率下界**：`μ_j=max(μ_j, IMM_MIN_PROB)`，列归一防浮点死锁。
 
-**IMU 注入（纯加速度先验）** `feedImu(a_enu, dt, trust)`：
+**IMU 注入（纯加速度先验）** `feedImu(a_enu, speed, tiltFactor)`：
 ```
-// a_enu: ENU 加速度 [a_east,a_north]（来自 ImuManager，见 9.10）
+// a_enu: 水平 ENU 加速度 [a_east,a_north]（来自 ImuManager，见 9.10）
+// speed: GPS 速度(m/s)，用于注入 clamp 分级
+// tiltFactor: 重力泄漏衰减因子 0~1（ImuManager.tiltLeakFactor，姿态误差使约 g·sinε 重力泄漏到水平轴时削减注入）
 // 仅注入 CA 模型预测：
+a_imu = clamp(a_enu, IMU_ACC_CLAMP_LEVELS[speed 档]) · tiltFactor
 G = [½dt², dt, 0]ᵀ                  // 只影响位置/速度预测，加速度状态保持模型自持
 x⁻_CA = F_CA·x̂_CA + G·a_imu
-// 注入期 CA 模型 Q 缩放：Q_CA *= max(0.3, 1 − 0.7·trust)   // trust=IMU_ACC_TRUST
+// 注入期 CA 模型 Q 缩放：Q_CA *= max(0.3, 1 − 0.7·trust)   // trust 见下
 // 仅运动学先验，GPS 仍是位置权威（更新步仍用 GPS z）
+// trust 自适应：每帧按「IMU 推断速度变化 a·dt 与滤波输出速度变化 Δv_state 的方向一致性
+// 余弦」步进调整（IMU_TRUST_STEP），限幅于 [IMU_ACC_TRUST_MIN, IMU_ACC_TRUST_MAX]；
+// 低速(<0.5m/s)时 GPS 速度噪声主导一致性判断，向基础值 IMU_ACC_TRUST 回归。
 ```
 > **明确不做**：GPS 丢失纯积分航迹推算（无 `predictOnly`/DR 状态机）、IMU 航向解算（航向完全由 GPS 权威 + `coords.heading`）。
 
-**ENU 旋转**（设备系→地理系，IMU 用）：标准 ENU 基向量 `east=[-sin(lng),cos(lng),0]`、`north=[-sin(lat)cos(lng),-sin(lat)sin(lng),cos(lat)]`、`up=...`；设备线性加速度经 `rotation` 四元数旋到 ENU，取东/北分量。
+**ENU 旋转**（设备系→地理系，IMU 用）：设备线性加速度经 `rotation` 四元数旋到 ENU 得到三轴 `[E,N,U]`；`E/N` 供水平注入，`U`（垂直）供海拔 CA 融合（见 9.9）。
 
 ### 9.9 gps-alt.js
-海拔滤波链，**完全独立于水平滤波**，四级融合：
+海拔滤波链，**完全独立于水平滤波**，四级融合 + IMU 垂直注入：
 1. **L1 源头质量门 `_resolveAltitude`**：按口径来源（`gga` 来自 NMEA `$GPGGA` 海拔 / `browser` 来自 `coords.altitude`）与历史一致性筛除野值。
-2. **L2 `AltKalmanFilter`**（1D 自适应卡尔曼）：状态 `[alt]`；`R` 在 `[ALT_KALMAN_R_MIN, ALT_KALMAN_R_MAX]` 间按残差自适应（基准 `ALT_KALMAN_R_BASE`）；`Q` 在 `[ALT_KALMAN_Q_BASE, ALT_KALMAN_Q_MAX]` 间按垂直速度（`ALT_KALMAN_Q_REF_VEL`）自适应。
-3. **L3 `AltFilterPipeline`**：中值预滤波（`ALT_MEDIAN_WINDOW=5` 奇数）→ 自适应 Huber（`ALT_HUBER_K`，下限 `ALT_HUBER_K_MIN`，基于 `ALT_RESIDUAL_WINDOW=20` 残差窗口估计鲁棒尺度 σ̂）；速率限幅 `ALT_VELOCITY_LIMIT=30m/s`。
+2. **L2 `AltKalmanFilter`**（1D 自适应卡尔曼）：状态 `[alt, vAlt]`；`R` 在 `[ALT_KALMAN_R_MIN, ALT_KALMAN_R_MAX]` 间按残差自适应（基准 `ALT_KALMAN_R_BASE`）；`Q` 在 `[ALT_KALMAN_Q_BASE, ALT_KALMAN_Q_MAX]` 间按垂直速度（`ALT_KALMAN_Q_REF_VEL`）自适应。**IMU 垂直融合（方向 3）**：`feedAccU(aU, speed)` 把 ENU U 轴线性加速度（`TYPE_LINEAR_ACCELERATION` 已去重力，无需再减 g）注入 CA 预测 `x⁻ = F·x̂ + G·u`（`G=[½dt²,dt]ᵀ`，仅运动学先验），GPS 海拔仍是观测权威（零基准由 GPS 持续校正，绝不做纯积分）；垂直注入按 `ALT_IMU_U_CLAMP_LEVELS` 分级 clamp + `ALT_IMU_TRUST` 缩放，注入期 Q 同步缩小（`max(0.3, 1−0.7·trust)`）；web 无插件时静默跳过。
+3. **L3 `AltFilterPipeline`**：中值预滤波（`ALT_MEDIAN_WINDOW=5` 奇数）→ 自适应 Huber（`ALT_HUBER_K`，下限 `ALT_HUBER_K_MIN`，基于 `ALT_RESIDUAL_WINDOW=20` 残差窗口估计鲁棒尺度 σ̂）；速率限幅 `ALT_VELOCITY_LIMIT=30m/s`；透传 `feedAccU()` 到卡尔曼。
 4. **L4 `AltRtsSmoother`**（离线 1D RTS）：结束记录后处理；反向平滑权重 `α∈[ALT_RTS_ALPHA_MIN, ALT_RTS_ALPHA_MAX]`，残差大时权重高。
 
-> 海拔链只消费「原始海拔 + 时间戳 + 口径来源」，参数全走 `ALT_*`，不读精度/水平速度/`GPS_HUBER_K`。
+> 海拔链实时消费「原始海拔 + 时间戳 + 口径来源 + IMU U 轴加速度（可选）」，参数全走 `ALT_*`，不读水平精度/`GPS_HUBER_K`。离线 RTS 仍只消费原始海拔序列。
 
 ### 9.10 gps-imu.js
 `ImuManager`：原生 `ImuData` 插件桥接，**仅定位校准**。
@@ -801,12 +826,16 @@ x⁻_CA = F_CA·x̂_CA + G·a_imu
 
 **数据流**：
 ```
-ImuData 回调(原始线性加速度 x/y/z + rotation 四元数)
-  → 设备系线性加速度经 rotation 旋到 ENU → 取 east/north 分量
+ImuData 回调(线性加速度 ax/ay/az + rotation 四元数 + timestamp/rotationTs 事件时间戳)
+  → 姿态-加速度时间对齐：姿态环形缓冲按加速度事件时间戳查最近姿态（超 IMU_ROT_MAX_DT_MS 降级）
+  → 设备系线性加速度经该姿态旋到 ENU → 三轴 [E,N,U]
   → 滑窗均值（IMU_FEED_INTERVAL_MS 窗口，分 IMU_WIN_BUCKETS=4 个桶环形缓冲，持续输出近 1s 均值）
   → 一阶低通 a_lpf = α·a_new + (1−α)·a_old   (α=IMU_ACC_LPF_ALPHA)
-  → 幅值限幅 |a_lpf|>IMU_ACC_CLAMP → 截断
-  → GPSManager 每次滤波 update 前 feedImu(a_enu, dt, IMU_ACC_TRUST) 注入 ImmFilter CA 模型
+  → 绝对安全上限限幅 |a_lpf|>IMU_ACC_CLAMP → 截断
+  → U 轴偏置/抖动统计（_updateUStats）→ tiltLeakFactor 供水平注入衰减
+  → GPSManager 每次滤波 update 前：
+      feedImu(a_enu, speed, tiltFactor)    注入 ImmFilter CA 模型（分级 clamp + 泄漏衰减）
+      feedAccU(aU, speed)                  注入 AltKalmanFilter 海拔 CA 融合（方向 3）
 ```
 **新鲜度门**：聚合值年龄 `> IMU_FEED_MAX_AGE_MS(2000)` 视为过期，本次不注入。
 
@@ -988,22 +1017,24 @@ GnssData.isAvailable() → 不可用则 web 静默跳过（不影响纯 GPS）
 **TypeScript 接口形态**：
 ```ts
 interface ImuDataPlugin {
-  start(options?: { sensorDelay?: 'normal'|'ui'|'game'|'fastest'; includeRotation?: boolean; }): Promise<void>;
-  stop(): Promise<void>;
-  addListener(event: 'linearAcceleration', cb: (d: ImuSample) => void): PluginListenerHandle;
-  isAvailable(): Promise<{ available: boolean }>;
+  startImuListening(): Promise<void>;   // 注册线性加速度+陀螺仪+旋转向量（约 10Hz）
+  stopImuListening(): Promise<void>;    // 释放传感器
+  addListener(event: 'imuSample', cb: (d: ImuSample) => void): PluginListenerHandle;
+  getLastImuSample(): Promise<ImuSample>;  // 事件流中断时兜底
 }
 interface ImuSample {
-  timestamp: number;   // ms（单调时钟，用于新鲜度门）
-  x: number; y: number; z: number;         // 设备坐标系线性加速度（去重力），m/s²
-  rotation: { x: number; y: number; z: number; w: number };  // rotation 四元数（设备→世界系）
+  ax: number; ay: number; az: number;    // 设备系线性加速度（去重力），m/s²
+  gx: number; gy: number; gz: number;    // 陀螺仪角速度（rad/s，已采未用于航向）
+  rotation: number[];                    // 姿态四元数 [w,x,y,z]（设备系→ENU）；无姿态时为 []
+  rotationTs: number;                    // 姿态事件时间戳(nanosecond，与 timestamp 同源时钟)；用于姿态-加速度时间对齐
+  timestamp: number;                     // 加速度事件时间戳(nanosecond)
 }
 ```
 
 **JS 桥接约定**（对应 9.10）：
 ```
-window.Capacitor?.Plugins?.ImuData?.addListener('linearAcceleration', sample => ImuManager.onSample(sample))
-ImuData.isAvailable()===false → 静默跳过，纯 GPS 零回归
+window.Capacitor?.Plugins?.ImuData?.addListener('imuSample', sample => ImuManager.onSample(sample))
+web 无插件（Capacitor 未注入）→ ImuManager._tryInitPlugin 静默跳过，纯 GPS 零回归
 ```
 
 ### 10.3 插件注册（Android Java 侧形态）

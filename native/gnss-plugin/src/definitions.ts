@@ -64,6 +64,13 @@ export interface ImuSample {
   gz: number;
   /** 姿态四元数 [w,x,y,z]（设备系→ENU 世界系）；无姿态数据时为 [] */
   rotation: number[];
+  /**
+   * 姿态四元数对应的传感器事件时间戳（nanosecond，与 timestamp 同源时钟）。
+   * rotation 与线性加速度来自不同传感器（异步到达），JS 侧用该字段做
+   * 姿态-加速度时间对齐：旋转加速度时按加速度事件时间戳查询最近姿态。
+   * 旧插件未下发时为 0，JS 侧退化为使用加速度自身时间戳（与旧行为等价）。
+   */
+  rotationTs: number;
   /** 传感器时间戳（nanosecond） */
   timestamp: number;
 }

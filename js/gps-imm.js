@@ -46,9 +46,25 @@ class ImmFilter {
 
     // IMU 定位校准（仅加速度注入 CA 模型预测，航向仍由 GPS 权威）
     // _imuAcc 为待消费的水平 ENU 加速度 [axE, axN]（m/s²），feedImu() 写入、update() 单次消费
-    this._imuTrust = C.IMU_ACC_TRUST != null ? Math.min(1, Math.max(0, C.IMU_ACC_TRUST)) : 0.6;
-    this._imuAccClamp = C.IMU_ACC_CLAMP != null ? C.IMU_ACC_CLAMP : 30;
+    // trust 自适应（方向 4）：按 IMU 推断速度变化与滤波速度变化的一致性动态调权
+    this._imuTrustBase = C.IMU_ACC_TRUST != null ? Math.min(1, Math.max(0, C.IMU_ACC_TRUST)) : 0.6;
+    this._imuTrust = this._imuTrustBase;
+    this._imuTrustMin = C.IMU_ACC_TRUST_MIN != null ? Math.min(1, Math.max(0, C.IMU_ACC_TRUST_MIN)) : 0.2;
+    this._imuTrustMax = C.IMU_ACC_TRUST_MAX != null ? Math.min(1, Math.max(0, C.IMU_ACC_TRUST_MAX)) : 0.8;
+    this._imuTrustStep = C.IMU_TRUST_STEP != null ? Math.max(0, C.IMU_TRUST_STEP) : 0.08;
+    this._imuTrustLowSpeedReturn = C.IMU_TRUST_LOWSPEED_RETURN != null ? Math.max(0, C.IMU_TRUST_LOWSPEED_RETURN) : 0.05;
+    // 分级 clamp（方向 5）：按 GPS 速度收紧/放宽注入幅值（静止收紧防噪声、高速放宽保机动）
+    this._clampLevels = (Array.isArray(C.IMU_ACC_CLAMP_LEVELS) && C.IMU_ACC_CLAMP_LEVELS.length)
+      ? C.IMU_ACC_CLAMP_LEVELS
+      : [{ maxSpeed: 1, clamp: 1 }, { maxSpeed: 3, clamp: 3 }, { maxSpeed: 8, clamp: 6 }, { maxSpeed: Infinity, clamp: 10 }];
+    this._clampAbs = this._clampLevels[this._clampLevels.length - 1].clamp;
+    this._imuAccClamp = C.IMU_ACC_CLAMP != null ? C.IMU_ACC_CLAMP : 30; // 绝对安全上限兜底
     this._imuAcc = null;
+    // 一致性追踪（方向 4）：上帧/上上帧输出速度，供 IMU-状态速度变化一致性判断
+    this._vxOut = 0;
+    this._vyOut = 0;
+    this._prevVx = 0;
+    this._prevVy = 0;
 
     // 三模型 × 两轴状态（x 轴 [x,vx,ax]，y 轴 [y,vy,ay]）
     this._sx = [new Float64Array(3), new Float64Array(3), new Float64Array(3)];
@@ -137,6 +153,12 @@ class ImmFilter {
     this._lastTime = time;
     this._initialized = true;
     this._lastFiltered = { lat, lng };
+    // 重置信任自适应与一致性追踪（新轨迹无历史速度，从基础信任重新累积）
+    this._imuTrust = this._imuTrustBase;
+    this._vxOut = 0;
+    this._vyOut = 0;
+    this._prevVx = 0;
+    this._prevVy = 0;
   }
 
   /** 重置滤波器（原地填充，避免 GC） */
@@ -152,6 +174,11 @@ class ImmFilter {
     this._mu[1] = this._mu0[1];
     this._mu[2] = this._mu0[2];
     this._lastFiltered = null;
+    this._imuTrust = this._imuTrustBase;
+    this._vxOut = 0;
+    this._vyOut = 0;
+    this._prevVx = 0;
+    this._prevVy = 0;
   }
 
   /**
@@ -170,17 +197,61 @@ class ImmFilter {
    * 注入 IMU 水平 ENU 加速度（定位校准，仅运动学先验）。
    * 由 GPSManager 在每次 update() 前调用；无 IMU 数据时不要调用（保持纯 GPS）。
    * @param {number[]} accEnu 水平加速度 [东向, 北向]（m/s²），已 1s 聚合 + 低通
+   * @param {number} [speed] GPS 速度（m/s），用于分级 clamp（方向 5）
+   * @param {number} [tiltFactor] 重力泄漏衰减因子 0~1（方向 6，ImuManager.tiltLeakFactor）
    */
-  feedImu(accEnu) {
+  feedImu(accEnu, speed, tiltFactor) {
     if (!Array.isArray(accEnu) || accEnu.length < 2) return;
     const ae = Number(accEnu[0]);
     const an = Number(accEnu[1]);
     if (!isFinite(ae) || !isFinite(an)) return;
-    const c = this._imuAccClamp;
+    // 方向 5：按 GPS 速度分级 clamp（静止收紧防噪声、高速放宽保机动），再与绝对上限取小
+    const c = Math.min(this._clampForSpeed(speed), this._imuAccClamp);
+    // 方向 6：重力泄漏衰减（姿态误差使约 g·sinε 的重力泄漏到水平轴，泄漏越大注入越不可信）
+    let leak = 1;
+    if (tiltFactor != null && isFinite(tiltFactor)) {
+      leak = Math.min(1, Math.max(0, tiltFactor));
+    }
     this._imuAcc = [
-      Math.max(-c, Math.min(c, ae)),
-      Math.max(-c, Math.min(c, an))
+      Math.max(-c, Math.min(c, ae)) * leak,
+      Math.max(-c, Math.min(c, an)) * leak
     ];
+  }
+
+  /** 按 GPS 速度选择水平注入 clamp（m/s²，方向 5） */
+  _clampForSpeed(speed) {
+    const levels = this._clampLevels;
+    const s = Number(speed) || 0;
+    for (let i = 0; i < levels.length; i++) {
+      if (s <= levels[i].maxSpeed) return levels[i].clamp;
+    }
+    return this._clampAbs;
+  }
+
+  /**
+   * 方向 4：trust 随 GPS-IMU 一致性自适应。
+   * IMU 推断速度变化（a·dt）与滤波输出速度变化（Δv_state）方向一致 → trust 抬升，
+   * 冲突 → 回落；低速时 GPS 速度噪声主导 Δv_state，一致性不可靠 → 向基础值回归。
+   * @param {number[]} imuAcc 注入的水平 ENU 加速度 [E, N]
+   * @param {number} dt 时间间隔（秒）
+   * @param {number} speed GPS 上报速度（m/s）
+   */
+  _updateImuTrust(imuAcc, dt, speed) {
+    const dvIx = imuAcc[0] * dt;
+    const dvIy = imuAcc[1] * dt;
+    const dvSx = this._vxOut - this._prevVx;
+    const dvSy = this._vyOut - this._prevVy;
+    const imuMag = Math.hypot(dvIx, dvIy);
+    const stMag = Math.hypot(dvSx, dvSy);
+    let cosSim = 0;
+    if (imuMag > 1e-4 && stMag > 1e-4) {
+      cosSim = Math.max(-1, Math.min(1, (dvIx * dvSx + dvIy * dvSy) / (imuMag * stMag)));
+    }
+    this._imuTrust = Math.max(this._imuTrustMin, Math.min(this._imuTrustMax,
+      this._imuTrust + this._imuTrustStep * cosSim));
+    if (speed < 0.5 && this._imuTrustLowSpeedReturn > 0) {
+      this._imuTrust += (this._imuTrustBase - this._imuTrust) * this._imuTrustLowSpeedReturn;
+    }
   }
 
   /** 读取并清空待注入加速度（单次消费：update() 开头调用） */
@@ -240,6 +311,8 @@ class ImmFilter {
 
     // ── IMM 单步（x/y 两轴解耦，各为独立 3×3 子问题）──
     const imuAcc = this._consumeImuAcc();
+    // 方向 4：trust 随 GPS-IMU 一致性自适应（在 _immStep 读取成员 this._imuTrust 前更新）
+    if (imuAcc) this._updateImuTrust(imuAcc, dt, speed || 0);
     this._immStep(mx, my, R, hk, dt, speed || 0, imuAcc);
 
     // ── 输出：模型概率加权混合 ──
@@ -262,6 +335,11 @@ class ImmFilter {
     }
     this._ax = axhat;
     this._ay = ayhat;
+    // 方向 4：记录输出速度（下帧 trust 一致性判断用）
+    this._prevVx = this._vxOut;
+    this._prevVy = this._vyOut;
+    this._vxOut = vxhat;
+    this._vyOut = vyhat;
 
     const filtered = {
       lat: this._refLat + yhat / M_PER_DEG,

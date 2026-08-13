@@ -63,6 +63,10 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
     private float[] gyroValues;
     private float[] rotationValues;
     private long accelTimestamp = 0;
+    // rotation 四元数对应的事件时间戳（与 accelTimestamp 同源时钟，纳秒）：
+    // 加速度与姿态来自不同传感器异步到达，JS 侧用该时间戳做姿态-加速度时间对齐，
+    // 避免加速度被旋转到"错误时刻的姿态"（方向 1：姿态-加速度时间对齐）。
+    private long rotationTimestamp = 0;
 
     @Override
     public void load() {
@@ -188,6 +192,7 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
     private void handleRotation(SensorEvent e) {
         synchronized (rotationLock) {
             rotationValues = e.values.clone();
+            rotationTimestamp = e.timestamp;
         }
     }
 
@@ -212,6 +217,8 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
         obj.put("gz", gyr != null ? gyr[2] : 0);
         // 无姿态数据 → 空数组，JS 侧退化为不做注入（防错误旋转）
         obj.put("rotation", rot != null ? rotationToJSArray(rot) : new JSArray());
+        // 姿态事件时间戳（纳秒，与 timestamp 同源时钟）；无姿态时为 0，JS 侧降级用 ts
+        obj.put("rotationTs", rot != null ? rotationTimestamp : 0);
         obj.put("timestamp", ts);
 
         synchronized (sampleLock) {
@@ -284,5 +291,6 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
         synchronized (gyroLock) { gyroValues = null; }
         synchronized (rotationLock) { rotationValues = null; }
         accelTimestamp = 0;
+        rotationTimestamp = 0;
     }
 }

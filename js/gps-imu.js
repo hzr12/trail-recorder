@@ -13,7 +13,19 @@
  *    地理系 → 滑窗均值（近 IMU_FEED_INTERVAL_MS 窗口，分桶环形缓冲持续输出）→ 一阶
  *    低通 → 供 GPSManager 在每次滤波 update 前 feedImu() 注入 ImmFilter CA 模型预测
  *    （仅运动学先验，GPS 仍是位置权威）。
+ *  - 姿态-加速度时间对齐（方向 1）：插件下发 rotationTs（姿态事件时间戳，纳秒），
+ *    此处维护带时间戳的姿态环形缓冲，旋转加速度时按加速度事件时间戳查询最近姿态，
+ *    避免加速度被旋转到"错误时刻的姿态"（加速度与姿态来自不同传感器异步到达）。
+ *    旧插件无 rotationTs → 降级用加速度自身时间戳，行为与旧版等价，零回归。
+ *  - 三轴输出（方向 2）：旋转后的 E/N/U 全部保留；U 轴（垂直）供海拔卡尔曼 CA 注入，
+ *    并做 U 轴偏置统计估计重力泄漏量级（方向 6：姿态误差使约 g·sinε 的重力泄漏到
+ *    水平轴，泄漏越大水平注入越不可信 → tiltLeakFactor 衰减）。
  *  - 不参与航向解算：heading 完全由 GPS 权威（_resolveHeading），IMU 不读陀螺仪融合。
+ *  - 航向约束（方向 5 增强）：水平 E/N 注入依赖航向（ENU 旋转需航向信息），单靠加速度
+ *    计不可观测航向（绕重力轴旋转无信息）。GPSManager 每次 fix 据航向来源/速度判定
+ *    setHeadingReliable()，航向不可靠（低速起步/遮挡/丢星 → 回退差分航向）时水平注入被
+ *    禁用、只保留 U 轴海拔注入（垂直不依赖航向，只依赖俯仰/翻滚，是加速度可观测部分）。
+ *    IMU_HORIZONTAL_REQUIRE_HEADING=false 时恒可靠（回归旧行为）。
  *  - 不做航迹推算：无 setHighFrequency / onSample 推算路径 / predictOnly / DR 状态机。
  *  - web 端无 Capacitor 插件 → hasData=false，静默跳过，纯 GPS 行为零回归。
  *  - 生命周期随 GPSManager 的 watch 启停（startWatching → start，stopWatching → stop）。
@@ -42,16 +54,57 @@ class ImuManager {
     this._bucketMs = this._feedInterval / this._bucketCount;
     this._buckets = [];
     for (let i = 0; i < this._bucketCount; i++) {
-      this._buckets.push({ bucketIdx: -1, count: 0, sumE: 0, sumN: 0 });
+      this._buckets.push({ bucketIdx: -1, count: 0, sumE: 0, sumN: 0, sumU: 0 });
     }
-    // 最新输出：低通后的水平 ENU 加速度 [东, 北]（m/s²），无数据为 null
+    // 最新输出：低通后的 ENU 加速度 [东, 北, 天]（m/s²，三轴，U 供海拔 CA 注入），无数据为 null
     this._lastAccEnu = null;
-    this._lastSampleTime = 0;  // 最近一次 IMU 事件时间戳（新鲜度判断）
+    this._lastSampleTime = 0;  // 最近一次 IMU 事件时间戳（新鲜度判断，Date.now 毫秒）
+
+    // 方向 1：姿态-加速度时间对齐——带时间戳的姿态环形缓冲
+    // 姿态事件时间戳与加速度事件时间戳同源（Android sensor clock，纳秒）。
+    this._rotBufMax = Math.max(4, C.IMU_ROT_BUF_MAX != null ? C.IMU_ROT_BUF_MAX : 32);
+    this._rotBuf = [];
+    const rotMaxDt = C.IMU_ROT_MAX_DT_MS != null ? C.IMU_ROT_MAX_DT_MS : 200;
+    this._rotMaxDtNs = Math.max(0, rotMaxDt) * 1e6; // 毫秒 → 纳秒（与传感器时间戳同单位）
+
+    // 方向 6：U 轴偏置/抖动统计——重力泄漏量级估计（水平注入衰减依据）
+    this._uRmsAlpha = Math.min(1, Math.max(0, C.IMU_U_RMS_LPF_ALPHA != null ? C.IMU_U_RMS_LPF_ALPHA : 0.2));
+    this._uBiasAlpha = Math.min(1, Math.max(0, C.IMU_U_BIAS_LPF_ALPHA != null ? C.IMU_U_BIAS_LPF_ALPHA : 0.05));
+    this._uBiasLowRmsMax = C.IMU_U_BIAS_LOW_RMS_MAX != null ? C.IMU_U_BIAS_LOW_RMS_MAX : 1.0;
+    this._uRms = 0;   // U 轴短期抖动 RMS（低通）
+    this._uBias = 0;  // U 轴长期偏置（低动态时更新，反映姿态误差导致的恒定重力泄漏）
+
+    // 方向 5 增强：水平 E/N 注入是否需要 GPS 航向可靠。单靠加速度计不可观测航向
+    // （绕重力轴旋转无信息），航向缺失/低速时水平方向会差一个未知固定角 → 错误
+    // 拉偏。故航向不可靠时禁用水平注入、只保留 U 轴海拔注入（垂直不依赖航向）。
+    this._requireHeading = C.IMU_HORIZONTAL_REQUIRE_HEADING !== false;
+    this._headingReliable = !this._requireHeading; // 默认：不要求则不依赖（恒可靠）
+  }
+
+  /**
+   * 设置当前 GPS 航向是否可靠（由 GPSManager 在每次 fix 时依据航向来源/速度判定后调用）。
+   * 仅当 IMU_HORIZONTAL_REQUIRE_HEADING=true 时生效；不要求航向时恒为 true。
+   * @param {boolean} reliable 航向可靠（GPS 航向有效且非低速）→ true；低速起步/遮挡/丢星 → false
+   */
+  setHeadingReliable(reliable) {
+    this._headingReliable = this._requireHeading ? !!reliable : true;
   }
 
   /** 是否可用（web 无插件 → false） */
   get hasData() {
     return !!(this._plugin && this._listening);
+  }
+
+  /**
+   * 重力泄漏衰减因子（0~1，方向 6）。
+   * 设备倾斜且姿态估计存在残余误差 ε 时，约 g·sin(ε) 的重力被泄漏到水平轴，
+   * 该泄漏表现为 U 轴恒定偏置 |uBias|。泄漏越大 → 水平注入越不可信。
+   * @returns {number} 1=无泄漏（正常注入），0=完全泄漏（禁止水平注入）
+   */
+  get tiltLeakFactor() {
+    const g = (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.GRAVITY) || 9.81;
+    const ratio = Math.min(1, Math.abs(this._uBias) / g);
+    return 1 - ratio * ratio;
   }
 
   /** 探测 Capacitor ImuData 插件（web 端 Capacitor 未注入时静默跳过，零回归） */
@@ -112,11 +165,14 @@ class ImuManager {
     try { this._plugin.stopImuListening(); } catch (_) {}
     this._lastAccEnu = null;
     this._lastSampleTime = 0;
+    this._rotBuf.length = 0;
+    this._uRms = 0;
+    this._uBias = 0;
     this._resetWindow();
   }
 
   /**
-   * 获取最新水平 ENU 加速度 [东, 北]（m/s²，已聚合 + 低通 + 限幅）。
+   * 获取最新 ENU 加速度 [东, 北, 天]（m/s²，已聚合 + 低通 + 限幅）。
    * 未启动 / 无数据 / 事件流过期（超过 IMU_FEED_MAX_AGE_MS 无新样本）→ 返回 null，
    * 调用方据此跳过注入（GPS 暂停节流或 IMU 中断时不喂陈旧数据）。
    */
@@ -133,11 +189,49 @@ class ImuManager {
       b.count = 0;
       b.sumE = 0;
       b.sumN = 0;
+      b.sumU = 0;
+    }
+  }
+
+  /** 方向 1：推入带时间戳的姿态到环形缓冲（q 为 [w,x,y,z] 副本，防外部数组改动） */
+  _pushRot(t, q) {
+    this._rotBuf.push({ t, q: [q[0], q[1], q[2], q[3]] });
+    if (this._rotBuf.length > this._rotBufMax) this._rotBuf.shift();
+  }
+
+  /**
+   * 方向 1：查询 t 时刻（纳秒）最近的姿态。
+   * @param {number} t 加速度事件时间戳（纳秒）
+   * @returns {{t: number, q: number[]}|null} 时间差 ≤ IMU_ROT_MAX_DT_MS 的最近姿态；找不到返回 null
+   */
+  _queryRot(t) {
+    const buf = this._rotBuf;
+    let best = null;
+    let bestDt = Infinity;
+    for (let i = buf.length - 1; i >= 0; i--) {
+      const dt = Math.abs(buf[i].t - t);
+      if (dt < bestDt) { bestDt = dt; best = buf[i]; }
+    }
+    if (!best || bestDt > this._rotMaxDtNs) return null;
+    return best;
+  }
+
+  /**
+   * 方向 6：U 轴偏置/抖动统计。
+   *  - _uRms：短期抖动（低通 |u|），反映垂直动态/设备晃动。
+   *  - _uBias：长期偏置，仅低动态时更新（防运动加速度污染），反映姿态误差
+   *    导致的恒定重力泄漏量级。
+   * @param {number} u 聚合后 U 轴加速度（m/s²）
+   */
+  _updateUStats(u) {
+    this._uRms += this._uRmsAlpha * (Math.abs(u) - this._uRms);
+    if (this._uRms < this._uBiasLowRmsMax) {
+      this._uBias += this._uBiasAlpha * (u - this._uBias);
     }
   }
 
   /**
-   * 10Hz 事件：滑窗聚合（桶式环形缓冲）→ 低通。
+   * 10Hz 事件：滑窗聚合（桶式环形缓冲）→ 低通 → 输出三轴 ENU。
    * 每样本累加进「当前绝对桶号」对应桶，窗口为最近 _feedInterval 内所有桶；
    * 均值持续更新，GPS fix 任意时刻到达都能取到最新近 1s 均值。
    */
@@ -147,7 +241,20 @@ class ImuManager {
     if (!isFinite(ax) || !isFinite(ay) || !isFinite(az)) return;
     const q = sample.rotation;
     if (!Array.isArray(q) || q.length < 4) return; // 无姿态 → 不做错误旋转（安全降级）
-    const accEnu = this._rotateAccToEnu([ax, ay, az], q);
+
+    const tsNs = Number(sample.timestamp) || 0;         // 加速度事件时间戳（纳秒）
+    const rotTsNs = Number(sample.rotationTs) || tsNs;  // 姿态事件时间戳（纳秒；旧插件无字段 → 用加速度时间戳）
+
+    // 方向 1：姿态-加速度时间对齐——推入带时间戳姿态，按加速度时间戳查最近姿态。
+    // 旧插件无 rotationTs → rotTsNs=tsNs，缓冲中该姿态与查询键时差为 0，行为与旧版等价。
+    if (tsNs > 0) this._pushRot(rotTsNs, q);
+    let rotQ = q;
+    if (tsNs > 0) {
+      const matched = this._queryRot(tsNs);
+      if (matched) rotQ = matched.q;
+    }
+
+    const accEnu = this._rotateAccToEnu([ax, ay, az], rotQ);
     if (!accEnu) return;
 
     const now = Date.now();
@@ -162,19 +269,22 @@ class ImuManager {
       b.count = 0;
       b.sumE = 0;
       b.sumN = 0;
+      b.sumU = 0;
     }
     b.count++;
     b.sumE += accEnu[0];
     b.sumN += accEnu[1];
+    b.sumU += accEnu[2];
 
     // 窗口 = 最近 _feedInterval：绝对桶号 ≥ 当前桶号 - 桶数 + 1 的桶
     const winStartBucket = bucketIdx - this._bucketCount + 1;
-    let sumE = 0, sumN = 0, count = 0;
+    let sumE = 0, sumN = 0, sumU = 0, count = 0;
     for (let i = 0; i < this._bucketCount; i++) {
       const bb = this._buckets[i];
       if (bb.bucketIdx >= winStartBucket) {
         sumE += bb.sumE;
         sumN += bb.sumN;
+        sumU += bb.sumU;
         count += bb.count;
       }
     }
@@ -183,13 +293,20 @@ class ImuManager {
     const inv = 1 / count;
     const meanE = sumE * inv;
     const meanN = sumN * inv;
-    // 一阶低通（α=1 全信最新均值，α=0 保持旧值）+ 限幅
+    const meanU = sumU * inv;
+    // 方向 6：U 轴偏置/抖动统计（重力泄漏量级估计，供注入端衰减水平信任）
+    this._updateUStats(meanU);
+
+    // 一阶低通（α=1 全信最新均值，α=0 保持旧值）+ 绝对安全上限限幅
+    // （注入前的速度分级 clamp 在 ImmFilter/AltKalmanFilter 侧按 GPS 速度动态收紧）
     const a = this._lpfAlpha;
     const pe = this._lastAccEnu ? this._lastAccEnu[0] : meanE;
     const pn = this._lastAccEnu ? this._lastAccEnu[1] : meanN;
+    const pu = this._lastAccEnu ? this._lastAccEnu[2] : meanU;
     const e = Math.max(-this._clamp, Math.min(this._clamp, pe + a * (meanE - pe)));
     const n = Math.max(-this._clamp, Math.min(this._clamp, pn + a * (meanN - pn)));
-    this._lastAccEnu = [e, n];
+    const u = Math.max(-this._clamp, Math.min(this._clamp, pu + a * (meanU - pu)));
+    this._lastAccEnu = [e, n, u];
   }
 
   /**

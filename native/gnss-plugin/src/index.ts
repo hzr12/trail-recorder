@@ -45,7 +45,7 @@ class ImuDataWeb extends WebPlugin implements ImuDataPlugin {
   }
 
   async getLastImuSample(): Promise<ImuSample> {
-    return { ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: 0, rotation: [], timestamp: 0 };
+    return { ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: 0, rotation: [], rotationTs: 0, timestamp: 0 };
   }
 }
 

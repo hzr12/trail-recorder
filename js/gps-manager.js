@@ -110,6 +110,7 @@ class GPSManager {
     // 位置差分航向兜底（GPS 航向缺失/低速时，用滤波后相邻点位移反推航向 + 一阶低通）
     this._diffHeading = null;          // 低通后的差分航向（度，0~360）
     this._diffHeadingPos = null;       // 上一次用于差分的滤波后位置 {lat, lng}
+    this._lastHeadingSource = 'none';  // 航向来源（vtg/browser/none），驱动 IMU 水平注入开关
 
   }
 
@@ -1284,8 +1285,30 @@ class GPSManager {
         // 信号质量评分（0-100）写入轨迹点，供后续轨迹质量分聚合使用
         pos.signalQuality = this.signalQualityScore;
 
-        // ── 海拔独立滤波（L2 自适应卡尔曼 + L3 中值/Huber）──
+        // 方向 5 增强：水平 E/N 注入依赖航向（ENU 旋转需要航向信息）。单靠加速度计
+        // 在数学上不可观测航向（绕重力轴旋转无信息），航向缺失/低速时水平方向会差
+        // 一个未知固定角 → 错误拉偏轨迹。故航向不可靠时禁用水平注入、只保留 U 轴
+        // 海拔注入（垂直不依赖航向，只依赖俯仰/翻滚，是加速度可观测部分）。
+        // 航向可靠 = GPS 航向源有效（vtg 原生 / browser 物理测量）且非低速。
+        // IMU_HORIZONTAL_REQUIRE_HEADING=false → 回归旧行为（恒可靠，不受航向约束）。
+        const hdrSrc = this._lastHeadingSource;
+        const hdrReliable = CONFIG.IMU_HORIZONTAL_REQUIRE_HEADING === false ? true :
+          (hdrSrc === 'vtg' || hdrSrc === 'browser') &&
+          (pos.speed == null || pos.speed >= CONFIG.HEADING_DIFF_MIN_SPEED);
+        if (this._imuManager) this._imuManager.setHeadingReliable(hdrReliable);
+
+        // ── IMU 定位校准：三轴加速度一次取用 ──
+        // web 无插件 / 事件流过期 / 未启动 → getLatestAccEnu() 返回 null，跳过注入纯 GPS 不变。
+        // 水平 [E,N] 注入 ImmFilter CA 预测（trust 自适应 + 分级 clamp + 重力泄漏衰减）；
+        // 垂直 [U] 注入海拔 CA 融合（GPS 仍是海拔权威，方向 3）。
+        const imuAcc = this._imuManager ? this._imuManager.getLatestAccEnu() : null;
+
+        // ── 海拔独立滤波（L2 自适应卡尔曼 + L3 中值/Huber + IMU 垂直注入）──
+        // 垂直 [U] 不依赖航向，始终注入（GPS 仍是海拔权威，方向 3）。
         // 原始海拔（质量门后、滤波前）保留供离线 RTS 使用；滤波值用于实时展示/落点
+        if (imuAcc && this._altFilter && typeof this._altFilter.feedAccU === 'function') {
+          this._altFilter.feedAccU(imuAcc[2], pos.speed);
+        }
         const rawAltitude = pos.altitude;
         pos.altitude = this._altFilter.push(rawAltitude, this.altitudeSource, now);
 
@@ -1305,14 +1328,13 @@ class GPSManager {
 
         // ── 2D 卡尔曼滤波实时平滑 ──
         if (this._useFilter && pos.accuracy > 0) {
-          // ── IMU 定位校准：加速度注入 CA 模型预测（仅线性加速度，航向仍由 GPS 权威）──
-          // 无 IMU 数据（web 无插件 / 事件流过期 / 未启动）→ getLatestAccEnu() 返回 null，
-          // 跳过注入，纯 GPS 行为不变。注入值单次消费，不影响 pos.heading。
-          if (this._imuManager) {
-            const imuAcc = this._imuManager.getLatestAccEnu();
-            if (imuAcc && typeof this._filter.feedImu === 'function') {
-              this._filter.feedImu(imuAcc);
-            }
+          // ── IMU 定位校准：水平加速度注入 CA 模型预测（航向仍由 GPS 权威）──
+          // 方向 4/5/6：按 GPS 速度分级 clamp、重力泄漏衰减（ImuManager.tiltLeakFactor）、
+          // trust 随 GPS-IMU 一致性自适应（ImmFilter 内部调整）。注入值单次消费。
+          // 航向不可靠（低速起步/遮挡/丢星）时跳过水平注入，只留海拔注入（见上）。
+          if (imuAcc && hdrReliable && typeof this._filter.feedImu === 'function') {
+            const tiltFactor = this._imuManager ? this._imuManager.tiltLeakFactor : 1;
+            this._filter.feedImu(imuAcc, pos.speed, tiltFactor);
           }
           // 用收到时刻而非 position.timestamp：maximumAge 缓存/重复 fix 的旧时间戳
           // 会使 dt ≤ 0 触发滤波器重置，平滑被静默关闭
@@ -1913,13 +1935,18 @@ class GPSManager {
           let diff = Math.abs(vtg - rmc) % 360;
           if (diff > 180) diff = 360 - diff;
           if (diff > CONFIG.NMEA_HEADING_CONFLICT_DEG) {
-            return browserHeading != null ? browserHeading : null;
+            const h = browserHeading != null ? browserHeading : null;
+            this._lastHeadingSource = h != null ? 'browser' : 'none';
+            return h;
           }
         }
       }
+      this._lastHeadingSource = 'vtg';
       return vtg;
     }
-    return browserHeading != null ? browserHeading : null;
+    const h = browserHeading != null ? browserHeading : null;
+    this._lastHeadingSource = h != null ? 'browser' : 'none';
+    return h;
   }
 
   /**

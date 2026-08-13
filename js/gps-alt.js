@@ -7,12 +7,16 @@
 
 /**
  * 一维自适应卡尔曼滤波器 — 海拔专用（完全独立，不依赖水平 KalmanFilter）
- * 状态 [alt, vAlt]，1D 恒速模型。参数全部走 CONFIG.ALT_*，不读精度/水平速度。
+ * 状态 [alt, vAlt]，1D 恒速模型 + 可选 IMU 垂直加速度控制输入（方向 3：CA 融合）。
+ * 参数全部走 CONFIG.ALT_*，不读精度/水平速度。
  * 自适应机制：
  *  - 自适应 R：滑动残差窗口的鲁棒尺度 σ̂（MAD×1.4826）估计垂直观测噪声，
  *    R = clamp(σ̂², R_MIN, R_MAX)，环境安静时收紧、环境吵闹时放宽。
  *  - 自适应 Q：垂直速度 |vAlt| 越大 → 认为真实垂直运动越强 → Q 线性放大，
  *    使滤波器在高动态（爬坡/下降）时跟得上，静止时平滑。
+ *  - IMU 垂直注入：feedAccU() 写入 U 轴线性加速度（已按速度分级 clamp + trust 缩放），
+ *    predict 阶段 x⁻ = F·x̂ + G·u（G=[½dt², dt]ᵀ，仅运动学先验，GPS 海拔仍是观测权威，
+ *    零基准由 GPS 持续校正，绝不做纯 IMU 积分）；注入期 Q 同步缩小（更信 IMU 预测）。
  *  - 自适应 Huber：k = ALT_HUBER_K × σ̂（阈值随噪声尺度自动缩放），
  *    残差 |e| > k 时收缩到 k·sign(e)，抑制 GNSS 垂直粗差/尖刺。
  *  - vAlt 限幅：垂直速度估计钳制在 ±ALT_VELOCITY_LIMIT，防突发漂移。
@@ -29,6 +33,15 @@ class AltKalmanFilter {
     this._huberK = C.ALT_HUBER_K != null ? C.ALT_HUBER_K : 2.0;
     this._velLimit = C.ALT_VELOCITY_LIMIT != null ? C.ALT_VELOCITY_LIMIT : 30;
     this._win = Math.max(5, C.ALT_RESIDUAL_WINDOW != null ? C.ALT_RESIDUAL_WINDOW : 20);
+
+    // IMU 垂直加速度控制输入（方向 3：海拔 CA 融合；web 无插件时 feedAccU 不被调用，纯 GPS 零回归）
+    this._imuEnabled = C.ALT_IMU_ENABLED !== false;
+    this._imuTrust = C.ALT_IMU_TRUST != null ? Math.min(1, Math.max(0, C.ALT_IMU_TRUST)) : 0.5;
+    this._clampLevelsU = (Array.isArray(C.ALT_IMU_U_CLAMP_LEVELS) && C.ALT_IMU_U_CLAMP_LEVELS.length)
+      ? C.ALT_IMU_U_CLAMP_LEVELS
+      : [{ maxSpeed: 1, clamp: 2 }, { maxSpeed: 3, clamp: 4 }, { maxSpeed: 8, clamp: 8 }, { maxSpeed: Infinity, clamp: 10 }];
+    this._clampAbsU = this._clampLevelsU[this._clampLevelsU.length - 1].clamp;
+    this._imuAccU = null; // 待消费垂直加速度（m/s²，已分级 clamp + trust 缩放）；单次消费
 
     // 状态 [alt, vAlt]
     this._alt = 0;
@@ -50,6 +63,38 @@ class AltKalmanFilter {
     this._sigma = Math.sqrt(this._rBase); // 当前鲁棒尺度 σ̂
   }
 
+  /**
+   * 写入 IMU 垂直加速度（方向 3，由 GPSManager 在每次海拔 push 前调用）。
+   * 输入为 ENU U 轴线性加速度（TYPE_LINEAR_ACCELERATION 已去重力，无需再减 g）。
+   * @param {number} aU 垂直加速度（m/s²）
+   * @param {number} [speed] GPS 速度（m/s），用于分级 clamp
+   */
+  feedAccU(aU, speed) {
+    if (!this._imuEnabled) return;
+    const a = Number(aU);
+    if (!isFinite(a)) return;
+    // 按 GPS 速度分级 clamp：静止收紧防噪声、机动放宽保真实垂直动作
+    const c = this._clampForSpeed(speed);
+    this._imuAccU = Math.max(-c, Math.min(c, a)) * this._imuTrust;
+  }
+
+  /** 按 GPS 速度选择垂直注入 clamp（m/s²） */
+  _clampForSpeed(speed) {
+    const levels = this._clampLevelsU;
+    const s = Number(speed) || 0;
+    for (let i = 0; i < levels.length; i++) {
+      if (s <= levels[i].maxSpeed) return levels[i].clamp;
+    }
+    return this._clampAbsU;
+  }
+
+  /** 读取并清空待注入垂直加速度（单次消费：update() 的 predict 阶段调用） */
+  _consumeAccU() {
+    const u = this._imuAccU;
+    this._imuAccU = null;
+    return u || 0;
+  }
+
   /** 重置（原地填充，避免 GC） */
   reset() {
     this._initialized = false;
@@ -62,6 +107,7 @@ class AltKalmanFilter {
     this._resIdx = 0;
     this._resCount = 0;
     this._sigma = Math.sqrt(this._rBase);
+    this._imuAccU = null;
   }
 
   /** 以当前测量初始化 */
@@ -122,9 +168,14 @@ class AltKalmanFilter {
     }
 
     // ── Predict ──
-    const altPred = this._alt + this._vAlt * dt;
-    // 自适应 Q：|vAlt| 大 → 真实垂直动态强 → Q 线性放大
-    const q = Math.min(this._qMax, this._qBase * (1 + Math.abs(this._vAlt) / this._qRefVel));
+    // IMU 垂直加速度控制输入（CA 模型，方向 3）：x⁻ = F·x̂ + G·u，G=[½dt², dt]ᵀ。
+    // 仅运动学先验：GPS 海拔持续作观测校正 IMU 积分漂移（零基准问题），绝不做纯积分。
+    const aU = this._consumeAccU(); // 已分级 clamp + trust 缩放，无数据为 0（纯 GPS）
+    const altPred = this._alt + this._vAlt * dt + 0.5 * aU * dt * dt;
+    const vAltPred = this._vAlt + aU * dt;
+    // 自适应 Q：|vAltPred| 大 → 真实垂直动态强 → Q 线性放大；注入期同步缩小（更信 IMU 运动学预测）
+    const qScale = Math.max(0.3, 1 - this._imuTrust * 0.7);
+    const q = Math.min(this._qMax, this._qBase * (1 + Math.abs(vAltPred) / this._qRefVel)) * qScale;
     const dt2 = dt * dt;
     const q00 = 0.25 * q * q * dt2 * dt2;
     const q01 = 0.5 * q * q * dt2 * dt;
@@ -151,7 +202,7 @@ class AltKalmanFilter {
     const K0 = p00p / S;
     const K1 = p01p / S;
     let alt = altPred + K0 * e;
-    let vAlt = this._vAlt + K1 * e;
+    let vAlt = vAltPred + K1 * e; // 以含控制输入的预测速度为更新基线（CA 模型）
     // vAlt 限幅
     if (vAlt > this._velLimit) vAlt = this._velLimit;
     else if (vAlt < -this._velLimit) vAlt = -this._velLimit;
@@ -186,6 +237,17 @@ class AltFilterPipeline {
     this._window.length = 0;
     this._lastSource = null;
     this._kf.reset();
+  }
+
+  /**
+   * 写入 IMU 垂直加速度（方向 3：海拔 CA 融合，GPS 仍是权威）。
+   * 由 GPSManager 在 push() 前调用；web 无插件时不调用 → 纯 GPS 零回归。
+   * @param {number} aU ENU U 轴线性加速度（m/s²，已去重力）
+   * @param {number} [speed] GPS 速度（m/s），用于分级 clamp
+   */
+  feedAccU(aU, speed) {
+    if (!this.enabled) return;
+    this._kf.feedAccU(aU, speed);
   }
 
   /**
