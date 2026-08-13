@@ -189,7 +189,12 @@ App.prototype._cleanTrail = async function (id) {
   }
   Toast.show('正在清洗轨迹…');
   let cleaned = TrailAnalysis.trimEndpoints(data.positions);
-  cleaned = TrailAnalysis.filterOutliers(cleaned);
+  // 跳变修复（复用后处理 TrailDenoise.denoiseTrail：米坐标插值，不删点、保时间轴）
+  if (globalThis.TrailDenoise) {
+    cleaned = globalThis.TrailDenoise.denoiseTrail(cleaned);
+  } else {
+    cleaned = TrailAnalysis.filterOutliers(cleaned);
+  }
 
   const before = data.positions.length;
   const after = cleaned.length;

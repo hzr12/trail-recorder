@@ -439,7 +439,12 @@ class KalmanFilter {
 
       // Update：S、K 计算与 update() 一致
       const sigma = Math.max(3, Math.min(accClamped, 2000));
-      const r = sigma * sigma;
+      // accuracy 加权（RTS_ACC_WEIGHT）：低精度点（sigma 大）的噪声方差被放大，
+      // RTS 反向递推时更信任模型预测而非该测量；高精度点反之亦然。
+      // 以 50m 为参考基准：rExp=1 退化为原 sigma^2；rExp>1 时低精度权重更陡峭，
+      // 等价于隐式运动学一致性约束（与实时 IMU clamp 解耦）。
+      const rExp = CONFIG.RTS_ACC_WEIGHT || 1;
+      const r = sigma * sigma * Math.pow(sigma / 50, rExp - 1);
       const s00 = Ppred[0] + r, s01 = Ppred[1], s10 = Ppred[4], s11 = Ppred[5] + r;
       const det = s00 * s11 - s01 * s10;
       // 数值稳定性：S 奇异（det→0）时直接求逆溢出。退化时跳过卡尔曼增益（K=0），

@@ -80,6 +80,21 @@ const CONFIG = {
   TRAIL_CLEAN_END_M: 30,            // 终点静止漂移段累计位移阈值（米）
   TRAIL_CLEAN_MAX_JUMP_FACTOR: 5,   // 单点跳变相对「速度×时间」的倍数上限，超过判异常
 
+  // ----- 轨迹级后处理（RTS 平滑增强 / 跳变修复 / 运动学约束）-----
+  // 离线 RTS 的 accuracy→R 权重曲线：sigma 由 accuracy 决定，r=sigma^2；
+  // 该指数让低精度点（accuracy 大）的测量噪声权重被放大（RTS 更信任模型预测），
+  // 高精度点反向。1=当前行为，>1 更激进地按精度区分。
+  RTS_ACC_WEIGHT: 1.3,
+  // 时间戳缺口：dt 超过该秒数即视为段间缺口（仍保留缺口点参与输出，避免回放时间轴断裂）
+  RTS_GAP_MAX_DT_S: 60,
+  // 跳变修复（denoiseTrail）：相对「速度×时间」的倍数上限（超过判跳变），与清洗同源
+  TRAIL_DENOISE_MAX_JUMP_FACTOR: 5,
+  // 跳变修复：基础兜底阈值（米），无速度信息时仍生效
+  TRAIL_DENOISE_BASE_M: 10,
+  // 运动学约束（kinematicClamp）：对平滑/修复后序列的物理可行性兜底纠偏（独立一步，不改 RTS 核心）
+  TRAIL_KINEMATIC_MAX_SPEED: 60,    // 单段最大瞬时速度（m/s），约 216km/h，超出视为不可信
+  TRAIL_KINEMATIC_MAX_ACC: 12,      // 单段最大加速度（m/s²），约 1.2g，超出视为跳变残差
+
   // ----- 轨迹分段 / 关键点分析 -----
   TRAIL_SEGMENT_MIN_POINTS: 3,   // 速度等级连续 N 个点才切段（防抖）
   TRAIL_SEGMENT_MIN_DIST: 60,    // 段最短距离（米），过短并入相邻段

@@ -1550,8 +1550,19 @@ class GPSManager {
     const fixes = this._rawFixes;
     this._rawFixes = [];
     if (!fixes.length) return [];
+    // 跳变剔除（独立纯函数，先于 RTS）：修复原始测量中的 GPS 鬼点/漂移，
+    // 米坐标线性插值回填，保留等长时间轴。RTS 输入即干净测量，避免炸裂。
+    let cleanFixes = fixes;
+    if (globalThis.TrailDenoise) {
+      cleanFixes = globalThis.TrailDenoise.denoiseTrail(fixes);
+    }
     // 水平：现有 2D RTS（只动 lat/lng，不动 altitude；离线走独立单模型实例）
-    const horizontal = this._offlineSmoother.smoothTrail(fixes);
+    let horizontal = this._offlineSmoother.smoothTrail(cleanFixes);
+    // 运动学约束兜底（独立一步）：对 RTS 输出再做速度/加速度限幅，回拉残留跳变，
+    // 与实时 IMU clamp 解耦。TrailDenoise 在 gps-kalman 之后加载，此处必已就绪。
+    if (globalThis.TrailDenoise) {
+      horizontal = globalThis.TrailDenoise.kinematicClamp(horizontal);
+    }
     // 海拔：独立 1D RTS（只消费原始 altitude + time）
     if (!this._altRts.enabled) {
       return horizontal.map(p => ({ ...p, alt: null }));
