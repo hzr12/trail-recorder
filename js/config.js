@@ -133,7 +133,7 @@ const CONFIG = {
   NMEA_SPEED_CONFLICT_RATIO: 0.3,   // VTG vs RMC 速度相对偏差比例阈值（超过触发冲突）
   NMEA_SPEED_CONFLICT_ABS: 2.0,     // VTG vs RMC 速度绝对偏差阈值（m/s）
   NMEA_HEADING_CONFLICT_DEG: 30,    // VTG vs RMC 航向偏差阈值（度）
-  NMEA_HEADING_MIN_SPEED: 1.0,      // 低于此速度（m/s）航向无意义，不参与交叉验证
+  NMEA_HEADING_MIN_SPEED: 0.4,      // 低于此速度（m/s）航向无意义，不参与交叉验证
   NMEA_COORD_CONFLICT_M: 30,        // 原生 GGA/RMC 经纬度 vs 浏览器点偏差阈值（米），超过标记可疑
   NMEA_COORD_CONFLICT_STREAK: 3,    // 连续 N 次偏差超阈才判定"原生坐标不可信"（防抖）
 
@@ -142,7 +142,7 @@ const CONFIG = {
   // 用滤波后相邻两点的位移反推航向（atan2(dE, dN)）做兜底，一阶低通平滑。
   // 位移过小（静止）不更新，保持上次方向；高速且 GPS 航向有效时始终以 GPS 为权威。
   HEADING_DIFF_MIN_M: 2.0,          // 相邻滤波点位移低于此值（m）不更新差分航向（防静止噪声）
-  HEADING_DIFF_MIN_SPEED: 1.0,      // 低于此速度（m/s）即视为低速，GPS 航向不再可信 → 用差分兜底
+  HEADING_DIFF_MIN_SPEED: 0.4,      // 低于此速度（m/s）即视为低速，GPS 航向不再可信 → 用差分兜底
   HEADING_DIFF_LPF_ALPHA: 0.3,      // 差分航向一阶低通系数（0=保持旧值，1=全信最新差分）
 
   // Huber Loss 鲁棒滤波「基准阈值」（标准化残差，无量纲）：0 禁用（纯最小二乘）。

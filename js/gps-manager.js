@@ -1960,7 +1960,7 @@ class GPSManager {
    */
   _resolveHeadingFallback(pos) {
     const C = (typeof CONFIG !== 'undefined' && CONFIG) || {};
-    const minSpeed = C.HEADING_DIFF_MIN_SPEED != null ? C.HEADING_DIFF_MIN_SPEED : 1.0;
+    const minSpeed = C.HEADING_DIFF_MIN_SPEED != null ? C.HEADING_DIFF_MIN_SPEED : 0.4;
     const minM = C.HEADING_DIFF_MIN_M != null ? C.HEADING_DIFF_MIN_M : 2.0;
     const alpha = C.HEADING_DIFF_LPF_ALPHA != null ? C.HEADING_DIFF_LPF_ALPHA : 0.3;
 
