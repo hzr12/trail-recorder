@@ -14,7 +14,7 @@ class TrailPlayer {
    * @param {Function} [callbacks.onComplete] - 回放完成回调
    * @param {Function} [callbacks.onFrame] - 每帧回调 (currentPoint, index)
    */
-  constructor(positions, mapManager, callbacks = {}) {
+  constructor(positions, mapManager, callbacks = {}, signalLoss = null) {
     // 复制数组快照：若回放源是当前记录的 trail.positions，记录继续 addPoint 会原地扩展数组，
     // 快照保证回放期间点数固定，不随记录变化而混乱
     // 同时过滤非法坐标点（lat/lng 非有限数），避免插值输出 NaN/null 污染回放
@@ -36,6 +36,10 @@ class TrailPlayer {
     }
     this.mapManager = mapManager;
     this.callbacks = callbacks;
+    // 信号丢失段索引集合（计划 A）：落入丢失段的顶点标为灰色
+    this._signalLossSet = (signalLoss && signalLoss.segments)
+      ? (() => { const s = new Set(); for (const seg of signalLoss.segments) for (let i = seg.startIdx; i <= seg.endIdx; i++) s.add(i); return s; })()
+      : null;
 
     this.speed = 1;
     this.isPlaying = false;
@@ -171,7 +175,8 @@ class TrailPlayer {
       this._replayPathPolylines = this._buildSpeedSegments(this._renderPositions)
         .filter(s => s.pts.length >= 2)
         .map((s) => {
-          const c = this.mapManager._speedColorMap[s.key] || { r: 0, g: 212, b: 170, a: 0.9 };
+          const colorMap = Object.assign({}, this.mapManager._speedColorMap, { __loss__: this.mapManager._hexToRgb(CONFIG.SIGNAL_LOSS_GREY) });
+          const c = colorMap[s.key] || { r: 0, g: 212, b: 170, a: 0.9 };
           return new qq.maps.Polyline({
             path: s.pts.map(p => new qq.maps.LatLng(p.lat, p.lng)),
             strokeColor: new qq.maps.Color(c.r, c.g, c.b, Math.round(c.a * 0.35 * 100) / 100),
@@ -187,12 +192,14 @@ class TrailPlayer {
   }
 
   // 按速度等级分段：把点数组切分为 [{key, pts}]，供未播预览与已播路径共用
+  // 落入信号丢失段（计划 A）的顶点 key 置 '__loss__' 以绘制灰色
   _buildSpeedSegments(pathPoints) {
     const segments = [];
     let curSeg = null;
     for (let i = 1; i < pathPoints.length; i++) {
       const speed = this.mapManager._segmentSpeed(pathPoints[i - 1], pathPoints[i]);
-      const key = this.mapManager._speedColorKey(speed);
+      let key = this.mapManager._speedColorKey(speed);
+      if (this._signalLossSet && this._signalLossSet.has(i)) key = '__loss__';
       if (!curSeg || curSeg.key !== key) {
         curSeg = { key, pts: [pathPoints[i - 1]] };
         segments.push(curSeg);
@@ -302,7 +309,7 @@ class TrailPlayer {
     // 分段序列变化：清理旧分段，重建速度着色路径
     this._playedPathKeySig = keySig;
     this._clearPlayedPolylines();
-    const colorMap = this.mapManager._speedColorMap;
+    const colorMap = Object.assign({}, this.mapManager._speedColorMap, { __loss__: this.mapManager._hexToRgb(CONFIG.SIGNAL_LOSS_GREY) });
     this._playedPathPolylines = segments
       .filter(s => s.pts.length >= 2)
       .map((s) => {
@@ -397,7 +404,8 @@ class TrailPlayer {
       this._replayPathPolylines = this._buildSpeedSegments(this._renderPositions)
         .filter(s => s.pts.length >= 2)
         .map((s) => {
-          const c = this.mapManager._speedColorMap[s.key] || { r: 0, g: 212, b: 170, a: 0.9 };
+          const colorMap = Object.assign({}, this.mapManager._speedColorMap, { __loss__: this.mapManager._hexToRgb(CONFIG.SIGNAL_LOSS_GREY) });
+          const c = colorMap[s.key] || { r: 0, g: 212, b: 170, a: 0.9 };
           return new qq.maps.Polyline({
             path: s.pts.map(p => new qq.maps.LatLng(p.lat, p.lng)),
             strokeColor: new qq.maps.Color(c.r, c.g, c.b, Math.round(c.a * 0.35 * 100) / 100),

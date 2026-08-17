@@ -63,9 +63,10 @@ App.prototype._replayTrailFromList = function (id) {
     // 若正在记录，记录轨迹继续在后台采集/显示，回放轨迹与记录轨迹互不污染、并行共存
     Toast.show(` 已加载「${data.name}」（${data.positions.length} 点）`);
 
-    // 自动开始回放
+    // 自动开始回放（传入信号丢失段，计划 A 灰色渲染）
+    const signalLoss = TrailAnalysis.detectSignalLoss(data.positions);
     setTimeout(() => {
-      this._startReplay(data.positions, data.name);
+      this._startReplay(data.positions, data.name, signalLoss);
     }, CONFIG.REPLAY_START_DELAY);
   });
 };
@@ -99,7 +100,7 @@ App.prototype._loadTrailFromList = function (id) {
     }
     // 历史轨迹仅加载显示到地图，不污染 trail 容器：
     // 若正在记录，记录数据保持独立（并行），加载查看不影响采集
-    this.mapManager.setTrail(data.positions);
+    this.mapManager.setTrail(data.positions, { signalLoss: TrailAnalysis.detectSignalLoss(data.positions) });
     this.mapManager.setTrailMarkers(TrailAnalysis.analyzeKeyPoints(data.positions));
     // 未记录时同步到 trail 容器，保留「回放当前轨迹」能力；记录中则跳过避免覆盖记录数据
     if (!this.trail.isRecording) {
@@ -159,21 +160,27 @@ App.prototype._exportShareCard = async function (id) {
     name: data.name || '轨迹',
     createdAt: data.createdAt
   }, {
-    stats: { distance: stats.distance, duration: stats.duration, points: cardPositions.length, avgSpeed: stats.avgSpeed, maxSpeed: stats.maxSpeed }
+    stats: { distance: stats.distance, duration: stats.duration, points: cardPositions.length, avgSpeed: stats.avgSpeed, maxSpeed: stats.maxSpeed, climb: stats.climb },
+    health: data.health || (TrailAnalysis.analyzeHealth(cardPositions)),
+    signalLoss: TrailAnalysis.detectSignalLoss(cardPositions)
   });
   if (!dataUrl) {
     Toast.show('生成分享卡片失败，请重试');
     return;
   }
-  const safeName = (data.name || '轨迹').replace(/[\\/:*?"<>|]/g, '_');
-  const dateStr = formatBeijing(Date.now()).slice(0, 10).replace(/\//g, '-');
-  const filename = `途刻-${safeName}-${dateStr}.png`;
-  // 复用 _exportReport 的分享链路（原生系统分享 / Web 下载）
-  this._downloadDataUrl(dataUrl, filename, {
-    title: '途刻分享卡片',
-    text: `途刻 — ${data.name || '轨迹'}`,
-    dialogTitle: '分享或保存分享卡片'
-  });
+  // 仅走系统分享（navigator.share），不做下载/存相册（用户要求）
+  if (navigator.share) {
+    try {
+      const blob = await (await fetch(dataUrl)).blob();
+      const file = new File([blob], 'trail-share.png', { type: 'image/png' });
+      await navigator.share({ files: [file], title: data.name || '途刻轨迹', text: `途刻 — ${data.name || '轨迹'}` });
+    } catch (e) {
+      // 用户取消分享或环境不支持文件分享：仅提示，不触发下载/存相册
+      Toast.show('已生成分享卡片，可再次点击分享');
+    }
+  } else {
+    Toast.show('当前环境不支持系统分享');
+  }
 };
 
 /**

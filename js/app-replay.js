@@ -26,7 +26,7 @@ App.prototype._toggleReplay = function () {
   this._startReplay(positions);
 };
 
-App.prototype._startReplay = function (positions, trailName) {
+App.prototype._startReplay = function (positions, trailName, signalLoss) {
   this._isReplaying = true;
   document.body.classList.add('replay-mode');
   this._replayFollowMode = true;
@@ -48,7 +48,7 @@ App.prototype._startReplay = function (positions, trailName) {
     onProgress: (progress) => this._onReplayProgress(progress),
     onComplete: () => this._onReplayComplete(),
     onFrame: (point, index) => this._onReplayFrame(point, index)
-  });
+  }, signalLoss);
 
   // 预计算分段，供回放实时显示当前段；回放有独立视觉体系，清掉关键点标记
   this._replaySegments = TrailAnalysis.analyzeSegments(positions);

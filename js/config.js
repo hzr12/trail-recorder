@@ -91,6 +91,18 @@ const CONFIG = {
   TRAIL_DENOISE_MAX_JUMP_FACTOR: 5,
   // 跳变修复：基础兜底阈值（米），无速度信息时仍生效
   TRAIL_DENOISE_BASE_M: 10,
+  // —— 信号丢失段标记（计划 A）——
+  SIGNAL_LOSS_MIN_WEAK_PTS: 3,        // 连续弱信号点数达此值才标为「信号丢失段」
+  SIGNAL_LOSS_GREY: '#888888',        // 丢星段灰色
+  // —— 记录健康分（计划 E）——
+  HEALTH_GRADE_THRESHOLDS: [0.9, 0.75, 0.6], // A / B / C / D 分数阈值
+  // —— 卡尔曼自适应遗忘因子（计划 C，仅实时 IMM 层）——
+  IMM_FORGET_MAX: 3,                  // 遗忘因子上限（突变时放大过程噪声 Q）
+  IMM_FORGET_DECAY: 0.85,             // 每帧衰减系数，逐步回归常规平滑
+  IMM_FORGET_JUMP_M: 20,              // 触发遗忘因子的位置跳变阈值（米）
+  // —— 海拔海平面基准校准（计划 D）——
+  ALT_USE_GEOID_BASELINE: true,       // 用 GPGGA 大地水准面分离校正本地海拔基准
+  ALT_GEOID_MAX_DIFF_M: 200,          // 大地水准面差超此值放弃校正（防坏数据跨城跳变）
   // 运动学约束（kinematicClamp）：对平滑/修复后序列的物理可行性兜底纠偏（独立一步，不改 RTS 核心）
   TRAIL_KINEMATIC_MAX_SPEED: 60,    // 单段最大瞬时速度（m/s），约 216km/h，超出视为不可信
   TRAIL_KINEMATIC_MAX_ACC: 12,      // 单段最大加速度（m/s²），约 1.2g，超出视为跳变残差

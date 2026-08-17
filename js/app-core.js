@@ -882,7 +882,9 @@ class App {
     if (!this.trail.positions || this.trail.positions.length === 0) return;
     const positions = this.trail.positions.slice();
     const name = Storage._fmtTrailName(Date.now());
-    Storage.saveTrailToList(positions, name, false).then((id) => {
+    const health = (typeof TrailAnalysis !== 'undefined' && TrailAnalysis.analyzeHealth)
+      ? TrailAnalysis.analyzeHealth(positions) : null;
+    Storage.saveTrailToList(positions, name, false, { health }).then((id) => {
       if (id) {
         this._invalidateTrailCache();
         Toast.show(' 轨迹已保存');

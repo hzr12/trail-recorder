@@ -518,7 +518,8 @@ class Storage {
       duration,
       pointCount: positions.length,
       favorite: !!favorite,
-      ...(o.cleaned ? { cleaned: true } : {})
+      ...(o.cleaned ? { cleaned: true } : {}),
+      ...(o.health ? { health: o.health } : {})
     };
     const trailData = Object.assign({}, meta, { positions });
     // 同时写 meta store（列表只读 meta，避免每次反序列化大 positions）+ trail store（完整数据）

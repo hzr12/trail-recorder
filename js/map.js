@@ -469,6 +469,18 @@ class MapManager {
     return p1.speed != null ? p1.speed : (p0.speed != null ? p0.speed : 0);
   }
 
+  // 十六进制颜色 → {r,g,b,a}，用于信号丢失段灰色（计划 A）
+  _hexToRgb(hex) {
+    const m = String(hex || '#888888').replace('#', '');
+    const v = m.length === 3 ? m.split('').map((c) => c + c).join('') : m;
+    return {
+      r: parseInt(v.substr(0, 2), 16) || 0,
+      g: parseInt(v.substr(2, 2), 16) || 0,
+      b: parseInt(v.substr(4, 2), 16) || 0,
+      a: 1
+    };
+  }
+
   /**
    * 当前 zoom 下的视觉抽稀点数上限（方案 C：缩放自适应）
    * zoom 越小（视野越大）需要的点越少；zoom 越大（细节越密）需要的点越多。
@@ -544,12 +556,22 @@ class MapManager {
   /**
    * 更新历史轨迹线（按速度分段着色）
    */
-  setTrail(positions) {
+  setTrail(positions, opts) {
     if (!this.map) return;
     if (!Array.isArray(positions) || positions.length < 2) {
       this.clearTrail();
       return;
     }
+    // 信号丢失段（计划 A）：把落入丢失段的顶点映射为灰色 key
+    const o = opts || {};
+    let lossSet = null;
+    if (o.signalLoss && o.signalLoss.segments) {
+      lossSet = new Set();
+      for (const s of o.signalLoss.segments) {
+        for (let i = s.startIdx; i <= s.endIdx; i++) lossSet.add(i);
+      }
+    }
+    const colorMap = Object.assign({}, this._speedColorMap, { __loss__: this._hexToRgb(CONFIG.SIGNAL_LOSS_GREY) });
 
     // 增量/全量判定：记录模式是同一数组引用持续追加（增量）；加载/平滑/切换是新数组（全量）。
     // 全量场景超限先抽稀，显著降低 polyline 数量与绘制开销；
@@ -615,7 +637,7 @@ class MapManager {
     for (let i = from; i < positions.length; i++) {
       const p0 = positions[i - 1];
       const p1 = positions[i];
-      const key = this._speedColorKey(this._segmentSpeed(p0, p1));
+      const key = lossSet && lossSet.has(i) ? '__loss__' : this._speedColorKey(this._segmentSpeed(p0, p1));
 
       if (batchPath.length === 0) {
         batchPath.push(new qq.maps.LatLng(p0.lat, p0.lng));
@@ -628,7 +650,7 @@ class MapManager {
         }
       } else {
         if (batchPath.length >= 2) {
-          this._flushSegment(batchPath, this._speedColorMap[batchKey]);
+          this._flushSegment(batchPath, colorMap[batchKey]);
         }
         const interpolated = this._subdivideSegment(p0, p1);
         batchPath = [new qq.maps.LatLng(p0.lat, p0.lng)];
@@ -639,7 +661,7 @@ class MapManager {
       }
     }
     if (batchPath.length >= 2) {
-      this._flushSegment(batchPath, this._speedColorMap[batchKey]);
+      this._flushSegment(batchPath, colorMap[batchKey]);
     }
     this._lastTrailCount = positions.length;
     if (positions.length > 0) {
@@ -985,8 +1007,12 @@ class MapManager {
   async _drawTrailThumbnail(canvas, positions, opts) {
     if (!positions || positions.length < 2) return canvas;
     const o = opts || {};
+    // 信号丢失段（计划 A）：缩略图标记灰色段时不做抽稀，保证索引与 signalLoss 对齐
+    const lossSet = (o.signalLoss && o.signalLoss.segments)
+      ? (() => { const s = new Set(); for (const seg of o.signalLoss.segments) for (let i = seg.startIdx; i <= seg.endIdx; i++) s.add(i); return s; })()
+      : null;
     // 视觉抽稀：超大轨迹先抽稀再投影/绘制，避免逐点三角函数与逐段 canvas 绘制卡死
-    if (positions.length > CONFIG.THUMB_DECIMATE_MAX_POINTS) {
+    if (!lossSet && positions.length > CONFIG.THUMB_DECIMATE_MAX_POINTS) {
       positions = this._decimateTrail(positions, CONFIG.THUMB_DECIMATE_MAX_POINTS);
     }
     const W = canvas.width;
@@ -1038,16 +1064,16 @@ class MapManager {
       }
     }
 
-    // 速度着色折线
-    const colorMap = this._speedColorMap;
+    // 速度着色折线（信号丢失段强制灰色，计划 A）
+    const colorMap = Object.assign({}, this._speedColorMap, { __loss__: this._hexToRgb(CONFIG.SIGNAL_LOSS_GREY) });
     ctx.lineWidth = 3;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     for (let i = 1; i < worldPts.length; i++) {
       const p0 = worldPts[i - 1];
       const p1 = worldPts[i];
-      const speed = this._segmentSpeed(positions[i - 1], positions[i]);
-      const c = colorMap[this._speedColorKey(speed)] || { r: 0, g: 200, b: 160, a: 0.8 };
+      const key = lossSet && lossSet.has(i) ? '__loss__' : this._speedColorKey(this._segmentSpeed(positions[i - 1], positions[i]));
+      const c = colorMap[key] || { r: 0, g: 200, b: 160, a: 0.8 };
       const a = toXY(p0);
       const b = toXY(p1);
       ctx.strokeStyle = `rgba(${c.r},${c.g},${c.b},${c.a})`;
@@ -1417,7 +1443,8 @@ class MapManager {
     if (!trail || !trail.positions || trail.positions.length < 2) return null;
     const o = opts || {};
     const positions = trail.positions;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const health = o.health || null; // {grade, score, weakRatio, jumpRatio, gapRatio} 计划 E
     const W = o.width || 1080;
     const H = o.height || 1080;
     const S = dpr;
@@ -1499,6 +1526,26 @@ class MapManager {
     ctx.textBaseline = 'middle';
     ctx.fillText(title, padX, 52);
 
+    // 健康分徽章（计划 E）：标题右侧圆角胶囊
+    if (health && health.grade) {
+      const grade = health.grade;
+      const badgeText = '健康 ' + grade;
+      ctx.font = `700 ${20 * S}px "HarmonyOS Sans", "PingFang SC", sans-serif`;
+      const badgeW = ctx.measureText(badgeText).width + 28 * S;
+      const badgeH = 36 * S;
+      const badgeX = W - padX - badgeW;
+      const badgeY = 34 * S;
+      const badgeColor = grade === 'A' ? '#34C759' : grade === 'B' ? '#30B0C7' : grade === 'C' ? '#FF9F0A' : '#FF453A';
+      ctx.fillStyle = badgeColor;
+      ctx.beginPath();
+      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, badgeH / 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.fillText(badgeText, badgeX + badgeW / 2, badgeY + badgeH / 2);
+      ctx.textAlign = 'left';
+    }
+
     // 副标题（日期）
     const subtitle = o.subtitle || this._fmtShareDate(trail.createdAt);
     if (subtitle) {
@@ -1507,16 +1554,19 @@ class MapManager {
       ctx.fillText(subtitle, padX, 94);
     }
 
-    // 速度着色轨迹折线
-    const colorMap = this._speedColorMap;
+    // 速度着色轨迹折线（信号丢失段强制灰色，计划 A）
+    const lossSet = (o.signalLoss && o.signalLoss.segments)
+      ? (() => { const s = new Set(); for (const seg of o.signalLoss.segments) for (let i = seg.startIdx; i <= seg.endIdx; i++) s.add(i); return s; })()
+      : null;
+    const colorMap = Object.assign({}, this._speedColorMap, { __loss__: this._hexToRgb(CONFIG.SIGNAL_LOSS_GREY) });
     ctx.lineWidth = 8 * S;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     for (let i = 1; i < worldPts.length; i++) {
       const p0 = worldPts[i - 1];
       const p1 = worldPts[i];
-      const speed = this._segmentSpeed(positions[i - 1], positions[i]);
-      const c = colorMap[this._speedColorKey(speed)] || { r: 0, g: 200, b: 160, a: 0.9 };
+      const key = lossSet && lossSet.has(i) ? '__loss__' : this._speedColorKey(this._segmentSpeed(positions[i - 1], positions[i]));
+      const c = colorMap[key] || { r: 0, g: 200, b: 160, a: 0.9 };
       const a = toXY(p0);
       const b = toXY(p1);
       ctx.strokeStyle = `rgba(${c.r},${c.g},${c.b},${c.a})`;
@@ -1537,6 +1587,25 @@ class MapManager {
     ctx.beginPath();
     ctx.arc(endPt.x, endPt.y, 9 * S, 0, Math.PI * 2);
     ctx.fill();
+
+    // 图例条（速度等级色 + 信号丢失灰段，计划 A/F）
+    const legendY = padTop - 30 * S;
+    let legendX = padX;
+    const dotR = 7 * S;
+    const drawLegendItem = (color, label) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(legendX + dotR, legendY, dotR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = isLight ? 'rgba(20,24,31,0.7)' : 'rgba(255,255,255,0.7)';
+      ctx.font = `${15 * S}px "HarmonyOS Sans", "PingFang SC", sans-serif`;
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, legendX + dotR * 2 + 6 * S, legendY);
+      legendX += dotR * 2 + 6 * S + ctx.measureText(label).width + 22 * S;
+    };
+    const levels = CONFIG.TRAIL_SPEED_LEVELS || [];
+    for (const lv of levels) drawLegendItem(lv.color || '#00E5CC', lv.label || lv.mode);
+    drawLegendItem(CONFIG.SIGNAL_LOSS_GREY, '信号丢失');
 
     // 底部统计区
     const stats = o.stats || (() => {
@@ -1559,13 +1628,14 @@ class MapManager {
     ctx.roundRect(32, panelY - 26, W - 64, panelH, 24);
     ctx.fill();
 
-    // 距离（大字）+ 时长/均速/最高速（不含点数）
+    // 距离（大字）+ 时长/均速/最高速/爬升（不含点数）
     const fmtSpeed = (v) => (v > 0 ? (v * 3.6).toFixed(1) + ' km/h' : '--');
     const statCols = [
       { label: '距离', value: formatDistance(stats.distance), big: true },
       { label: '时长', value: formatDurationShort(stats.duration), big: false },
       { label: '均速', value: fmtSpeed(stats.avgSpeed), big: false },
-      { label: '最高速', value: fmtSpeed(stats.maxSpeed), big: false }
+      { label: '最高速', value: fmtSpeed(stats.maxSpeed), big: false },
+      { label: '爬升', value: (stats.climb != null && stats.climb > 0) ? Math.round(stats.climb) + ' m' : '--', big: false }
     ];
     const colW = (W - 64) / statCols.length;
     statCols.forEach((col, i) => {

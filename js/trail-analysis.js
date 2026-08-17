@@ -417,5 +417,64 @@ const TrailAnalysis = {
       if (index >= seg.startIdx && index <= seg.endIdx) return seg;
     }
     return segments[segments.length - 1];
+  },
+
+  /**
+   * 检测信号丢失段（隧道/丢星）：连续弱信号 或 NMEA 时间缺口。
+   * @param {Array} positions 需含 {lat,lng,time,accuracy}
+   * @param {Object} [opts]
+   * @returns {{segments:Array<{startIdx:number,endIdx:number,reason:'weak'|'gap'}>}}
+   */
+  detectSignalLoss(positions, opts) {
+    if (!Array.isArray(positions) || positions.length < 2) return { segments: [] };
+    const weakLimit = CONFIG.SIGNAL_LOSS_MIN_WEAK_PTS;
+    const gapMs = CONFIG.RTS_GAP_MAX_DT_S * 1000;
+    const accLimit = CONFIG.IMM_FREEZE_ACC;
+    const segs = [];
+    let weakRun = 0, weakStart = -1;
+    for (let i = 0; i < positions.length; i++) {
+      const p = positions[i];
+      const weak = (p.accuracy != null && p.accuracy > accLimit);
+      if (weak) {
+        if (weakStart < 0) weakStart = i;
+        weakRun++;
+      } else {
+        if (weakRun >= weakLimit) segs.push({ startIdx: weakStart, endIdx: i - 1, reason: 'weak' });
+        weakRun = 0; weakStart = -1;
+      }
+      if (i > 0 && p.time != null && positions[i - 1].time != null
+          && (p.time - positions[i - 1].time) > gapMs) {
+        segs.push({ startIdx: i - 1, endIdx: i, reason: 'gap' });
+      }
+    }
+    if (weakRun >= weakLimit) segs.push({ startIdx: weakStart, endIdx: positions.length - 1, reason: 'weak' });
+    return { segments: segs };
+  },
+
+  /**
+   * 记录健康分：弱信号 / 跳变 / 时间缺口 占比加权。
+   * @param {Array} positions 需含 {lat,lng,time,accuracy,speed}
+   * @returns {{score:number, grade:string, weakRatio:number, jumpRatio:number, gapRatio:number}}
+   */
+  analyzeHealth(positions) {
+    const n = positions.length;
+    if (n < 2) return { score: 1, grade: 'A', weakRatio: 0, jumpRatio: 0, gapRatio: 0 };
+    let weak = 0, jump = 0, gap = 0;
+    for (let i = 1; i < n; i++) {
+      const p = positions[i], prev = positions[i - 1];
+      if (p.accuracy != null && p.accuracy > CONFIG.IMM_FREEZE_ACC) weak++;
+      const dt = (p.time && prev.time) ? (p.time - prev.time) / 1000 : 0;
+      const expDist = (p.speed || 0) * dt;
+      const realDist = calcDistance(prev, p);
+      if (expDist > 0 && realDist > expDist * CONFIG.TRAIL_DENOISE_MAX_JUMP_FACTOR) jump++;
+      if (dt > CONFIG.RTS_GAP_MAX_DT_S) gap++;
+    }
+    const weakRatio = weak / n;
+    const jumpRatio = jump / n;
+    const gapRatio = gap / (n - 1);
+    const score = Math.max(0, 1 - 0.5 * weakRatio - 0.3 * jumpRatio - 0.2 * gapRatio);
+    const t = CONFIG.HEALTH_GRADE_THRESHOLDS;
+    const grade = score > t[0] ? 'A' : score > t[1] ? 'B' : score > t[2] ? 'C' : 'D';
+    return { score, grade, weakRatio, jumpRatio, gapRatio };
   }
 };
