@@ -72,8 +72,9 @@ class GPSManager {
     // 离线 RTS 平滑：独立单模型实例（实时/离线彻底解耦，离线保持已调优的 4 维 RTS）
     this._offlineSmoother = new KalmanFilter();
     this._rawPosition = null;         // 滤波前的原始位置（保留供 trail 等使用）
-    this._rawFixes = [];              // 原始测量缓冲（WGS84，滤波前），供结束记录时 RTS 离线平滑
+    this._rawFixes = [];              // 原始测量缓冲（滤波前），供结束记录时 RTS 离线平滑
     this._maxRawFixes = 50000;        // 缓冲上限（超出丢弃最旧，防止内存膨胀）
+    this._mapManager = null;          // 注入 mapManager，采集时把原始坐标预转 GCJ02（与轨迹点同系）
 
     // 海拔独立滤波链（L2 自适应卡尔曼 + L3 中值/Huber 实时，L4 离线 1D RTS）
     this._altFilter = new AltFilterPipeline();
@@ -1317,17 +1318,23 @@ class GPSManager {
         const rawAltitude = pos.altitude;
         pos.altitude = this._altFilter.push(rawAltitude, this.altitudeSource, now);
 
-        // 保存原始位置（滤波前，WGS84），供结束记录时的 RTS 离线平滑使用
+        // 保存原始位置（滤波前），供结束记录时的 RTS 离线平滑使用。
+        // 坐标预转 GCJ02（与 trail.positions 同系），时间戳用 pos.timestamp（与 addPoint 的 pt.ts 同源）。
+        // 修复：此前存 WGS84 + 用收到时刻 now，导致 RTS 输出被写回 GCJ02 轨迹时出现
+        // 坐标系错位（整体漂移 ~500m）与匹配失败（byTs 查 pt.time 落空）。
         this._rawPosition = { lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, speed: pos.speed, heading: pos.heading, altitude: rawAltitude, timestamp: pos.timestamp };
         if (this._rawFixes.length < this._maxRawFixes) {
+          const fixLatLng = this._mapManager
+            ? this._mapManager.wgs84ToGcj02Sync({ lat: pos.lat, lng: pos.lng })
+            : { lat: pos.lat, lng: pos.lng };
           this._rawFixes.push({
-            lat: pos.lat,
-            lng: pos.lng,
+            lat: fixLatLng.lat,          // GCJ02（与轨迹点同系，RTS 全程 GCJ02 空间平滑）
+            lng: fixLatLng.lng,          // GCJ02
             accuracy: pos.accuracy || 0,
             speed: pos.speed,
-            altitude: rawAltitude, // 原始海拔（质量门后），供离线 1D RTS 平滑
-            time: now, // 用收到时刻（与滤波器 dt 一致）
-            ts: pos.timestamp // 原始 GPS 时间戳（保留供匹配/展示）
+            altitude: rawAltitude,       // 原始海拔（质量门后），供离线 1D RTS 平滑
+            time: pos.timestamp,         // GPS 事件时刻（与 addPoint 的 pt.ts 同源）
+            ts: pos.timestamp            // 匹配 key：与 trail.positions 的 pt.ts 逐位相等
           });
         }
 
@@ -1516,10 +1523,15 @@ class GPSManager {
     if (this._altFilter) this._altFilter.reset();
   }
 
+  /** 注入 MapManager：采集原始测量时预转 GCJ02，使 RTS 全程在 GCJ02 空间平滑 */
+  setMapManager(mapManager) {
+    this._mapManager = mapManager;
+  }
+
   /**
    * 对缓冲内所有原始测量做离线 RTS 平滑（整段后处理）
    * 用于结束记录后提升轨迹精度。会清空缓冲，返回平滑结果。
-   * @returns {Array<{lat:number,lng:number,time:number,ts:*}>} 平滑后 WGS84 坐标序列
+   * @returns {Array<{lat:number,lng:number,time:number,ts:*}>} 平滑后 GCJ02 坐标序列
    */
   smoothTrailRts() {
     const fixes = this._rawFixes;
@@ -1542,6 +1554,7 @@ class GPSManager {
 
   /**
    * 对缓冲内所有原始测量做 3D 离线 RTS 平滑（结束记录后处理）。
+   * 输入已由采集路径预转为 GCJ02（与轨迹点同系），输出亦为 GCJ02，回写零转换。
    * 水平复用现有 2D RTS（KalmanFilter.smoothTrail），海拔走完全独立的 1D RTS（AltRtsSmoother），
    * 二者互不依赖。返回元素在水平 RTS 输出基础上并入 `alt` 字段（null 表示该点无海拔/缺口）。
    * @returns {Array<{lat:number,lng:number,time:number,ts:*,alt:number|null}>}

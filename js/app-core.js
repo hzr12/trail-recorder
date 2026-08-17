@@ -8,6 +8,9 @@ class App {
   constructor() {
     this.mapManager = new MapManager();
     this.gpsManager = new GPSManager();
+    // 注入 mapManager：GPSManager 采集原始测量时预转 GCJ02（与轨迹点同系），
+    // 使离线 RTS 全程在 GCJ02 空间平滑，回写零转换，消除坐标系错位漂移。
+    this.gpsManager.setMapManager(this.mapManager);
     this.gpsManager.onCriticalBattery = () => {
       if (this._isWatching) {
         Toast.show(' 电量不足 10%，追踪已自动停止');
@@ -729,9 +732,9 @@ class App {
 
   /**
    * 对刚停止记录的轨迹做 3D RTS 离线平滑（结束记录时的后处理）
-   * 数据流：GPSManager._rawFixes（WGS84 原始测量）→ smoothTrailRts3d
-   * （水平 2D RTS + 海拔独立 1D RTS）→ 平滑 WGS84 → batchWgs84ToGcj02
-   * → 按 ts 匹配写回 trail.positions（含 altitude 回写）。
+   * 数据流：GPSManager._rawFixes（采集时已预转 GCJ02）→ smoothTrailRts3d
+   * （水平 2D RTS + 海拔独立 1D RTS）→ 平滑 GCJ02
+   * → 按 ts（GPS 事件时刻，与轨迹点 pt.ts 同源）匹配写回 trail.positions（含 altitude 回写）。
    * 匹配失败的点（如时间戳缺失）保留原值；无原始测量时静默跳过。
    */
   _applyTrailRtsSmoothing() {
@@ -742,20 +745,19 @@ class App {
       // 返回元素含 alt 字段（海拔平滑结果，null 表示无海拔/缺口）。
       const smoothed = this.gpsManager.smoothTrailRts3d();
       if (!smoothed || smoothed.length < 2) return;
-      // 平滑输出为 WGS84 → 批量转 GCJ02（同步手写算法）。
-      // 注意 batchWgs84ToGcj02 只映射 lat/lng，不保留 alt，需从 smoothed[i].alt 直接取。
-      const gcj = this.mapManager.batchWgs84ToGcj02(smoothed);
-      // 建立 ts → 平滑坐标 映射（ts 为原始 GPS 时间戳）
+      // 平滑输出已是 GCJ02（采集时已预转，RTS 全程 GCJ02 空间），直接回写，零二次转换。
+      // 建立 ts → 平滑坐标 映射（ts 为 GPS 事件时刻，与轨迹点 pt.ts 同源逐位匹配）
       const byTs = new Map();
       for (let i = 0; i < smoothed.length; i++) {
         if (smoothed[i].ts != null) {
-          byTs.set(smoothed[i].ts, { lat: gcj[i].lat, lng: gcj[i].lng, alt: smoothed[i].alt });
+          byTs.set(smoothed[i].ts, { lat: smoothed[i].lat, lng: smoothed[i].lng, alt: smoothed[i].alt });
         }
       }
       let replaced = 0;
       let replacedAlt = 0;
       for (const pt of this.trail.positions) {
-        const smooth = byTs.get(pt.time);
+        // 匹配 key 优先 pt.ts（GPS 事件时刻，与 byTs 同源）；历史点无 ts 时回退 pt.time
+        const smooth = byTs.get(pt.ts != null ? pt.ts : pt.time);
         if (smooth) {
           pt.lat = smooth.lat;
           pt.lng = smooth.lng;
@@ -1084,6 +1086,7 @@ class App {
           lat: convPos.lat,
           lng: convPos.lng,
           time: this.gpsManager.calibratedNow,
+          ts: pos.timestamp, // GPS 事件时刻：与 _rawFixes.ts 同源，供 RTS 回写精确匹配
           accuracy: pos.accuracy || 0,
           speed: pos.speed,
           heading: pos.heading,

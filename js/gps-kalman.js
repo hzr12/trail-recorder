@@ -315,7 +315,8 @@ class KalmanFilter {
    * 离线批处理 RTS（Rauch–Tung–Striebel）平滑
    * 对整段原始测量序列做「前向滤波 + 反向递推」，利用未来测量修正历史状态，
    * 显著降低轨迹滞后与抖动（实时滤波的 RMSE 通常可再降 30~40%）。
-   * 输入输出均为 WGS84 坐标；内部在局部米坐标系下运算，参考点取段首。
+   * 坐标经调用方预转（GPSManager 采集时已转 GCJ02），此处对坐标系无依赖；
+   * 内部在局部米坐标系下运算，参考点取段首。
    * 遇到时间断裂（dt≤0 或 >60s）、精度过差（>2000m）或距段首超 3km 时自动分段，
    * 每段独立平滑后拼接（重锚/重置点即段边界）。
    * @param {Array<{lat:number,lng:number,time:number,accuracy?:number,speed?:number,ts?:*}>} fixes 原始测量序列（升序）

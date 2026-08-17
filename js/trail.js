@@ -177,8 +177,7 @@ class Trail {
       // 保留原始所有字段，只覆盖 lat/lng
       result.push(Object.assign({}, this.positions[i], {
         lat: sumLat / count,
-        lng: sumLng / count,
-        _smoothed: true
+        lng: sumLng / count
       }));
     }
     return result;

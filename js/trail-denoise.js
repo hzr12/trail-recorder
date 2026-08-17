@@ -62,6 +62,9 @@
 
     // 2) 修复：对 keep=false 的内部点做米坐标线性插值
     const out = positions.map(p => Object.assign({}, p));
+    // 段首纬度作为米坐标参考（与 kinematicClamp / gps-kalman _rtsSegment 一致）
+    const refLat = positions[0].lat;
+    const cosLat = Math.cos(refLat * DEG);
     for (let i = 1; i < n - 1; i++) {
       if (keep[i]) continue;
       // 向前/向后找最近的有效锚点
@@ -74,9 +77,7 @@
       const ta = pa.time, tb = pb.time, tc = positions[i].time;
       // 时间比例（米坐标内插，避免大跨度经纬度线性偏差）
       const frac = (tb !== ta) ? (tc - ta) / (tb - ta) : 0.5;
-      const refLat = pa.lat;
-      const cosLat = Math.cos(refLat * DEG);
-      const xa = (pa.lng - refLat * 0) * 0 + (pa.lng) * MPD * cosLat; // 直接经纬差转米
+      const xa = pa.lng * MPD * cosLat;   // 经纬差转米（清死表达式）
       const ya = pa.lat * MPD;
       const xb = pb.lng * MPD * cosLat;
       const yb = pb.lat * MPD;

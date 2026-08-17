@@ -143,6 +143,7 @@ App.prototype._processBackgroundPosition = async function (pos) {
         lat: convPos.lat,
         lng: convPos.lng,
         time: this.gpsManager.calibratedNow,
+        ts: pos.timestamp, // GPS 事件时刻：与 _rawFixes.ts 同源，供 RTS 回写精确匹配
         accuracy: pos.accuracy || 0,
         speed: pos.speed,
         heading: pos.heading,
