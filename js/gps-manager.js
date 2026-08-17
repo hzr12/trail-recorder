@@ -53,6 +53,7 @@ class GPSManager {
     // GNSS NMEA 增强（定位源接管 / GGA 海拔 / GSA DOP / RMC 交叉验证）
     this._lastRmc = null;          // $GPRMC：定位有效性 + 速度/航向交叉源 + 经纬度
     this._lastGga = null;          // $GPGGA：海拔 MSL + 大地水准面分离 + 经纬度
+    this._geoidBaseline = null;    // 大地水准面分离基准（米），计划 D：首个可信 GGA sep 锁定
     this._lastGsa = null;          // $G?GSA：PDOP/HDOP/VDOP
     this._gpsSource = 'fallback';  // 定位源状态：native（原生主导）| browser（浏览器顶上）| fallback（无插件）
     this._sourceNativeCnt = 0;     // 切 native 持续计数（滞回防抖）
@@ -520,6 +521,7 @@ class GPSManager {
     this._lastSourceEvalAt = 0;
     this._nativeLat = null;
     this._nativeLng = null;
+    this._geoidBaseline = null; // 清除海拔基准（源切换/重置）
     this._coordConflictStreak = 0;
     this._nativeCoordTrusted = true;
   }
@@ -590,6 +592,13 @@ class GPSManager {
         fixValid: Number.isInteger(fixQuality) && fixQuality > 0,
         receivedAt: Date.now()
       };
+      // 计划 D：锁定首个有效 sep 作为本地大地水准面基准（零基准，避免跨城坏数据）
+      if (CONFIG.ALT_USE_GEOID_BASELINE !== false && geoidSep != null && isFinite(geoidSep)) {
+        if (this._geoidBaseline == null) {
+          this._geoidBaseline = geoidSep;
+          if (CONFIG.DEBUG) console.log(`[ALT] 锁定大地水准面基准 sep=${geoidSep.toFixed(1)}m`);
+        }
+      }
       if (lat != null && lng != null && fixQuality > 0) this._updateNativeCoord(lat, lng);
     } else if (type === 'GSA') {
       // $GPGSA,<模式>,<fix>,<sv1..sv12>,<PDOP>,<HDOP>,<VDOP>
@@ -1521,6 +1530,7 @@ class GPSManager {
   clearRawFixes() {
     this._rawFixes = [];
     if (this._altFilter) this._altFilter.reset();
+    this._geoidBaseline = null; // 清空海拔基准（跨会话/源切换重置）
   }
 
   /** 注入 MapManager：采集原始测量时预转 GCJ02，使 RTS 全程在 GCJ02 空间平滑 */
@@ -1876,6 +1886,24 @@ class GPSManager {
   }
 
   /**
+   * 计划 D：当前大地水准面校正量（米）= 实时 sep − 基准 sep。
+   * 实时 sep 缺失（browser 口径）时退化为 0（不校正，纯 GPS 零回归）。
+   * 偏差超 ALT_GEOID_MAX_DIFF_M 返回 null（放弃校正，防坏数据跳变）。
+   */
+  get geoidCorrectionM() {
+    if (CONFIG.ALT_USE_GEOID_BASELINE === false) return null;
+    if (this._geoidBaseline == null) return null;
+    const sep = this.geoidSep; // 已含过期判定
+    if (sep == null) return 0; // 实时口径无 sep → 不校正
+    const corr = sep - this._geoidBaseline;
+    if (Math.abs(corr) > CONFIG.ALT_GEOID_MAX_DIFF_M) {
+      if (CONFIG.DEBUG) console.warn(`[ALT] 大地水准面校正量 ${corr.toFixed(1)}m 超阈值，放弃校正`);
+      return null;
+    }
+    return corr;
+  }
+
+  /**
    * $GPGGA 定位质量有效性（fixQuality > 0），过期/缺失返回 null。
    * 作为定位源降级信号：GGA 明确报 fix 无效（fixQuality=0）时，即便卫星数/HDOP 达标也不足以信任原生坐标。
    * null 表示未收到 GGA，不干预既有决策（与 "无数据" 区分）。
@@ -2035,8 +2063,11 @@ class GPSManager {
    */
   _resolveAltitude(browserAltitude) {
     if (this._weakSignal) return null;
+    const corr = this.geoidCorrectionM; // null=放弃校正, 0=无基准不校, 数值=校正量
     const gga = this.ellipsoidalAltitude;
-    if (gga != null) return gga;
-    return browserAltitude != null ? browserAltitude : null;
+    let raw = gga != null ? gga : (browserAltitude != null ? browserAltitude : null);
+    if (raw == null) return null;
+    // 校正：把椭球高换算到以本地 geoid 基准对齐的口径，跨口径（GGA↔browser）不跳变
+    return corr == null ? raw : raw - corr;
   }
 }

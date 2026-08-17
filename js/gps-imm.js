@@ -37,6 +37,11 @@ class ImmFilter {
     this._freezeAcc = C.IMM_FREEZE_ACC != null ? C.IMM_FREEZE_ACC : 2000;
     this._likTemp = C.IMM_LIKELIHOOD_TEMP != null ? C.IMM_LIKELIHOOD_TEMP : 2.0;
     this._minProb = C.IMM_MIN_PROB != null ? C.IMM_MIN_PROB : 1e-6;
+    // 自适应遗忘因子（计划 C）：位置跳变时临时放大过程噪声 Q，随后指数回落到常规 Q
+    this._forgetMax = C.IMM_FORGET_MAX != null ? Math.max(1, C.IMM_FORGET_MAX) : 3;
+    this._forgetDecay = C.IMM_FORGET_DECAY != null ? Math.min(1, Math.max(0.5, C.IMM_FORGET_DECAY)) : 0.85;
+    this._forgetJumpM = C.IMM_FORGET_JUMP_M != null ? Math.max(0, C.IMM_FORGET_JUMP_M) : 20;
+    this._forgetFactor = 1; // 当前遗忘因子（≥1），1 表示常规 Q
     // 速度辅助模型先验开关：用 GPS 上报 speed 修正转移预测概率 c̄。
     // 纯位置观测下低速/高速的模型辨识依赖残差积累，切换慢；speed 是现成
     // 的运动模式强信号（比位置噪声小得多），做软门控可显著加速正确切换。
@@ -159,6 +164,7 @@ class ImmFilter {
     this._vyOut = 0;
     this._prevVx = 0;
     this._prevVy = 0;
+    this._forgetFactor = 1; // 新轨迹：遗忘因子归位
   }
 
   /** 重置滤波器（原地填充，避免 GC） */
@@ -179,6 +185,7 @@ class ImmFilter {
     this._vyOut = 0;
     this._prevVx = 0;
     this._prevVy = 0;
+    this._forgetFactor = 1; // 重置：遗忘因子归位
   }
 
   /**
@@ -290,6 +297,20 @@ class ImmFilter {
       // 时间异常或间隙过大 → 重置（与单模型一致）
       this.init(zLat, zLng, time);
       return { lat: zLat, lng: zLng };
+    }
+
+    // 计划 C：位置跳变检测 → 触发遗忘因子放大 Q。
+    // 用「前帧滤波位置」与「本帧测量」的 ENU 距离判断（避免重锚平移 refLat/refLng
+    // 归零后误触发遗忘；重锚已平移状态，无需再放大 Q）。
+    if (this._lastFiltered) {
+      const dE = (zLng - this._lastFiltered.lng) * M_PER_DEG * this._cosLat;
+      const dN = (zLat - this._lastFiltered.lat) * M_PER_DEG;
+      const jumpM = Math.hypot(dE, dN);
+      if (jumpM > this._forgetJumpM) {
+        // 跳变：直接拉满遗忘因子（与当前值取大，避免快速连跳被衰减压制）
+        this._forgetFactor = Math.max(this._forgetFactor, this._forgetMax);
+        if (CONFIG.DEBUG) console.log(`[IMM] 位置跳变 ${jumpM.toFixed(1)}m > ${this._forgetJumpM}m，遗忘因子→${this._forgetFactor.toFixed(2)}`);
+      }
     }
 
     // 坐标正变换：lat/lng → 局部米
@@ -448,7 +469,9 @@ class ImmFilter {
       // IMU 加速度注入（仅 CA 模型 m=2）：运动学先验 x⁻=F·x̂+G·a_imu，
       // 位置 +½dt²·a、速度 +dt·a、加速度状态保持模型自持（GPS 残差驱动）；
       // 注入期间 CA 模型 Q 同步缩小（更信 IMU 运动学预测），低机动时更平滑。
-      const qa = this._q[m];
+      // 计划 C：遗忘因子并入过程噪声标准差。Q ∝ σ²，故标准差乘 √forgetFactor。
+      // 跳变帧 Q 放大 forgetFactor 倍 → 预测协方差 P⁻ 放宽 → 本帧测量（新位置）权重提升，平滑过渡。
+      const qa = this._q[m] * Math.sqrt(this._forgetFactor);
       const qa2 = qa * qa;
       const useImu = (m === 2 && imuAcc);
       const axI = useImu ? imuAcc[0] * this._imuTrust : 0;
@@ -606,6 +629,10 @@ class ImmFilter {
       this._mu[2] = Math.max(this._mu[2], minP);
       const s = this._mu[0] + this._mu[1] + this._mu[2];
       this._mu[0] /= s; this._mu[1] /= s; this._mu[2] /= s;
+    }
+    // 计划 C：每帧遗忘因子指数回落（逐步回归常规 Q）
+    if (this._forgetFactor > 1) {
+      this._forgetFactor = Math.max(1, this._forgetFactor * this._forgetDecay);
     }
   }
 
