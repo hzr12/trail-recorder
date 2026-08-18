@@ -42,6 +42,9 @@ class ImmFilter {
     this._forgetDecay = C.IMM_FORGET_DECAY != null ? Math.min(1, Math.max(0.5, C.IMM_FORGET_DECAY)) : 0.85;
     this._forgetJumpM = C.IMM_FORGET_JUMP_M != null ? Math.max(0, C.IMM_FORGET_JUMP_M) : 20;
     this._forgetFactor = 1; // 当前遗忘因子（≥1），1 表示常规 Q
+    // 计划 #2/#6：GNSS 质量调制（外部注入，调用 setGnssQuality）
+    this._hdop = null;          // 当前 HDOP（来自 NMEA GSA），null=未知（不调制 R）
+    this._dualBandFactor = 1;   // 双频卫星观测噪声缩放（1=单频/未知，<1=双频更可信）
     // 速度辅助模型先验开关：用 GPS 上报 speed 修正转移预测概率 c̄。
     // 纯位置观测下低速/高速的模型辨识依赖残差积累，切换慢；speed 是现成
     // 的运动模式强信号（比位置噪声小得多），做软门控可显著加速正确切换。
@@ -261,6 +264,16 @@ class ImmFilter {
     }
   }
 
+  /**
+   * 计划 #2/#6：注入当前 GNSS 质量，供 update() 调制观测噪声 R。
+   * @param {number|null} hdop 当前 HDOP（来自 NMEA GSA），null=未知不调制
+   * @param {number} dualBandFactor 双频观测噪声缩放（1=单频/未知，<1=双频更可信）
+   */
+  setGnssQuality(hdop, dualBandFactor) {
+    this._hdop = (typeof hdop === 'number' && isFinite(hdop)) ? hdop : null;
+    this._dualBandFactor = (typeof dualBandFactor === 'number' && dualBandFactor > 0) ? dualBandFactor : 1;
+  }
+
   /** 读取并清空待注入加速度（单次消费：update() 开头调用） */
   _consumeImuAcc() {
     const acc = this._imuAcc;
@@ -327,7 +340,14 @@ class ImmFilter {
     const accClamped = Math.max(Math.min(accuracy || 10, 2000), 1);
     const speedFactor = Math.min(12, Math.max(1, (speed || 0) / 0.5));
     const sigma = Math.max(3, Math.min(accClamped, 2000)); // 米
-    const R = sigma * sigma;
+    // 计划 #2：HDOP 调制观测噪声。HDOP 大 → 几何精度差 → R 放大（降低 GPS 权重，让 IMU/运动学先验主导）
+    let hdopFactor = 1;
+    if (this._hdop != null && isFinite(this._hdop) && this._hdop > 0) {
+      // HDOP=1 理想 → factor≈1；HDOP=2 → ≈2.5；HDOP≥4 → 封顶
+      hdopFactor = Math.min(CONFIG.IMM_HDOP_R_MAX, Math.max(1, Math.pow(this._hdop, CONFIG.IMM_HDOP_R_POW)));
+    }
+    // 计划 #6：双频卫星观测噪声缩放（与 HDOP 因子相乘，双频更可信则 < 1）
+    const R = sigma * sigma * hdopFactor * (this._dualBandFactor || 1);
     const hk = (this._lastHuberK = this._huberKFor(speedFactor, accClamped));
 
     // ── IMM 单步（x/y 两轴解耦，各为独立 3×3 子问题）──

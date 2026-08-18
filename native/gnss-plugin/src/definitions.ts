@@ -15,6 +15,8 @@ export interface GnssSatelliteInfo {
   hasEphemeris: boolean;
   /** 是否有年历数据 */
   hasAlmanac: boolean;
+  /** 载波频率 Hz（计划 #6 多频融合）：L1≈1575.42MHz, L5≈1176.45MHz。单频/Web 端为 undefined。 */
+  carrierFreqHz?: number;
 }
 
 export interface GnssNmeaData {

@@ -16,10 +16,12 @@ public class GnssSatelliteInfo {
     private final boolean usedInFix;
     private final boolean hasEphemeris;
     private final boolean hasAlmanac;
+    /** 载波频率 (Hz)：L1≈1575.42MHz, L5≈1176.45MHz。单频设备/API<30/未知记为 0。计划 #6 多频融合用。 */
+    private final double carrierFreqHz;
 
     public GnssSatelliteInfo(int svid, String constellation, double cn0DbHz,
                              double elevation, double azimuth, boolean usedInFix,
-                             boolean hasEphemeris, boolean hasAlmanac) {
+                             boolean hasEphemeris, boolean hasAlmanac, double carrierFreqHz) {
         this.svid = svid;
         this.constellation = constellation;
         this.cn0DbHz = cn0DbHz;
@@ -28,6 +30,7 @@ public class GnssSatelliteInfo {
         this.usedInFix = usedInFix;
         this.hasEphemeris = hasEphemeris;
         this.hasAlmanac = hasAlmanac;
+        this.carrierFreqHz = carrierFreqHz;
     }
 
     /** 卫星编号 (PRN) */
@@ -54,6 +57,9 @@ public class GnssSatelliteInfo {
     /** 是否有年历 */
     public boolean hasAlmanac() { return hasAlmanac; }
 
+    /** 载波频率 Hz（计划 #6 多频融合）；0 表示单频/未知 */
+    public double getCarrierFreqHz() { return carrierFreqHz; }
+
     /**
      * 转为 Capacitor JSObject，桥接到 JavaScript。
      */
@@ -67,6 +73,7 @@ public class GnssSatelliteInfo {
         obj.put("usedInFix", usedInFix);
         obj.put("hasEphemeris", hasEphemeris);
         obj.put("hasAlmanac", hasAlmanac);
+        obj.put("carrierFreqHz", carrierFreqHz);
         return obj;
     }
 }

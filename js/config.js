@@ -65,6 +65,12 @@ const CONFIG = {
   // ----- 轨迹 -----
   TRAIL_SAMPLE_MIN_DIST: 5,
   TRAIL_JITTER_FACTOR: 1.5,
+  // 计划 #3：动态采样距离 + 抖动门限（app-core.js _recordFix 使用）
+  // 抖动丢弃：滤波位置相对上帧入库点位移 < accuracy×JITTER_RATIO 且低速 → 视为噪声不入库
+  TRAIL_JITTER_RATIO: 0.5,
+  TRAIL_JITTER_MAX_SPEED: 0.6,   // 低于此速度(m/s)才启用抖动丢弃
+  TRAIL_SAMPLE_FAST_SCALE: 2,    // 高速(>5m/s)时采样距离放宽倍数
+  TRAIL_SAMPLE_FAST_SPEED: 5,    // 超过此速度(m/s)视为高速，放宽采样
   // 静止速度阈值（m/s）：约 1km/h。GPS 上报速度低于该值视为静止，此时若位移异常大则判定为漂移鬼点
   TRAIL_STATIONARY_SPEED: 0.3,
   TRAIL_MAX_POINTS: 300000,
@@ -201,6 +207,12 @@ const CONFIG = {
   IMM_LIKELIHOOD_TEMP: 2.0,          // 模型似然温度 γ（Λ^γ 放大模型差异，加速强模型主导；1 为标准 IMM）
   IMM_SPEED_PRIOR: true,             // 速度辅助模型先验（用 GPS 上报 speed 软门控模型切换，弥补纯位置观测辨识慢）
   IMM_MIN_PROB: 1e-6,                // 模型概率下界（防浮点死锁）
+  // 计划 #2：HDOP 实时调制观测噪声 R。HDOP 越大（几何精度差）→ R 放大 → 降低 GPS 权重，让 IMU/运动学先验主导
+  IMM_HDOP_R_POW: 1.3,             // HDOP→R 的指数（>1 放大弱信号惩罚）
+  IMM_HDOP_R_MAX: 6,               // HDOP 调制 R 的上限，防极端值炸裂
+  // 计划 #6：多频/双频 GNSS 融合（可用即用、不可用降级单频）
+  GNSS_DUALBAND_ENABLED: true,     // 总开关；false → 全程按单频处理
+  GNSS_DUALBAND_R_SCALE: 0.7,      // 双频卫星观测噪声缩放（<1 更可信），与 HDOP 因子相乘
 
   // ----- IMU 惯性导航融合（仅定位校准：加速度注入辅助滤波，不做航迹推算）-----
   // 职责收窄：只消费 TYPE_LINEAR_ACCELERATION（去重力线性加速度），用 rotation 四元数

@@ -74,9 +74,10 @@ class Trail {
    * 采样记录一个轨迹点（每 >5m 采一个点，上限由 CONFIG.TRAIL_MAX_POINTS 控制）
    * 抖动过滤：位移必须同时超过最小间距和 accuracy × 抖动系数，避免站定时 GPS 漂移鬼点
    * @param {{lat:number,lng:number,time?:number,accuracy?:number,speed?:number,heading?:number}} pt
+   * @param {number} [minDist] 动态最小采样距离覆盖（计划 #3：高速放宽）。缺省用 CONFIG.TRAIL_SAMPLE_MIN_DIST
    * @returns {boolean} 是否实际添加了点
    */
-  addPoint(pt) {
+  addPoint(pt, minDist) {
     if (!pt) return false;
     // 暂停时不添加点
     if (this.isPaused) return false;
@@ -92,8 +93,9 @@ class Trail {
         { lat: this.lastPos.lat, lng: this.lastPos.lng }
       );
       // 必须同时超过固定最小间距和精度联动阈值（防抖动）
+      const baseMin = (typeof minDist === 'number' && minDist > 0) ? minDist : CONFIG.TRAIL_SAMPLE_MIN_DIST;
       const jitterThreshold = Math.max(
-        CONFIG.TRAIL_SAMPLE_MIN_DIST,
+        baseMin,
         CONFIG.TRAIL_JITTER_FACTOR * (pt.accuracy || 0)
       );
       if (dist <= jitterThreshold) {

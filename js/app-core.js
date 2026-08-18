@@ -1084,7 +1084,24 @@ class App {
 
       // 回放期间允许记录继续采集（并行模式）
       if (this.trail.isRecording && !this._trailLoading) {
-        const added = this.trail.addPoint({
+        // 计划 #3：动态采样距离 + 抖动门限（在 trail.js 既有 jitter/静止漂移过滤之上补充）
+        const last = this.trail.lastPos;
+        let dynMin = CONFIG.TRAIL_SAMPLE_MIN_DIST;
+        let added = true; // 计划 #3：默认入库，抖动门限可置 false
+        const spd = pos.speed != null ? pos.speed : (this._lastSpeed || 0);
+        if (spd > CONFIG.TRAIL_SAMPLE_FAST_SPEED) {
+          // 高速行进：放宽采样距离，减少冗余点、压缩存储
+          dynMin = CONFIG.TRAIL_SAMPLE_MIN_DIST * CONFIG.TRAIL_SAMPLE_FAST_SCALE;
+        }
+        if (last) {
+          const dM = calcDistance({ lat: last.lat, lng: last.lng }, convPos);
+          // 抖动门限：低速且位移小于 accuracy×ratio → 视为 GPS 噪声，不入库（地图标记已更新）
+          if (spd < CONFIG.TRAIL_JITTER_MAX_SPEED &&
+              dM < (pos.accuracy || 10) * CONFIG.TRAIL_JITTER_RATIO) {
+            added = false; // 仅更新地图标记，不入库
+          }
+        }
+        added = added ? this.trail.addPoint({
           lat: convPos.lat,
           lng: convPos.lng,
           time: this.gpsManager.calibratedNow,
@@ -1093,7 +1110,7 @@ class App {
           speed: pos.speed,
           heading: pos.heading,
           altitude: pos.altitude
-        });
+        }, dynMin) : false;
         if (added) {
           this._trailDirty = true;
           this.mapManager.setTrail(this._getTrailPositions());

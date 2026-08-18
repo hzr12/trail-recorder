@@ -254,6 +254,16 @@ public class GnssDataPlugin extends Plugin {
         int count = status.getSatelliteCount();
 
         for (int i = 0; i < count; i++) {
+            // 计划 #6：载波频率（多频融合）。getCarrierFrequencyHz 仅 Android R(API30)+ 提供，
+            // 低版本/单频设备记为 0（JS 侧据此判定 dualBand=false，自动降级单频）。
+            double freqHz = 0;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                try {
+                    freqHz = status.getCarrierFrequencyHz(i);
+                } catch (Exception e) {
+                    freqHz = 0; // 个别设备/星座抛异常 → 安全降级
+                }
+            }
             GnssSatelliteInfo info = new GnssSatelliteInfo(
                     status.getSvid(i),
                     constellationTypeToString(status.getConstellationType(i)),
@@ -262,7 +272,8 @@ public class GnssDataPlugin extends Plugin {
                     status.getAzimuthDegrees(i),
                     status.usedInFix(i),
                     status.hasEphemerisData(i),
-                    status.hasAlmanacData(i)
+                    status.hasAlmanacData(i),
+                    freqHz
             );
             snapshot.add(info);
         }
@@ -280,7 +291,8 @@ public class GnssDataPlugin extends Plugin {
 
         Log.d(TAG, "Satellites: " + count
                 + " (used: " + countUsed(snapshot)
-                + ", avg SNR: " + String.format("%.1f", avgSnr(snapshot)) + " dB-Hz)");
+                + ", avg SNR: " + String.format("%.1f", avgSnr(snapshot)) + " dB-Hz)"
+                + ", dualBand: " + hasDualBand(snapshot));
     }
 
     // ──────────────────────────────────────────────
@@ -399,5 +411,17 @@ public class GnssDataPlugin extends Plugin {
             }
         }
         return n > 0 ? sum / n : 0;
+    }
+
+    /** 计划 #6：是否检测到同系统双频（存在 L5≈1176.45MHz 且存在 L1≈1575.42MHz 观测） */
+    private static boolean hasDualBand(List<GnssSatelliteInfo> sats) {
+        boolean hasL1 = false, hasL5 = false;
+        for (GnssSatelliteInfo s : sats) {
+            double f = s.getCarrierFreqHz();
+            if (f > 1170 && f < 1185) hasL5 = true;        // L5 频段
+            else if (Math.abs(f - 1575.42) < 5) hasL1 = true; // L1 频段
+        }
+        return hasL1 && hasL5;
+    }
     }
 }

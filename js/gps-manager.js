@@ -900,6 +900,16 @@ class GPSManager {
     }
     stats.visible = satellites.length;
     stats.avgSnr = stats.used > 0 ? stats.snrSum / stats.used : 0;
+    // 计划 #6：双频探测——同系统存在 L5(≈1176.45MHz) 与 L1(≈1575.42MHz) 观测
+    let hasL1 = false, hasL5 = false;
+    for (const s of satellites) {
+      const f = s.carrierFreqHz;
+      if (typeof f === 'number' && f > 0) {
+        if (f > 1170 && f < 1185) hasL5 = true;
+        else if (Math.abs(f - 1575.42) < 5) hasL1 = true;
+      }
+    }
+    stats.dualBand = hasL1 && hasL5;
     return stats;
   }
 
@@ -1361,6 +1371,11 @@ class GPSManager {
           // 会使 dt ≤ 0 触发滤波器重置，平滑被静默关闭
           const ts = now;
           const acc = pos.accuracy || 10;
+          // 计划 #2/#6：注入 GNSS 质量（HDOP + 双频）调制观测噪声 R。
+          // Web 端无 GSA → hdop=null（不调制）；无双频 → scale=1（降级单频）。
+          if (typeof this._filter.setGnssQuality === 'function') {
+            this._filter.setGnssQuality(this.hdop, this.dualBandAvailable ? CONFIG.GNSS_DUALBAND_R_SCALE : 1);
+          }
           // 精度差（>2000m，地下/遮挡）也进 update()：内部改为冻结在最后可信位置，
           // 不再重置+接受跳变测量（避免轨迹拉回又回去）。RTS 后处理修正地下段。
           const filtered = this._filter.update(pos.lat, pos.lng, acc, ts, pos.speed);
@@ -1662,6 +1677,15 @@ class GPSManager {
    */
   get gnssAvgSnr() {
     return this._satStatsCache ? this._satStatsCache.avgSnr : 0;
+  }
+
+  /**
+   * 计划 #6：是否检测到双频（同系统 L1+L5）。Web 端/老设备无 carrierFreqHz → false（降级单频）。
+   * 受 GNSS_DUALBAND_ENABLED 总开关控制。
+   */
+  get dualBandAvailable() {
+    if (CONFIG.GNSS_DUALBAND_ENABLED === false) return false;
+    return !!(this._satStatsCache && this._satStatsCache.dualBand);
   }
 
   /**
