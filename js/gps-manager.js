@@ -2,7 +2,8 @@
  * 圆圈地图 - GPS 定位管理器（主控制器）
  * ============================================
  * gps.js 拆分后的最后一个文件：GPSManager 实例化并协调前面所有类
- * （KalmanFilter / ImmFilter / AltFilterPipeline / AltRtsSmoother / ImuManager）。
+ * （KalmanFilter[离线RTS] / AltFilterPipeline / AltRtsSmoother / ImuManager）。
+ * 实时 2D 位置滤波已移除（蓝点=原始单次定位）；IMM 类(gps-imm.js)已删除。
  * 依赖 gps-kalman.js 的全局常量 DEG2RAD / M_PER_DEG、config.js 的 calcDistance、
  * toast.js 的 Toast，必须在其后加载。
  */
@@ -64,13 +65,16 @@ class GPSManager {
     this._coordConflictStreak = 0; // 原生 vs 浏览器偏差连续超阈计数
     this._nativeCoordTrusted = true; // 原生坐标是否可信（连续超阈后置 false，恢复后回到 true）
 
-    // GPS 漂移滤波器
-    this._useFilter = true;           // 是否启用滤波
-    // 实时：IMM 交互式多模型（6 维×3 模型，取代单模型自适应 Q；false 回退单模型）
-    this._filter = (typeof CONFIG !== 'undefined' && CONFIG.IMM_FILTER_ENABLED !== false)
-      ? new ImmFilter()
-      : new KalmanFilter();
-    // 离线 RTS 平滑：独立单模型实例（实时/离线彻底解耦，离线保持已调优的 4 维 RTS）
+    // 实时 2D 位置滤波（稳健滑动窗）：替代已删除的 IMM/Kalman，零外推。
+    // 蓝点=窗口中位数/Hampel 平滑结果，消除移动场景系统性外推漂移（火车北偏）。
+    // 离线 RTS 后处理仍用 KalmanFilter（与实时彻底解耦，仅落库轨迹平滑）。
+    this._posSmoother = new PositionSmoother({
+      win: CONFIG.POS_FILTER.WIN,
+      madK: CONFIG.POS_FILTER.MAD_K,
+      freezeDt: CONFIG.POS_FILTER.FREEZE_DT_MS,
+      staticRatio: CONFIG.POS_FILTER.STATIC_RATIO,
+      enabled: CONFIG.POS_FILTER.ENABLED,
+    });
     this._offlineSmoother = new KalmanFilter();
     this._rawPosition = null;         // 滤波前的原始位置（保留供 trail 等使用）
     this._rawFixes = [];              // 原始测量缓冲（滤波前），供结束记录时 RTS 离线平滑
@@ -1319,10 +1323,10 @@ class GPSManager {
         // 注入 GPS 速度供 IMU 零偏估计的"真静止"判定（方向 6 扩展：E/N 轴零偏仅静止时学习）
         if (this._imuManager) this._imuManager.setGpsSpeed(pos.speed);
 
-        // ── IMU 定位校准：三轴加速度一次取用 ──
+        // ── IMU 校准：三轴加速度一次取用 ──
         // web 无插件 / 事件流过期 / 未启动 → getLatestAccEnu() 返回 null，跳过注入纯 GPS 不变。
-        // 水平 [E,N] 注入 ImmFilter CA 预测（trust 自适应 + 分级 clamp + 重力泄漏衰减）；
-        // 垂直 [U] 注入海拔 CA 融合（GPS 仍是海拔权威，方向 3）。
+        // 实时 2D 位置滤波已删除，水平 [E,N] 注入随之移除；
+        // 仅垂直 [U] 注入海拔 CA 融合（GPS 仍是海拔权威，方向 3）。
         const imuAcc = this._imuManager ? this._imuManager.getLatestAccEnu() : null;
         // IMU 辅助状态：本帧有可用三轴加速度（参与海拔/水平注入）即为辅助激活。
         // web 无插件 / 事件流过期 → imuAcc 为 null → 关闭（状态栏胶囊淡紫发光随之熄灭）。
@@ -1357,37 +1361,16 @@ class GPSManager {
           });
         }
 
-        // ── 2D 卡尔曼滤波实时平滑 ──
-        if (this._useFilter && pos.accuracy > 0) {
-          // ── IMU 定位校准：水平加速度注入 CA 模型预测（航向仍由 GPS 权威）──
-          // 方向 4/5/6：按 GPS 速度分级 clamp、重力泄漏衰减（ImuManager.tiltLeakFactor）、
-          // trust 随 GPS-IMU 一致性自适应（ImmFilter 内部调整）。注入值单次消费。
-          // 航向不可靠（低速起步/遮挡/丢星）时跳过水平注入，只留海拔注入（见上）。
-          if (imuAcc && hdrReliable && typeof this._filter.feedImu === 'function') {
-            const tiltFactor = this._imuManager ? this._imuManager.tiltLeakFactor : 1;
-            this._filter.feedImu(imuAcc, pos.speed, tiltFactor);
-          }
-          // 用收到时刻而非 position.timestamp：maximumAge 缓存/重复 fix 的旧时间戳
-          // 会使 dt ≤ 0 触发滤波器重置，平滑被静默关闭
-          const ts = now;
-          const acc = pos.accuracy || 10;
-          // 计划 #2/#6：注入 GNSS 质量（HDOP + 双频）调制观测噪声 R。
-          // Web 端无 GSA → hdop=null（不调制）；无双频 → scale=1（降级单频）。
-          if (typeof this._filter.setGnssQuality === 'function') {
-            this._filter.setGnssQuality(this.hdop, this.dualBandAvailable ? CONFIG.GNSS_DUALBAND_R_SCALE : 1);
-          }
-          // 精度差（>2000m，地下/遮挡）也进 update()：内部改为冻结在最后可信位置，
-          // 不再重置+接受跳变测量（避免轨迹拉回又回去）。RTS 后处理修正地下段。
-          const filtered = this._filter.update(pos.lat, pos.lng, acc, ts, pos.speed);
-          pos.lat = filtered.lat;
-          pos.lng = filtered.lng;
-        } else {
-          // 无精度信息或滤波关闭 → 重置滤波器
-          this._filter.reset();
-        }
+        // 实时 2D 位置稳健滑动窗平滑（替代已删除的 IMM/Kalman）。
+        // 对 WGS84 原始 pos.lat/lng 做窗口中位数/Hampel 平滑，输出零外推（绝不前冲）。
+        // 原始 rawPos 已存入 _rawFixes 供离线 RTS，此处只改蓝点/入库用的 pos 经纬度。
+        // 平滑后 pos 同时供航向兜底（消费平滑后相邻点位移，更稳）。
+        const smoothed = this._posSmoother.push({ lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, time: pos.timestamp || Date.now() });
+        pos.lat = smoothed.lat;
+        pos.lng = smoothed.lng;
 
-        // 位置差分航向兜底：GPS 航向缺失或低速（步行起步/遮挡）时，用滤波后相邻点
-        // 位移反推航向（atan2(dE,dN)）+ 一阶低通，避免箭头乱抖。仅此路径启用。
+        // 位置差分航向兜底：GPS 航向缺失或低速（步行起步/遮挡）时，用相邻平滑后定位点
+        // 位移反推航向（atan2(dE,dN)）+ 一阶低通，避免箭头乱抖。
         pos.heading = this._resolveHeadingFallback(pos);
 
         this.currentPosition = pos;
@@ -1440,6 +1423,8 @@ class GPSManager {
     // 重置位置差分航向状态，防止跨会话用陈旧基线推算航向
     this._diffHeading = null;
     this._diffHeadingPos = null;
+    // 重置实时位置滑动窗，防止跨会话/源切换时旧观测点混入新窗造成跳变
+    if (this._posSmoother) this._posSmoother.reset();
     if (this.onWatchStop) this.onWatchStop();
   }
 
@@ -1508,30 +1493,36 @@ class GPSManager {
   }
 
   /**
-   * 切换/设置卡尔曼滤波
+   * 切换/设置海拔滤波链（实时 2D 位置滤波独立控制，见 togglePositionFilter）
    * @param {boolean} [force] - 不传则切换
-   * @returns {boolean} 当前状态
+   * @returns {boolean} 当前海拔滤波是否启用
    */
   toggleFilter(force) {
-    const next = force !== undefined ? force : !this._useFilter;
-    if (next === this._useFilter) return this._useFilter;
-    this._useFilter = next;
-    if (!next) {
-      this._filter.reset();
-      // 海拔滤波链与总开关联动（各自独立实现，仅共享开关状态）
-      if (this._altFilter) {
-        this._altFilter.enabled = false;
-        this._altFilter.reset();
-      }
-    } else {
-      // 恢复为 CONFIG 配置值（而非强制 true），尊重 ALT_FILTER_ENABLED 总开关
-      if (this._altFilter) {
-        this._altFilter.enabled = (typeof CONFIG !== 'undefined' && CONFIG.ALT_FILTER_ENABLED !== false);
-        this._altFilter.reset();
-      }
+    const cur = this._altFilter ? this._altFilter.enabled : false;
+    const next = force !== undefined ? force : !cur;
+    if (next === cur) return cur;
+    if (this._altFilter) {
+      this._altFilter.enabled = next;
+      this._altFilter.reset();
     }
-    if (CONFIG.DEBUG) console.log(`[GPS] 漂移滤波: ${next ? '开启' : '关闭'}`);
-    return this._useFilter;
+    if (CONFIG.DEBUG) console.log(`[GPS] 海拔滤波: ${next ? '开启' : '关闭'}`);
+    return next;
+  }
+
+  /**
+   * 切换/设置实时位置稳健滑动窗滤波（蓝点平滑；零外推，与海拔滤波独立）
+   * @param {boolean} [force] - 不传则切换
+   * @returns {boolean} 当前位置滤波是否启用
+   */
+  togglePositionFilter(force) {
+    const cur = this._posSmoother ? this._posSmoother.enabled : false;
+    const next = force !== undefined ? force : !cur;
+    if (next === cur) return cur;
+    if (this._posSmoother) {
+      this._posSmoother.setEnabled(next);
+    }
+    if (CONFIG.DEBUG) console.log(`[GPS] 位置滤波(滑动窗): ${next ? '开启' : '关闭'}`);
+    return next;
   }
 
   /**

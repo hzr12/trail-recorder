@@ -1099,6 +1099,23 @@ class App {
           if (spd < CONFIG.TRAIL_JITTER_MAX_SPEED &&
               dM < (pos.accuracy || 10) * CONFIG.TRAIL_JITTER_RATIO) {
             added = false; // 仅更新地图标记，不入库
+          } else if (CONFIG.POS_FILTER.ENABLED) {
+            // 显示层 Hampel 鬼点拒绝：用最近若干 fix 的中位数作参考，若当前点
+            // 偏离过远（残差 > k·MAD）视为单点粗差/跳变，不入库（轨迹线不外推）。
+            // 蓝点已用滑动窗平滑，此处进一步保证入库轨迹线干净（GPSBabel 式去抖）。
+            const recent = this._recentFixes;
+            if (recent.length >= 3) {
+              const lats = recent.map(r => r.lat).sort((a, b) => a - b);
+              const lngs = recent.map(r => r.lng).sort((a, b) => a - b);
+              const ml = lats[Math.floor(lats.length / 2)];
+              const mn = lngs[Math.floor(lngs.length / 2)];
+              const madL = 1.4826 * medianAbsDev(lats, ml);
+              const madN = 1.4826 * medianAbsDev(lngs, mn);
+              const k = CONFIG.POS_FILTER.MAD_K;
+              const badLat = madL > 1e-9 && Math.abs(convPos.lat - ml) > k * madL;
+              const badLng = madN > 1e-9 && Math.abs(convPos.lng - mn) > k * madN;
+              if (badLat || badLng) added = false; // 鬼点：仅更新蓝点，不入库
+            }
           }
         }
         added = added ? this.trail.addPoint({

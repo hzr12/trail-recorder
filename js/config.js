@@ -185,32 +185,48 @@ const CONFIG = {
   // 默认 2.0 ≈ 2σ 截断。
   GPS_HUBER_K: 2.0,
 
-  // ----- IMM 交互式多模型滤波（实时定位，取代原单模型自适应 Q）-----
+  // ----- 实时位置稳健滑动窗滤波（替代已删除的 IMM/Kalman 实时 2D 滤波）-----
+  // 设计约束：零外推（输出永远落在已观测点之间，绝不按最后速度前冲）。
+  // 算法：滑动窗中位数 + Hampel 鬼点截断 + 静止冻结 + 丢点冻结。
+  // 行业依据：OsmAnd 阈值筛选 / GPSBabel 距离去抖 / Strava 后处理忽略坏点，
+  // 均不做实时外推卡尔曼。
+  POS_FILTER: {
+    ENABLED: true,            // 总开关（关闭则蓝点=原始单次定位，行为等同删滤波前）
+    WIN: 5,                   // 滑动窗大小（个 fix，奇数；约 5s 窗口）
+    MAD_K: 3,                 // Hampel 截断倍数（残差 > k·MAD 视为鬼点，用中位数替换）
+    FREEZE_DT_MS: 3000,       // 丢点冻结：距上次定位超此值(ms)直接回退原始点，不外推
+    STATIC_RATIO: 1.0,        // 静止判定：位移 < accuracy×该值 → 输出原始点（防拖影）
+  },
+
+  // ----- IMM 交互式多模型滤波【实时定位，已弃用】-----
+  // 实时 2D 位置滤波已硬删（蓝点=原始单次定位，消除高铁/隧道场景系统性外推漂移）。
+  // 以下 IMM_* 常量现为死配置（gps-imm.js 已删除，无引用）。保留仅作历史参考，请勿新增引用。
   // 三模型统一 6 维状态 [x,y,vx,vy,ax,ay]（局部 ENU 米坐标），差异仅在加速度过程噪声
   // q_a（标准差）：STILL 极小 Q 强抑漂移、CV 中 Q 匀速跟随、CA 大 Q 机动跟踪。
   // 模型间切换完全由「马尔可夫转移概率 × 测量似然」驱动，取代旧实现按速度手动调 q 的
   // 启发式，逻辑更纯粹。Huber/冻结/时间重置/重锚/速度限幅等保护机制全部保留。
-  IMM_FILTER_ENABLED: true,          // 实时滤波总开关（false 回退单模型 KalmanFilter）
-  IMM_MODEL_Q: [0.05, 0.25, 1.0],    // STILL/CV/CA 三模型加速度过程噪声（m/s²，标准差）
+  IMM_FILTER_ENABLED: true,          // 【已弃用】实时滤波总开关（实时滤波已删除）
+  IMM_MODEL_Q: [0.05, 0.25, 1.0],    // 【已弃用】STILL/CV/CA 三模型加速度过程噪声（m/s²，标准差）
   IMM_TRANSITION: [                   // 马尔可夫转移矩阵 Π[i][j] = P(下一时刻模型=i | 当前=模型j)
     [0.98, 0.015, 0.005],            // 列和=1（构造时自动归一防御）；STILL 惯性最强，CA 直连最弱
     [0.015, 0.97, 0.015],
     [0.005, 0.015, 0.98],
   ],
-  IMM_INIT_PROB: [0.6, 0.3, 0.1],    // 初始模型概率（STILL/CV/CA）
-  IMM_POS_VAR: 2500,                 // 初始位置方差（米²，与单模型一致）
-  IMM_VEL_VAR: 0,                    // 初始速度方差（米²/s²，新轨迹速度未知）
-  IMM_ACC_VAR: 4,                    // 初始加速度方差（米²/s⁴，适度初始不确定度）
-  IMM_REANCHOR_M: 3000,              // 距参考点超此距离重锚（米，与单模型一致）
-  IMM_SPEED_LIMIT: 120,              // 模型速度模量限幅（m/s ≈ 432km/h）
-  IMM_FREEZE_ACC: 1750,              // 精度超此值冻结在最后可信位置（米，放宽：1750m 内均正常滤波）
+  IMM_INIT_PROB: [0.6, 0.3, 0.1],    // 【已弃用】初始模型概率（STILL/CV/CA）
+  IMM_POS_VAR: 2500,                 // 【已弃用】初始位置方差（米²，与单模型一致）
+  IMM_VEL_VAR: 0,                    // 【已弃用】初始速度方差（米²/s²，新轨迹速度未知）
+  IMM_ACC_VAR: 4,                    // 【已弃用】初始加速度方差（米²/s⁴，适度初始不确定度）
+  IMM_REANCHOR_M: 3000,              // 【已弃用】距参考点超此距离重锚（米，与单模型一致）
+  IMM_SPEED_LIMIT: 120,              // 【已弃用】模型速度模量限幅（m/s ≈ 432km/h）
+  IMM_FREEZE_ACC: 1750,              // 【已弃用】精度超此值冻结在最后可信位置（米，放宽：1750m 内均正常滤波）
   IMM_LIKELIHOOD_TEMP: 2.0,          // 模型似然温度 γ（Λ^γ 放大模型差异，加速强模型主导；1 为标准 IMM）
-  IMM_SPEED_PRIOR: true,             // 速度辅助模型先验（用 GPS 上报 speed 软门控模型切换，弥补纯位置观测辨识慢）
-  IMM_MIN_PROB: 1e-6,                // 模型概率下界（防浮点死锁）
-  // 计划 #2：HDOP 实时调制观测噪声 R。HDOP 越大（几何精度差）→ R 放大 → 降低 GPS 权重，让 IMU/运动学先验主导
-  IMM_HDOP_R_POW: 1.3,             // HDOP→R 的指数（>1 放大弱信号惩罚）
-  IMM_HDOP_R_MAX: 6,               // HDOP 调制 R 的上限，防极端值炸裂
+  IMM_SPEED_PRIOR: true,             // 【已弃用】速度辅助模型先验（用 GPS 上报 speed 软门控模型切换，弥补纯位置观测辨识慢）
+  IMM_MIN_PROB: 1e-6,                // 【已弃用】模型概率下界（防浮点死锁）
+  // 计划 #2：HDOP 实时调制观测噪声 R【已弃用，实时滤波删除后无引用】
+  IMM_HDOP_R_POW: 1.3,             // 【已弃用】HDOP→R 的指数（>1 放大弱信号惩罚）
+  IMM_HDOP_R_MAX: 6,               // 【已弃用】HDOP 调制 R 的上限，防极端值炸裂
   // 计划 #6：多频/双频 GNSS 融合（可用即用、不可用降级单频）
+  // GNSS_DUALBAND_* 仍被 GPSManager.dualBandAvailable 使用（原生端卫星统计，与实时滤波解耦），保留。
   GNSS_DUALBAND_ENABLED: true,     // 总开关；false → 全程按单频处理
   GNSS_DUALBAND_R_SCALE: 0.7,      // 双频卫星观测噪声缩放（<1 更可信），与 HDOP 因子相乘
 
@@ -311,6 +327,19 @@ const CONFIG = {
   DEFAULT_TOAST_DURATION: 3000,
   TOAST_FADE_MS: 300,
 };
+
+/**
+ * 绝对中位差（MAD）：输入已排序数组 arr 与其中位数 med，返回各元素与 med 偏差的中位数。
+ * 鲁棒离散度估计，配合 MAD_K 用于 Hampel 鬼点检测（轨迹入库去抖）。
+ */
+function medianAbsDev(sortedArr, med) {
+  const n = sortedArr.length;
+  if (!n) return 0;
+  const dev = new Array(n);
+  for (let i = 0; i < n; i++) dev[i] = Math.abs(sortedArr[i] - med);
+  dev.sort((a, b) => a - b);
+  return dev[Math.floor(n / 2)];
+}
 
 /**
  * 计算两点之间的球面距离（Haversine 公式）
