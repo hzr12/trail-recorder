@@ -76,6 +76,13 @@ class GPSManager {
       enabled: CONFIG.POS_FILTER.ENABLED,
     });
     this._offlineSmoother = new KalmanFilter();
+    // GPS 时钟漂移补偿（任务D）：web 端无 NMEA RMC UTC，pos.timestamp（GPS 周计数）
+    // 相对 Date.now() 常有固定偏移/缓慢漂移，导致回放 seek/段划分时序抖动。
+    // 仅当无 NMEA 校准(_utcOffsetMs==0)时启用；用首点锚定 + 滑动均值估计漂移。
+    this._tsAnchorGps = 0;      // 锚点 GPS 时刻
+    this._tsAnchorLocal = 0;    // 锚点本地时刻
+    this._tsDriftBuf = [];      // 最近 N 次漂移估计（滑动均值）
+    this._tsDriftEst = 0;       // 当前漂移估计（ms）
     this._rawPosition = null;         // 滤波前的原始位置（保留供 trail 等使用）
     this._rawFixes = [];              // 原始测量缓冲（滤波前），供结束记录时 RTS 离线平滑
     this._maxRawFixes = 50000;        // 缓冲上限（超出丢弃最旧，防止内存膨胀）
@@ -1356,8 +1363,8 @@ class GPSManager {
             accuracy: pos.accuracy || 0,
             speed: pos.speed,
             altitude: rawAltitude,       // 原始海拔（质量门后），供离线 1D RTS 平滑
-            time: pos.timestamp,         // GPS 事件时刻（与 addPoint 的 pt.ts 同源）
-            ts: pos.timestamp            // 匹配 key：与 trail.positions 的 pt.ts 逐位相等
+            time: this.getCompensatedTs(pos.timestamp),  // GPS 事件时刻（时钟漂移补偿，任务D）
+            ts: this.getCompensatedTs(pos.timestamp)     // 匹配 key：与 trail.positions 的 pt.ts 逐位相等
           });
         }
 
@@ -1425,6 +1432,8 @@ class GPSManager {
     this._diffHeadingPos = null;
     // 重置实时位置滑动窗，防止跨会话/源切换时旧观测点混入新窗造成跳变
     if (this._posSmoother) this._posSmoother.reset();
+    // 重置 GPS 时钟漂移估计，防止跨会话旧偏移串入（任务D）
+    this._resetTsDrift();
     if (this.onWatchStop) this.onWatchStop();
   }
 
@@ -1705,6 +1714,43 @@ class GPSManager {
   get calibratedNow() {
     return Date.now() + this._utcOffsetMs;
   }
+
+  /**
+   * GPS 时钟漂移补偿（任务D）：把原始 GPS 事件时刻(ts)修正到与本地时钟一致的时间轴。
+   * 仅当无 NMEA UTC 校准(_utcOffsetMs==0，即 web/纯浏览器端)时启用估计漂移；
+   * 有 NMEA 校准时直接用原始 ts（calibratedNow 已处理设备时钟偏移，双校准会冲突）。
+   * 估计方法：首点锚定 (gps0, local0)，后续每点 drift = gpsTs - (gps0 + (now-local0))，
+   * 对最近 N 次 drift 滑动均值作为 _tsDriftEst，补偿后 ts = rawTs - _tsDriftEst。
+   * @param {number} rawTs GPS 原始事件时刻(ms)
+   * @returns {number} 补偿后时刻(ms)
+   */
+  getCompensatedTs(rawTs) {
+    if (rawTs == null || !Number.isFinite(rawTs)) return rawTs;
+    if (this._utcOffsetMs !== 0) return rawTs; // NMEA 已校准，不重复补偿
+    const now = Date.now();
+    if (this._tsAnchorGps === 0) {
+      this._tsAnchorGps = rawTs;
+      this._tsAnchorLocal = now;
+      return rawTs; // 首点不补偿，建立基准
+    }
+    const expected = this._tsAnchorGps + (now - this._tsAnchorLocal);
+    let drift = rawTs - expected;
+    // 防异常跳变（如 GPS 周计数回绕/脏值）：超 ±1h 视为无效，不更新估计
+    if (Math.abs(drift) > 3600 * 1000) return rawTs;
+    this._tsDriftBuf.push(drift);
+    if (this._tsDriftBuf.length > CONFIG.GPS_TS_DRIFT_WIN) this._tsDriftBuf.shift();
+    this._tsDriftEst = this._tsDriftBuf.reduce((s, v) => s + v, 0) / this._tsDriftBuf.length;
+    return rawTs - this._tsDriftEst;
+  }
+
+  /** 重置 GPS 时钟漂移估计（跨会话/源切换时调用，防止旧偏移串入） */
+  _resetTsDrift() {
+    this._tsAnchorGps = 0;
+    this._tsAnchorLocal = 0;
+    this._tsDriftBuf = [];
+    this._tsDriftEst = 0;
+  }
+
 
   /**
    * $GPVTG 真航向（度），过期/缺失返回 null

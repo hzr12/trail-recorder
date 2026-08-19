@@ -82,8 +82,10 @@ class App {
     this._pageHideHandler = null;
     this._pageShowHandler = null;
     this._lastSpeed = null;
-    this._lastAltitude = null;
+    this._lastAltitude = null;     // 状态栏显示用（相对起点海拔，任务B）
     this._lastHeading = null;
+    this._altBase = null;          // 海拔相对基准：首个有效海拔点（任务B）
+    this._lastSampleBearing = null; // 上次入库段航向（任务A 转弯判定）
     this._batteryLevel = null;
     this._batteryCharging = false;
     this._battery = null;
@@ -680,6 +682,9 @@ class App {
       // 新一轮记录重置自动暂停状态
       this._autoPaused = false;
       this._autoPauseStart = null;
+      // 重置海拔基准与转弯航向（每轮记录独立，任务B/A）
+      this._altBase = null;
+      this._lastSampleBearing = null;
       // 清空原始测量缓冲，RTS 离线平滑只针对本次记录
       if (this.gpsManager) this.gpsManager.clearRawFixes();
       this.mapManager.clearTrail();
@@ -762,7 +767,8 @@ class App {
           pt.lat = smooth.lat;
           pt.lng = smooth.lng;
           if (smooth.alt != null && Number.isFinite(smooth.alt)) {
-            pt.altitude = smooth.alt;
+            // 相对海拔（任务B）：RTS 平滑后的海拔同样减基准，与入库语义一致
+            pt.altitude = this._altBase != null ? smooth.alt - this._altBase : smooth.alt;
             replacedAlt++;
           }
           replaced++;
@@ -1007,6 +1013,22 @@ class App {
     return TrailAnalysis.calcStats(positions);
   }
 
+  /**
+   * 海拔相对化（任务B）：以轨迹首个有效海拔点为基准(0)，之后只记录相对值。
+   * GPS 绝对海拔单点误差常 10~30m，直接累加会污染爬升/下降统计；
+   * 改为相对起点后，起伏量可信，绝对偏移被消除。
+   * @param {number|null} alt 原始海拔(m)
+   * @returns {number|null} 相对海拔(m)，首个有效点返回 0
+   */
+  _recordAltitude(alt) {
+    if (alt == null || !Number.isFinite(alt)) return null;
+    if (this._altBase == null) {
+      this._altBase = alt; // 锁定基准（只取第一个有效点）
+      if (CONFIG.DEBUG) console.log(`[ALT] 海拔基准锁定: ${alt.toFixed(1)}m`);
+    }
+    return alt - this._altBase;
+  }
+
   _recordFix(pos, convPos, isManual, isBackground) {
     this._recentFixes.push({
       time: Date.now(),
@@ -1093,8 +1115,19 @@ class App {
           // 高速行进：放宽采样距离，减少冗余点、压缩存储
           dynMin = CONFIG.TRAIL_SAMPLE_MIN_DIST * CONFIG.TRAIL_SAMPLE_FAST_SCALE;
         }
+        // 转弯强制采样（保弯）：当前段航向相对上次入库段变化超阈值且速度足够 →
+        // 强制入库，绕过 dynMin 与抖动门限（Hampel 鬼点判仍生效，跳变不算转弯）。
+        let forceSample = false;
+        if (last && CONFIG.TRAIL_TURN_FORCE_SAMPLE && spd >= CONFIG.TRAIL_TURN_MIN_SPEED) {
+          const curBearing = calcBearing(last, convPos);
+          if (this._lastSampleBearing != null && Number.isFinite(curBearing)) {
+            const angDiff = Math.abs(((curBearing - this._lastSampleBearing + 540) % 360) - 180);
+            if (angDiff > CONFIG.TRAIL_TURN_ANGLE_DEG) forceSample = true;
+          }
+        }
         if (last) {
           const dM = calcDistance({ lat: last.lat, lng: last.lng }, convPos);
+          if (!forceSample) {
           // 抖动门限：低速且位移小于 accuracy×ratio → 视为 GPS 噪声，不入库（地图标记已更新）
           if (spd < CONFIG.TRAIL_JITTER_MAX_SPEED &&
               dM < (pos.accuracy || 10) * CONFIG.TRAIL_JITTER_RATIO) {
@@ -1118,18 +1151,24 @@ class App {
             }
           }
         }
+        }
         added = added ? this.trail.addPoint({
           lat: convPos.lat,
           lng: convPos.lng,
           time: this.gpsManager.calibratedNow,
-          ts: pos.timestamp, // GPS 事件时刻：与 _rawFixes.ts 同源，供 RTS 回写精确匹配
+          ts: this.gpsManager.getCompensatedTs(pos.timestamp), // 时钟漂移补偿(任务D)
           accuracy: pos.accuracy || 0,
           speed: pos.speed,
           heading: pos.heading,
-          altitude: pos.altitude
+          altitude: this._recordAltitude(pos.altitude) // 相对基准海拔(任务B)
         }, dynMin) : false;
         if (added) {
           this._trailDirty = true;
+          // 入库成功：更新转弯基准航向（供下次转弯判定）
+          if (CONFIG.TRAIL_TURN_FORCE_SAMPLE) {
+            const b = calcBearing(last || convPos, convPos);
+            if (Number.isFinite(b)) this._lastSampleBearing = b;
+          }
           this.mapManager.setTrail(this._getTrailPositions());
           this.mapManager.setRealtimeKeyPoints(TrailAnalysis.analyzeKeyPoints(this.trail.positions));
           this._updateTrailUI();

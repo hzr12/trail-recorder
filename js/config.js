@@ -71,6 +71,12 @@ const CONFIG = {
   TRAIL_JITTER_MAX_SPEED: 0.6,   // 低于此速度(m/s)才启用抖动丢弃
   TRAIL_SAMPLE_FAST_SCALE: 2,    // 高速(>5m/s)时采样距离放宽倍数
   TRAIL_SAMPLE_FAST_SPEED: 5,    // 超过此速度(m/s)视为高速，放宽采样
+  // 转弯强制采样（保弯）：相邻入库段航向变化超阈值且速度够 → 强制入库，
+  // 绕过 dynMin 与抖动门限，避免固定距离采样把弯道"切直"（OsmAnd 式形状保真）。
+  // 注意：Hampel 鬼点拒绝仍生效，跳变点不会被判成转弯而入库。
+  TRAIL_TURN_FORCE_SAMPLE: true, // 总开关
+  TRAIL_TURN_ANGLE_DEG: 20,      // 航向变化超此值(度)视为转弯
+  TRAIL_TURN_MIN_SPEED: 0.5,     // 低于此速度(m/s)不计转弯（静止抖动误触发）
   // 静止速度阈值（m/s）：约 1km/h。GPS 上报速度低于该值视为静止，此时若位移异常大则判定为漂移鬼点
   TRAIL_STATIONARY_SPEED: 0.3,
   TRAIL_MAX_POINTS: 300000,
@@ -151,6 +157,9 @@ const CONFIG = {
   // ----- GNSS NMEA（原生插件推送：UTC 时钟校准 + $GPVTG 航向/速度）-----
   NMEA_VTG_MAX_AGE_MS: 2000,    // $GPVTG 航向/速度有效窗口：超过视为过期，回退浏览器 coords
   NMEA_UTC_MAX_AGE_MS: 5000,    // UTC 校准漂移窗口：新 RMC 相对已校准时钟超窗视为陈旧回灌，不采纳
+
+  // ----- GPS 时钟漂移补偿（任务D，仅 web/无 NMEA 时启用）-----
+  GPS_TS_DRIFT_WIN: 10,         // 漂移滑动均值窗口（个 fix）
 
   // ----- GNSS 定位源接管（折中方案：原生主导 + 浏览器低频兜底）-----
   GPS_TAKEOVER_MIN_SATS: 4,             // 接管所需最少参与定位卫星数

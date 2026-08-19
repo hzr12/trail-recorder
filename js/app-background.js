@@ -143,11 +143,11 @@ App.prototype._processBackgroundPosition = async function (pos) {
         lat: convPos.lat,
         lng: convPos.lng,
         time: this.gpsManager.calibratedNow,
-        ts: pos.timestamp, // GPS 事件时刻：与 _rawFixes.ts 同源，供 RTS 回写精确匹配
+        ts: this.gpsManager.getCompensatedTs(pos.timestamp), // 时钟漂移补偿(任务D)
         accuracy: pos.accuracy || 0,
         speed: pos.speed,
         heading: pos.heading,
-        altitude: pos.altitude
+        altitude: this._recordAltitude(pos.altitude) // 相对基准海拔(任务B，与 _recordFix 同源)
       });
       if (added) {
         this._trailDirty = true;

@@ -198,7 +198,13 @@ App.prototype._updateStatusBar = function (force) {
   // 运动数据合并胶囊（VTG 风格，始终显示，缺值用 -- 占位）
   const arrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
   const kmh = this._lastSpeed != null ? (this._lastSpeed * 3.6).toFixed(1) : '--';
-  const alt = this._lastAltitude != null ? Math.round(this._lastAltitude) + 'm' : '--';
+  // 海拔显示相对起点（任务B）：避免 GPS 绝对海拔 10~30m 误差误导；无基准时回退原始值
+  let alt = '--';
+  if (this._lastAltitude != null) {
+    const rel = this._altBase != null ? this._lastAltitude - this._altBase : this._lastAltitude;
+    const sign = rel > 0 ? '+' : '';
+    alt = `${sign}${Math.round(rel)}m`;
+  }
   const h = Number.isFinite(this._lastHeading) ? Math.round(this._lastHeading) : null;
   const arrow = h != null ? arrows[((Math.round(this._lastHeading / 45) % 8) + 8) % 8] : '↗';
   const dir = h != null ? bearingToDir(this._lastHeading) : '';
