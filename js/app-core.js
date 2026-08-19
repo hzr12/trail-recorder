@@ -1115,6 +1115,11 @@ class App {
           // 高速行进：放宽采样距离，减少冗余点、压缩存储
           dynMin = CONFIG.TRAIL_SAMPLE_MIN_DIST * CONFIG.TRAIL_SAMPLE_FAST_SCALE;
         }
+        // 模块1：双频可用 → 当前点电离层修正更可靠，放宽抖动丢弃门限（更难被判为噪声，少丢有效点）
+        let jitterRatio = CONFIG.TRAIL_JITTER_RATIO;
+        if (this.gpsManager && this.gpsManager.isDualBand) {
+          jitterRatio = CONFIG.TRAIL_JITTER_RATIO_DUALBAND;
+        }
         // 转弯强制采样（保弯）：当前段航向相对上次入库段变化超阈值且速度足够 →
         // 强制入库，绕过 dynMin 与抖动门限（Hampel 鬼点判仍生效，跳变不算转弯）。
         let forceSample = false;
@@ -1130,7 +1135,7 @@ class App {
           if (!forceSample) {
           // 抖动门限：低速且位移小于 accuracy×ratio → 视为 GPS 噪声，不入库（地图标记已更新）
           if (spd < CONFIG.TRAIL_JITTER_MAX_SPEED &&
-              dM < (pos.accuracy || 10) * CONFIG.TRAIL_JITTER_RATIO) {
+              dM < (pos.accuracy || 10) * jitterRatio) {
             added = false; // 仅更新地图标记，不入库
           } else if (CONFIG.POS_FILTER.ENABLED) {
             // 显示层 Hampel 鬼点拒绝：用最近若干 fix 的中位数作参考，若当前点

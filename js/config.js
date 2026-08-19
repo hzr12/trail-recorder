@@ -68,7 +68,9 @@ const CONFIG = {
   // 计划 #3：动态采样距离 + 抖动门限（app-core.js _recordFix 使用）
   // 抖动丢弃：滤波位置相对上帧入库点位移 < accuracy×JITTER_RATIO 且低速 → 视为噪声不入库
   TRAIL_JITTER_RATIO: 0.5,
+  TRAIL_JITTER_RATIO_DUALBAND: 0.3, // 模块1：双频可用时点更可信，更难被判为抖动（门槛更严）
   TRAIL_JITTER_MAX_SPEED: 0.6,   // 低于此速度(m/s)才启用抖动丢弃
+  GNSS_ZUPT_FRAMES: 3,           // 模块2：连续 N 帧平滑速度<MAX_SPEED → 钉零速（ZUPT 静止）
   TRAIL_SAMPLE_FAST_SCALE: 2,    // 高速(>5m/s)时采样距离放宽倍数
   TRAIL_SAMPLE_FAST_SPEED: 5,    // 超过此速度(m/s)视为高速，放宽采样
   // 转弯强制采样（保弯）：相邻入库段航向变化超阈值且速度够 → 强制入库，
@@ -199,12 +201,27 @@ const CONFIG = {
   // 算法：滑动窗中位数 + Hampel 鬼点截断 + 静止冻结 + 丢点冻结。
   // 行业依据：OsmAnd 阈值筛选 / GPSBabel 距离去抖 / Strava 后处理忽略坏点，
   // 均不做实时外推卡尔曼。
+  // 模块1 多GNSS星座/双频融合：GNSS 质量评分权重——把卫星统计反哺平滑强度
+  // qualScore 归一化 0~1：星越多、星座越多样、双频可用 → 评分越高（点越可信）。
+  GNSS_QUAL: {
+    USED_W: 1.0,          // 每颗参与解算星的基础分
+    CONST_DIV_W: 2.0,     // 每多一个可用星座系统的加成（多系统抗遮挡）
+    DUALBAND_W: 3.0,      // 双频可用加成
+    MAX: 16,              // 评分上限（归一化分母）
+    WEAK_USED_MAX: 4,     // used 星数 < 此值视为弱信号
+  },
+
   POS_FILTER: {
     ENABLED: true,            // 总开关（关闭则蓝点=原始单次定位，行为等同删滤波前）
     WIN: 5,                   // 滑动窗大小（个 fix，奇数；约 5s 窗口）
     MAD_K: 3,                 // Hampel 截断倍数（残差 > k·MAD 视为鬼点，用中位数替换）
     FREEZE_DT_MS: 3000,       // 丢点冻结：距上次定位超此值(ms)直接回退原始点，不外推
     STATIC_RATIO: 1.0,        // 静止判定：位移 < accuracy×该值 → 输出原始点（防拖影）
+    // 模块1：qualScore → 平滑强度自适应
+    QUAL_ADAPT: true,            // 用 GNSS 质量评分调节 Hampel 阈值与静止门限
+    QUAL_DUALBAND_MAD_K: 4,      // 双频/星多可用时放宽 Hampel（点更可信，少丢有效点）
+    QUAL_WEAK_MAD_K: 2,          // 弱信号（星少单频）时收紧 Hampel（更信模型）
+    QUAL_WEAK_STATIC_RATIO: 0.7, // 弱信号时更易判定静止（防抖动拖影）
   },
 
   // ----- IMM 交互式多模型滤波【实时定位，已弃用】-----

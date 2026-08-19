@@ -60,6 +60,7 @@
       this.madK = opts.madK != null ? opts.madK : 3;
       this.freezeDt = opts.freezeDt != null ? opts.freezeDt : 3000;
       this.staticRatio = opts.staticRatio != null ? opts.staticRatio : 1.0;
+      this.qualAdapt = opts.qualAdapt !== false;   // 模块1：按 GNSS 质量自适应 Hampel/静止门限
       this.enabled = opts.enabled !== false;
       this._buf = [];      // 原始 fix 缓冲 {lat,lng,accuracy,time}
       this._lastT = 0;     // 上次 push 的时间戳（ms）
@@ -71,8 +72,23 @@
      * 这些由 GPSManager 直接透传）。窗不足或降级时返回原始点。
      * @param {{lat:number,lng:number,accuracy?:number,time?:number}} fix
      */
-    push(fix) {
+    /**
+     * @param {{lat:number,lng:number,accuracy?:number,time?:number}} fix
+     * @param {number} [qualScore] 模块1：GNSS 质量评分 0~1（缺省走中性默认 madK/staticRatio）
+     */
+    push(fix, qualScore) {
       if (!this.enabled) return { lat: fix.lat, lng: fix.lng };
+
+      // 模块1：按 GNSS 质量评分动态选 Hampel 阈值与静止门限
+      let madK = this.madK, staticRatio = this.staticRatio;
+      if (this.qualAdapt && typeof qualScore === 'number') {
+        if (qualScore >= 0.7) {                 // 星多/双频：点更可信，放宽 Hampel 少丢有效点
+          madK = CONFIG.POS_FILTER.QUAL_DUALBAND_MAD_K;
+        } else if (qualScore < 0.35) {          // 弱信号：收紧 Hampel，更信模型
+          madK = CONFIG.POS_FILTER.QUAL_WEAK_MAD_K;
+          staticRatio = CONFIG.POS_FILTER.QUAL_WEAK_STATIC_RATIO;
+        }
+      }
 
       const t = fix.time || Date.now();
 
@@ -94,7 +110,7 @@
       // 2) 静止冻结：与窗首位移 < accuracy×ratio → 直接输出最新原始点（消除拖影）
       const acc = fix.accuracy || 10;
       const d0 = distM(fix, this._buf[0]);
-      if (d0 < acc * this.staticRatio) {
+      if (d0 < acc * staticRatio) {
         return { lat: fix.lat, lng: fix.lng };
       }
 
@@ -106,7 +122,7 @@
 
       // 4) Hampel 截断：最新点偏离中位数超 k·MAD → 用中位数替换（防鬼点）
       const madLat = 1.4826 * madOf(lats, mlat);
-      if (madLat > 1e-9 && Math.abs(fix.lat - mlat) > this.madK * madLat) {
+      if (madLat > 1e-9 && Math.abs(fix.lat - mlat) > madK * madLat) {
         this._rejected++;
         return { lat: mlat, lng: mlng };
       }

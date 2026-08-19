@@ -48,6 +48,8 @@ class GPSManager {
     this._gnssNmeaHandle = null;   // nmeaSentence 事件监听器句柄
     this._gnssPollId = null;       // GNSS 轮询兜底定时器
     this._lastVtg = null;          // 最近一条 $GPVTG 航向/速度（VTG 优先源）
+    this._smoothSpeed = null;      // 模块2：一阶低通后的平滑速度（抑制低速抖动锯齿）
+    this._staticCnt = 0;           // 模块2：连续低速帧计数（ZUPT 钉零速）
     this._utcOffsetMs = 0;         // 设备时钟校准偏移（RMC UTC - 本地时钟，±12h 过滤）
     this._lastUtcReceivedAt = 0;   // 上次采纳 UTC 的时间（防旧 NMEA 回灌）
 
@@ -921,6 +923,14 @@ class GPSManager {
       }
     }
     stats.dualBand = hasL1 && hasL5;
+    // 模块1：GNSS 质量评分（反哺平滑强度），归一化 0~1
+    const usedConsts = stats.usedConsts;
+    const constCount = ['gps', 'beidou', 'glonass', 'galileo'].filter(k => (usedConsts[k] || 0) > 0).length;
+    let q = stats.used * CONFIG.GNSS_QUAL.USED_W
+          + (constCount - 1) * CONFIG.GNSS_QUAL.CONST_DIV_W
+          + (stats.dualBand ? CONFIG.GNSS_QUAL.DUALBAND_W : 0);
+    stats.qualScore = Math.max(0, Math.min(1, q / CONFIG.GNSS_QUAL.MAX));
+    stats.weak = stats.used < CONFIG.GNSS_QUAL.WEAK_USED_MAX; // 弱信号标记（供平滑收紧）
     return stats;
   }
 
@@ -1372,7 +1382,8 @@ class GPSManager {
         // 对 WGS84 原始 pos.lat/lng 做窗口中位数/Hampel 平滑，输出零外推（绝不前冲）。
         // 原始 rawPos 已存入 _rawFixes 供离线 RTS，此处只改蓝点/入库用的 pos 经纬度。
         // 平滑后 pos 同时供航向兜底（消费平滑后相邻点位移，更稳）。
-        const smoothed = this._posSmoother.push({ lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, time: pos.timestamp || Date.now() });
+        // 模块1：传入 GNSS 质量评分，供平滑强度自适应（Hampel/静止门限）
+        const smoothed = this._posSmoother.push({ lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, time: pos.timestamp || Date.now() }, this.qualScore);
         pos.lat = smoothed.lat;
         pos.lng = smoothed.lng;
 
@@ -1770,6 +1781,17 @@ class GPSManager {
     return this._lastVtg.speedKmh;
   }
 
+  /** 模块1：当前 GNSS 质量评分 0~1（无卫星数据时返回 0.5 中性，供平滑层安全降级） */
+  get qualScore() {
+    const s = this._satStatsCache;
+    if (!s || typeof s.qualScore !== 'number') return 0.5;
+    return s.qualScore;
+  }
+  /** 模块1：是否双频定位（电离层修正更可靠） */
+  get isDualBand() { return !!(this._satStatsCache && this._satStatsCache.dualBand); }
+  /** 模块1：是否弱信号（星少单频） */
+  get isWeakGnss() { return !!(this._satStatsCache && this._satStatsCache.weak); }
+
   /**
    * $GPRMC 定位有效性（状态 A 且未过期）
    */
@@ -2034,9 +2056,29 @@ class GPSManager {
           return browserSpeed != null ? browserSpeed : null;
         }
       }
-      return vtg / 3.6;
+      return this._lowpassSpeed(vtg / 3.6);
     }
-    return browserSpeed != null ? browserSpeed : null;
+    return this._lowpassSpeed(browserSpeed != null ? browserSpeed : null);
+  }
+
+  /**
+   * 模块2：速度一阶低通（多普勒/位置差分速度均经此），抑制 GPS 低速抖动锯齿。
+   * 低速时 α 更小（更平滑），高速时 α 更大（更跟手）。
+   * 连续 N 帧低速 → 钉零速（ZUPT），供 PositionSmoother 静止冻结联动。
+   */
+  _lowpassSpeed(speed) {
+    if (speed == null || !Number.isFinite(speed)) { this._smoothSpeed = null; this._staticCnt = 0; return null; }
+    if (this._smoothSpeed == null) { this._smoothSpeed = speed; this._staticCnt = speed < CONFIG.TRAIL_JITTER_MAX_SPEED ? 1 : 0; return speed; }
+    const a = speed < CONFIG.TRAIL_JITTER_MAX_SPEED ? 0.3 : 0.6;
+    this._smoothSpeed = a * speed + (1 - a) * this._smoothSpeed;
+    if (this._smoothSpeed < CONFIG.TRAIL_JITTER_MAX_SPEED) {
+      this._staticCnt++;
+    } else {
+      this._staticCnt = 0;
+    }
+    // ZUPT：连续 N 帧低速 → 速度钉 0（静止，避免微小抖动被当运动）
+    if (this._staticCnt >= CONFIG.GNSS_ZUPT_FRAMES) this._smoothSpeed = 0;
+    return this._smoothSpeed;
   }
 
   /**
