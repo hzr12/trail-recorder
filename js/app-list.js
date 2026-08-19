@@ -168,19 +168,16 @@ App.prototype._exportShareCard = async function (id) {
     Toast.show('生成分享卡片失败，请重试');
     return;
   }
-  // 仅走系统分享（navigator.share），不做下载/存相册（用户要求）
-  if (navigator.share) {
-    try {
-      const blob = await (await fetch(dataUrl)).blob();
-      const file = new File([blob], 'trail-share.png', { type: 'image/png' });
-      await navigator.share({ files: [file], title: data.name || '途刻轨迹', text: `途刻 — ${data.name || '轨迹'}` });
-    } catch (e) {
-      // 用户取消分享或环境不支持文件分享：仅提示，不触发下载/存相册
-      Toast.show('已生成分享卡片，可再次点击分享');
-    }
-  } else {
-    Toast.show('当前环境不支持系统分享');
-  }
+  // 复用统一分享链路（与 _exportReport / 批量导出一致）：
+  // 原生平台 → Capacitor.Plugins.Share 系统分享面板；web 端 → Blob URL 下载兜底。
+  // 旧逻辑仅判 navigator.share，桌面/部分 web 环境 navigator.share 为 undefined，
+  // 直接弹"不支持系统分享"且无法使用，现改为统一入口避免 web 端永远不可用。
+  const dateStr = formatBeijing(Date.now()).slice(0, 10).replace(/\//g, '-');
+  this._downloadDataUrl(dataUrl, `途刻-分享卡片-${dateStr}.png`, {
+    title: data.name || '途刻轨迹',
+    text: `途刻 — ${data.name || '轨迹'}`,
+    dialogTitle: '分享或保存轨迹卡片'
+  });
 };
 
 /**
