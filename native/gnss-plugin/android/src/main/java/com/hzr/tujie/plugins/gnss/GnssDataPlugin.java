@@ -423,5 +423,4 @@ public class GnssDataPlugin extends Plugin {
         }
         return hasL1 && hasL5;
     }
-    }
 }
