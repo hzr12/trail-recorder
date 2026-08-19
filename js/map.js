@@ -1443,6 +1443,10 @@ class MapManager {
     if (!trail || !trail.positions || trail.positions.length < 2) return null;
     const o = opts || {};
     const positions = trail.positions;
+    // DPR 仅用于物理分辨率与 ctx.scale（高质量渲染），后续绘制全部用逻辑坐标，
+    // 禁止再 * S（会被 ctx.scale 二次放大，导致高 DPR 下文字/标记与位置比例失调、
+    // 图例/水印/标题/统计互相重叠）。原代码在 ctx.font、lineWidth、圆弧半径、
+    // 图例 Y、徽章 Y 等多处 * S，正是历史页分享卡片排版错乱的根因。
     const dpr = Math.min(window.devicePixelRatio || 1, 3);
     const health = o.health || null; // {grade, score, weakRatio, jumpRatio, gapRatio} 计划 E
     const W = o.width || 1080;
@@ -1522,7 +1526,7 @@ class MapManager {
     // 标题
     const title = this._truncateText(ctx, o.title || trail.name || '途刻轨迹', W - 2 * padX);
     ctx.fillStyle = isLight ? '#14181f' : '#ffffff';
-    ctx.font = `700 ${32 * S}px "HarmonyOS Sans", "PingFang SC", sans-serif`;
+    ctx.font = `700 32px "HarmonyOS Sans", "PingFang SC", sans-serif`;
     ctx.textBaseline = 'middle';
     ctx.fillText(title, padX, 52);
 
@@ -1530,11 +1534,11 @@ class MapManager {
     if (health && health.grade) {
       const grade = health.grade;
       const badgeText = '健康 ' + grade;
-      ctx.font = `700 ${20 * S}px "HarmonyOS Sans", "PingFang SC", sans-serif`;
-      const badgeW = ctx.measureText(badgeText).width + 28 * S;
-      const badgeH = 36 * S;
+      ctx.font = `700 20px "HarmonyOS Sans", "PingFang SC", sans-serif`;
+      const badgeW = ctx.measureText(badgeText).width + 28;
+      const badgeH = 36;
       const badgeX = W - padX - badgeW;
-      const badgeY = 34 * S;
+      const badgeY = 34;
       const badgeColor = grade === 'A' ? '#34C759' : grade === 'B' ? '#30B0C7' : grade === 'C' ? '#FF9F0A' : '#FF453A';
       ctx.fillStyle = badgeColor;
       ctx.beginPath();
@@ -1550,7 +1554,7 @@ class MapManager {
     const subtitle = o.subtitle || this._fmtShareDate(trail.createdAt);
     if (subtitle) {
       ctx.fillStyle = isLight ? 'rgba(20,24,31,0.55)' : 'rgba(255,255,255,0.55)';
-      ctx.font = `${18 * S}px "HarmonyOS Sans", "PingFang SC", sans-serif`;
+      ctx.font = `18px "HarmonyOS Sans", "PingFang SC", sans-serif`;
       ctx.fillText(subtitle, padX, 94);
     }
 
@@ -1559,7 +1563,7 @@ class MapManager {
       ? (() => { const s = new Set(); for (const seg of o.signalLoss.segments) for (let i = seg.startIdx; i <= seg.endIdx; i++) s.add(i); return s; })()
       : null;
     const colorMap = Object.assign({}, this._speedColorMap, { __loss__: this._hexToRgb(CONFIG.SIGNAL_LOSS_GREY) });
-    ctx.lineWidth = 8 * S;
+    ctx.lineWidth = 8;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     for (let i = 1; i < worldPts.length; i++) {
@@ -1581,27 +1585,29 @@ class MapManager {
     const endPt = toXY(worldPts[worldPts.length - 1]);
     ctx.fillStyle = '#34C759';
     ctx.beginPath();
-    ctx.arc(startPt.x, startPt.y, 9 * S, 0, Math.PI * 2);
+    ctx.arc(startPt.x, startPt.y, 9, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = '#FF453A';
     ctx.beginPath();
-    ctx.arc(endPt.x, endPt.y, 9 * S, 0, Math.PI * 2);
+    ctx.arc(endPt.x, endPt.y, 9, 0, Math.PI * 2);
     ctx.fill();
 
     // 图例条（速度等级色 + 信号丢失灰段，计划 A/F）
-    const legendY = padTop - 30 * S;
+    // legendY = padTop - 16 = 114：与副标题(y=94, font18 跨 85-103) 留 3px 间距，
+    // 与轨迹绘制区上沿(padTop=130) 留 16px 间距。逻辑坐标保证任何 DPR 下都不与标题/副标题重叠。
+    const legendY = padTop - 16;
     let legendX = padX;
-    const dotR = 7 * S;
+    const dotR = 7;
     const drawLegendItem = (color, label) => {
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(legendX + dotR, legendY, dotR, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = isLight ? 'rgba(20,24,31,0.7)' : 'rgba(255,255,255,0.7)';
-      ctx.font = `${15 * S}px "HarmonyOS Sans", "PingFang SC", sans-serif`;
+      ctx.font = `15px "HarmonyOS Sans", "PingFang SC", sans-serif`;
       ctx.textBaseline = 'middle';
-      ctx.fillText(label, legendX + dotR * 2 + 6 * S, legendY);
-      legendX += dotR * 2 + 6 * S + ctx.measureText(label).width + 22 * S;
+      ctx.fillText(label, legendX + dotR * 2 + 6, legendY);
+      legendX += dotR * 2 + 6 + ctx.measureText(label).width + 22;
     };
     const levels = CONFIG.TRAIL_SPEED_LEVELS || [];
     for (const lv of levels) drawLegendItem(lv.color || '#00E5CC', lv.label || lv.mode);
@@ -1621,8 +1627,8 @@ class MapManager {
       return { distance, duration, points: positions.length, maxSpeed, avgSpeed };
     })();
 
-    const panelY = H - 240;
-    const panelH = 240;
+    const panelY = H - 280;
+    const panelH = 200;
     ctx.fillStyle = isLight ? 'rgba(255,255,255,0.92)' : 'rgba(22,27,34,0.92)';
     ctx.beginPath();
     ctx.roundRect(32, panelY - 26, W - 64, panelH, 24);
@@ -1643,23 +1649,24 @@ class MapManager {
       const top = panelY + 24;
       ctx.textAlign = 'center';
       ctx.fillStyle = isLight ? 'rgba(20,24,31,0.5)' : 'rgba(255,255,255,0.5)';
-      ctx.font = `${15 * S}px "HarmonyOS Sans", "PingFang SC", sans-serif`;
+      ctx.font = `15px "HarmonyOS Sans", "PingFang SC", sans-serif`;
       ctx.fillText(col.label, cx, top);
       ctx.fillStyle = isLight ? '#14181f' : '#ffffff';
-      ctx.font = col.big ? `700 ${26 * S}px "HarmonyOS Sans", sans-serif` : `700 ${22 * S}px "HarmonyOS Sans", sans-serif`;
+      ctx.font = col.big ? `700 26px "HarmonyOS Sans", sans-serif` : `700 22px "HarmonyOS Sans", sans-serif`;
       ctx.fillText(col.value, cx, top + 44);
       ctx.textAlign = 'left';
     });
 
     // 品牌水印 + 底图免责注记
-    const watermarkY = H - 40;
+    // 面板底部 = H - 26，把水印/注记放在面板下方（H-12 / H-32），避免与统计数值挤在同一矩形内
+    const watermarkY = H - 12;
     ctx.textAlign = 'right';
     ctx.fillStyle = isLight ? 'rgba(20,24,31,0.35)' : 'rgba(255,255,255,0.30)';
-    ctx.font = `${17 * S}px "HarmonyOS Sans", "PingFang SC", sans-serif`;
+    ctx.font = `17px "HarmonyOS Sans", "PingFang SC", sans-serif`;
     ctx.fillText('途刻 TraceCraft', W - 40, watermarkY);
     ctx.fillStyle = isLight ? 'rgba(20,24,31,0.28)' : 'rgba(255,255,255,0.24)';
-    ctx.font = `${13 * S}px "HarmonyOS Sans", "PingFang SC", sans-serif`;
-    ctx.fillText('注：底图较老，仅供参考使用', W - 40, watermarkY - 26 * S);
+    ctx.font = `13px "HarmonyOS Sans", "PingFang SC", sans-serif`;
+    ctx.fillText('注：底图较老，仅供参考使用', W - 40, watermarkY - 20);
     ctx.textAlign = 'left';
 
     try {
