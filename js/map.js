@@ -1609,8 +1609,16 @@ class MapManager {
       ctx.fillText(label, legendX + dotR * 2 + 6, legendY);
       legendX += dotR * 2 + 6 + ctx.measureText(label).width + 22;
     };
+    // 图例显示速度等级区间（km/h），而非交通方式名称（步行/火车等）
     const levels = CONFIG.TRAIL_SPEED_LEVELS || [];
-    for (const lv of levels) drawLegendItem(lv.color || '#00E5CC', lv.label || lv.mode);
+    let prevMax = 0;
+    for (const lv of levels) {
+      const lo = prevMax * 3.6;
+      const hi = lv.max === Infinity ? null : lv.max * 3.6;
+      const range = hi === null ? `${Math.round(lo)}+` : `${Math.round(lo)}-${Math.round(hi)}`;
+      drawLegendItem(lv.color || '#00E5CC', `${range} km/h`);
+      prevMax = lv.max === Infinity ? prevMax : lv.max;
+    }
     drawLegendItem(CONFIG.SIGNAL_LOSS_GREY, '信号丢失');
 
     // 底部统计区
