@@ -957,16 +957,19 @@ class GPSManager {
     stats.visible = satellites.length;
     stats.avgSnr = stats.used > 0 ? stats.snrSum / stats.used : 0;
     stats.weightedAvgSnr = stats.weightedUsed > 0 ? stats.weightedSnrSum / stats.weightedUsed : 0;
-    // 计划 #6：双频探测（芯片级：同系统 L1 与 L5/E5 共存）
-    let hasL1 = false, hasL5 = false;
+    // 计划 #6：双频探测
+    // dualBand：同系统 L1(≈1575.42) 与 L5/E5(频段表) 共存（芯片级双频解算标志）
+    // hasDualFreqSat：任意卫星落入双频频段表（单颗 L5 星也算，用于加权加成与弱信号锚定）
+    let hasL1 = false, hasL5 = false, hasDualFreqSat = false;
     for (const s of satellites) {
       const f = s.carrierFreqHz;
       if (typeof f === 'number' && f > 0) {
-        if (f > 1170 && f < 1185) hasL5 = true;
+        if (this._isDualBandSat(s)) { hasL5 = true; hasDualFreqSat = true; }
         else if (Math.abs(f - 1575.42) < 5) hasL1 = true;
       }
     }
     stats.dualBand = hasL1 && hasL5;
+    stats.hasDualFreqSat = hasDualFreqSat;
     // 模块4：多星座独立约束统计
     const usedConsts = stats.usedConsts;
     const MIN = CONFIG.GNSS_MULTI_CONST.MIN_PER_CONST;
@@ -983,7 +986,7 @@ class GPSManager {
     // 模块3：质量评分改用加权有效星数（低仰角/低 C/N0 星被降权，反映真实可用星）
     let q = stats.effUsed * CONFIG.GNSS_QUAL.USED_W
           + (constCount - 1) * CONFIG.GNSS_QUAL.CONST_DIV_W
-          + (stats.dualBand ? CONFIG.GNSS_QUAL.DUALBAND_W : 0);
+          + (stats.dualBand ? CONFIG.GNSS_QUAL.DUALBAND_W : (hasDualFreqSat ? CONFIG.GNSS_QUAL.DUALBAND_W * 0.6 : 0));
     // 模块4：仅单星座(且总星数达门槛) → 几何弱，qualScore 惩罚 → 平滑自动收紧
     if (stats.multiSingle && stats.effUsed >= CONFIG.GNSS_QUAL.WEAK_USED_MAX) {
       q *= CONFIG.GNSS_MULTI_CONST.SINGLE_CONST_PENALTY;
@@ -1047,7 +1050,23 @@ class GPSManager {
     const c = s.cn0DbHz || 0;
     if (c < cn0Min) return 0;                            // 低于门限剔除
     const cn0W = c >= cn0High ? 1 : (c - cn0Min) / (cn0High - cn0Min);
-    return elevW * cn0W;
+    let w = elevW * cn0W;
+    // 计划 #6：双频星观测噪声更小（电离层一阶项消去），权重上浮但封顶 1
+    if (CONFIG.GNSS_DUALBAND_ENABLED && this._isDualBandSat(s)) {
+      w = Math.min(1, w / CONFIG.GNSS_DUALBAND_R_SCALE); // 0.7 → 放大 ~1.43×
+    }
+    return w;
+  }
+
+  /** 单星是否双频/多频星：carrierFreqHz 落入任一双频频段表即视为双频星（L5/E5/B2a 等） */
+  _isDualBandSat(s) {
+    const f = s.carrierFreqHz;
+    if (typeof f !== 'number' || f <= 0) return false;
+    const bands = CONFIG.GNSS_DUALBAND_BANDS;
+    for (let i = 0; i < bands.length; i++) {
+      if (f >= bands[i].lo && f <= bands[i].hi) return true;
+    }
+    return false;
   }
 
   /**
@@ -1081,8 +1100,13 @@ class GPSManager {
     const sat = this._satStatsCache;
     // 模块4：多星座几何弱——单星座(达标星座数<2)且最弱环星数不足 GDOP_FLOOR_CONST → 视为弱信号
     const multiWeak = !!sat && sat.multiSingle && sat.minConstEff < CONFIG.GNSS_MULTI_CONST.GDOP_FLOOR_CONST;
+    // 计划 #6：双频锚定——存在任意双频星且至少一星座达标 → 几何干净，即便总星数偏低也不判弱信号降级
+    const dualAnchor = !!sat && sat.hasDualFreqSat && sat.minConstEff >= 1;
     if (this._weakSignal) {
       if (used >= CONFIG.GNSS_RECOVER_USED_MIN && snr >= CONFIG.GNSS_RECOVER_SNR_MIN) {
+        this._strongCnt++;
+      } else if (dualAnchor) {
+        // 双频几何干净：推恢复计数（弱信号时保持基准 + 正常节流）
         this._strongCnt++;
       } else {
         this._strongCnt = Math.max(0, this._strongCnt - 1);
@@ -1093,6 +1117,9 @@ class GPSManager {
     } else {
       if ((used < CONFIG.GNSS_WEAK_USED_MAX && snr < CONFIG.GNSS_WEAK_SNR_MAX) || multiWeak) {
         this._weakCnt++;
+      } else if (dualAnchor) {
+        // 双频锚定：不打弱信号计数（即便 used 偏低也维持可信）
+        this._weakCnt = Math.max(0, this._weakCnt - 1);
       } else {
         this._weakCnt = Math.max(0, this._weakCnt - 1);
       }
@@ -1847,6 +1874,15 @@ class GPSManager {
   get dualBandAvailable() {
     if (CONFIG.GNSS_DUALBAND_ENABLED === false) return false;
     return !!(this._satStatsCache && this._satStatsCache.dualBand);
+  }
+
+  /**
+   * 计划 #6：是否存在任意双频星（单颗 L5/E5/B2a 等即 true，比 dualBandAvailable 更宽松）。
+   * 用于弱信号锚定（双频几何干净仍可信）与 UI 提示。Web 端 → false（零回归）。
+   */
+  get gnssHasDualFreqSat() {
+    if (CONFIG.GNSS_DUALBAND_ENABLED === false) return false;
+    return !!(this._satStatsCache && this._satStatsCache.hasDualFreqSat);
   }
 
   /**

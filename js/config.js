@@ -285,6 +285,15 @@ const CONFIG = {
   // GNSS_DUALBAND_* 仍被 GPSManager.dualBandAvailable / _starWeight 使用（原生端卫星统计，与实时滤波解耦），保留。
   GNSS_DUALBAND_ENABLED: true,     // 总开关；false → 全程按单频处理
   GNSS_DUALBAND_R_SCALE: 0.7,      // 双频卫星观测噪声缩放（<1 更可信）：_starWeight 中权重 w /= R_SCALE（封顶 1）
+  // 双频/多频频段表（MHz）：L5/E5a(1176.45)、B2a(1191.795)、E5b(1207.14)、L2(1227.60) 等
+  // 单星 carrierFreqHz 落入任一频段即视为双频星（比"同系统 L1+L5 共存"更宽松，单颗 L5 星也加权）。
+  GNSS_DUALBAND_BANDS: [
+    { lo: 1170, hi: 1185 },   // GPS L5 / Galileo E5a / NavIC L5
+    { lo: 1188, hi: 1194 },   // BDS B2a
+    { lo: 1202, hi: 1212 },   // Galileo E5b / E5
+    { lo: 1222, hi: 1232 },   // GPS L2 / BDS B2I/B2b
+    { lo: 1565, hi: 1585 },   // L1 主频段（用于同系统双频共存探测，与 L5 配对）
+  ],
 
   // ----- IMU 惯性导航融合（仅定位校准：加速度注入辅助滤波，不做航迹推算）-----
   // 职责收窄：只消费 TYPE_LINEAR_ACCELERATION（去重力线性加速度），用 rotation 四元数
