@@ -34,6 +34,13 @@
   /* 毛玻璃（弹出菜单等浮层） */
   --glass-bg: rgba(255, 255, 255, 0.08);
   --glass-border: rgba(255, 255, 255, 0.18);
+  /* 玻璃质感增强（G1）：磨砂噪点纹理 + 顶部高光 + 斜向折射 sheen（模拟真实玻璃，避免大色块塑料感） */
+  --glass-noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  --glass-sheen: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0) 42%);
+  --glass-top-hi: linear-gradient(180deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0) 30%);
+  /* 主色微染阴影：玻璃更通透（替代纯黑阴影） */
+  --shadow-glass: 0 8px 30px rgba(0, 163, 255, 0.10), 0 2px 8px rgba(0, 0, 0, 0.25);
+  --glass-noise-opacity: 0.04;
   --font-sans: 'HarmonyOS Sans SC', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC', 'Helvetica Neue', sans-serif;
   --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -96,6 +103,9 @@
   /* 浅色主题毛玻璃 */
   --glass-bg: rgba(255, 255, 255, 0.72);
   --glass-border: rgba(0, 0, 0, 0.14);
+  /* 浅色下噪点降透明、阴影转中性，避免灰白塑料感 */
+  --glass-noise-opacity: 0.025;
+  --shadow-glass: 0 8px 30px rgba(30, 60, 120, 0.10), 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 [data-theme="light"] .qq-map .map-controls {
