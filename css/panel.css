@@ -120,6 +120,7 @@
               box-shadow 0.25s cubic-bezier(0.22, 1, 0.36, 1),
               border-color 0.25s ease;
   animation: cardIn 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 55ms);
   overflow: hidden;
 }
 
@@ -201,7 +202,7 @@
               0 4px 18px rgba(124, 58, 237, 0.10);
 }
 
-/* 卡片内部既有区块的间距由卡片统一呼吸，消除双重边距 */
+/* 卡片内部既有区块的间距由卡片统一呼吸，消除双重边距（G16） */
 .card-record .trail-section,
 .card-replay-list .replay-trails-section,
 .card-history-list .trail-list-header {
@@ -216,6 +217,33 @@
   margin-top: 0;
   padding-top: 0;
   border-top: none;
+}
+
+/* 卡片内区块统一呼吸间距：用 --card-gap 替代散乱 margin，
+   在需要分隔视觉处加极淡顶线 + 上方留白，形成节奏感 */
+.panel-card > .trail-section,
+.panel-card > .replay-trails-section,
+.panel-card > .trail-list-header,
+.panel-card > .action-row,
+.panel-card > .radius-section,
+.panel-card > .parse-section,
+.panel-card > .fix-list-section,
+.panel-card > .circle-list-section,
+.panel-card > .speed-chart-section,
+.panel-card > .elev-profile-section,
+.panel-card > .info-grid {
+  margin-bottom: var(--card-gap);
+}
+/* 卡片内最后一个区块不再留白 */
+.panel-card > :last-child {
+  margin-bottom: 0;
+}
+/* 需要分隔的区块加极淡呼吸分隔线 */
+.panel-card > .fix-list-section,
+.panel-card > .circle-list-section,
+.panel-card > .replay-trails-section {
+  border-top: 1px solid var(--border-color);
+  padding-top: var(--card-gap);
 }
 
 /* ---------- 分段控件（Tab） ---------- */
@@ -314,20 +342,28 @@
   background: transparent;
 }
 
-/* 面板内容 Tab 切换动画：淡入 + 上滑 */
+/* 面板内容 Tab 切换动画：默认淡入 + 上滑；宽屏按方向横滑（G9） */
 .bottom-panel .panel-body > .tab-pane {
   animation: tabPaneIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+.bottom-panel .panel-body > .tab-pane[data-dir="next"] {
+  animation-name: tabPaneNext;
+}
+.bottom-panel .panel-body > .tab-pane[data-dir="prev"] {
+  animation-name: tabPanePrev;
+}
 
 @keyframes tabPaneIn {
-  from {
-    opacity: 0;
-    transform: translateY(14px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes tabPaneNext {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes tabPanePrev {
+  from { opacity: 0; transform: translateX(-24px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 @media (prefers-reduced-motion: reduce) {

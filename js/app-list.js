@@ -38,7 +38,7 @@ App.prototype._renderTrailList = function () {
       listEl.innerHTML = '<div class="trail-list-empty">没有匹配的轨迹</div>';
       return;
     }
-    listEl.innerHTML = list.map((item) => this._trailItemHTML(item, false)).join('');
+    listEl.innerHTML = list.map((item, i) => this._trailItemHTML(item, false, i)).join('');
     this._bindTrailItemEvents(listEl, false);
     this._syncBatchToolbar();
   });
@@ -86,7 +86,7 @@ App.prototype._renderReplayTrailList = function () {
       listEl.innerHTML = '<div class="trail-list-empty">没有匹配的轨迹</div>';
       return;
     }
-    listEl.innerHTML = list.map((item) => this._trailItemHTML(item, true)).join('');
+    listEl.innerHTML = list.map((item, i) => this._trailItemHTML(item, true, i)).join('');
     this._bindTrailItemEvents(listEl, true);
     this._syncBatchToolbar();
   });
@@ -398,7 +398,7 @@ App.prototype._showTrailDetail = function (id) {
   });
 };
 
-App.prototype._trailItemHTML = function (item, isReplay) {
+App.prototype._trailItemHTML = function (item, isReplay, index) {
   const dateStr = formatDateTime(item.createdAt);
   const distStr = item.distance >= 1000
     ? (item.distance / 1000).toFixed(2) + ' km'
@@ -424,7 +424,7 @@ App.prototype._trailItemHTML = function (item, isReplay) {
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
       </button>
       ${moreBtn}`;
-  return `<div class="trail-list-item${multiCls}" data-id="${item.id}">
+  return `<div class="trail-list-item${multiCls}" data-id="${item.id}" style="--i:${index || 0}">
     ${checkHtml}
     <button class="${favClass}" data-id="${item.id}" title="收藏">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="${item.favorite ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>

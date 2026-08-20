@@ -42,16 +42,33 @@
   height: 48px;
   border-radius: 50%;
   background: var(--bg-panel);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
   border: 1px solid var(--border-color);
   color: var(--text-primary);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: var(--shadow-fab);
+  /* 浮层玻璃统一（G23）：阴影换主色微染玻璃阴影 */
+  box-shadow: var(--shadow-glass);
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
+  overflow: hidden;
+}
+/* 玻璃折射 sheen，与 panel-card 同语言 */
+.fab-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--glass-sheen);
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 0;
+}
+.fab-btn > * {
+  position: relative;
+  z-index: 1;
 }
 
 .fab-btn:active {

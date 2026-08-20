@@ -31,6 +31,8 @@
   --radius-md: 12px;
   --radius-lg: 20px;
   --radius-full: 999px;
+  /* 卡片内区块统一呼吸间距（G16）：替代散乱 margin，形成节奏感 */
+  --card-gap: 10px;
   /* 毛玻璃（弹出菜单等浮层） */
   --glass-bg: rgba(255, 255, 255, 0.08);
   --glass-border: rgba(255, 255, 255, 0.18);

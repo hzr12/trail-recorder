@@ -345,9 +345,19 @@
   .panel-card,
   .bottom-panel .panel-body,
   .bottom-panel .panel-header,
-  .bottom-panel .panel-body > .tab-pane {
+  .bottom-panel .panel-body > .tab-pane,
+  .bottom-panel .panel-body > .tab-pane[data-dir] {
     animation: none !important;
     transition: opacity 0.2s ease !important;
+  }
+  /* 列表项错峰入场降级（G8） */
+  .trail-list-item {
+    animation: none !important;
+  }
+  /* FAB 玻璃折射 sheen 降级（G23） */
+  .fab-btn::after {
+    animation: none !important;
+    opacity: 0 !important;
   }
   .bottom-panel {
     transition: max-height 0.2s ease, box-shadow 0.2s ease;

@@ -470,9 +470,19 @@ class App {
     if (recordEl) recordEl.style.display = tab === 'record' ? '' : 'none';
     if (replayEl) replayEl.style.display = tab === 'replay' ? '' : 'none';
     if (historyEl) historyEl.style.display = tab === 'history' ? '' : 'none';
-    // 重触发内容淡入动画（强制 reflow 使相同元素重复播放）
+    // 重触发内容方向滑入动画（强制 reflow 使相同元素重复播放）
     const targetEl = tab === 'record' ? recordEl : (tab === 'replay' ? replayEl : historyEl);
     if (targetEl) {
+      // Tab 顺序固定 record(0)/replay(1)/history(2)，比较索引决定滑入方向
+      const order = { record: 0, replay: 1, history: 2 };
+      const prev = this._currentTab;
+      const dir = (prev in order && order[tab] > order[prev]) ? 'next' : 'prev';
+      // 窄屏（≤480px）不做横向方向滑入，避免与纵向滚动冲突，留空走默认上滑
+      if (window.matchMedia && window.matchMedia('(max-width: 480px)').matches) {
+        targetEl.removeAttribute('data-dir');
+      } else {
+        targetEl.setAttribute('data-dir', dir);
+      }
       targetEl.classList.remove('tab-pane');
       void targetEl.offsetWidth;
       targetEl.classList.add('tab-pane');
