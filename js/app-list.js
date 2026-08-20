@@ -264,7 +264,7 @@ App.prototype._downloadDataUrl = function (dataUrl, filename, shareMeta) {
         }).then(() => {
           Toast.show('轨迹图片已导出');
         }).catch((e) => {
-          console.warn('[Export] 原生分享失败:', e && e.message);
+          Logger.warn('[Export] 原生分享失败:', e && e.message);
           Toast.show('导出失败，请重试');
         });
       };

@@ -21,6 +21,9 @@ __pycache__/
 # 本地字体源仅保留 css/fonts/*，原始资源目录不上传
 HarmonyOS Sans/
 
+# 由 CI 从根目录自动生成并打进 APK，不入库（见 .github/workflows/android-build.yml）
+native/web/
+
 docs/*
 
 test/*

@@ -164,7 +164,7 @@ class GPSManager {
         const wasLow = this._lowBattery;
         this._lowBattery = battery.level < 0.2;
         if (this._lowBattery && !wasLow) {
-          console.warn('[GPS] 电量低于 20%，已降低 GPS 频率');
+          Logger.warn('[GPS] 电量低于 20%，已降低 GPS 频率');
           // 低电量时锁定省电模式
           this._powerSavingLocked = true;
           if (!this._powerSaving) {
@@ -181,7 +181,7 @@ class GPSManager {
         }
         // 电量 < 10%：自动停止追踪
         if (battery.level < 0.1 && this.isWatching) {
-          console.warn('[GPS] 电量低于 10%，自动停止追踪');
+          Logger.warn('[GPS] 电量低于 10%，自动停止追踪');
           this._autoStoppedByBattery = true;
           this.stopWatching();
           if (this.onCriticalBattery) this.onCriticalBattery();
@@ -189,7 +189,7 @@ class GPSManager {
 
         // 电量 < 5%：强制停止所有耗电功能（含 GNSS）
         if (battery.level < 0.05 && !battery.charging) {
-          console.warn('[GPS] 电量低于 5%，强制停止所有定位功能');
+          Logger.warn('[GPS] 电量低于 5%，强制停止所有定位功能');
           if (this._gnssListeningStarted) this.stopGnss();
           // 如果 watch 还在跑（上面阈值没触发），也停掉
           if (this.isWatching) {
@@ -201,7 +201,7 @@ class GPSManager {
         // 充电时解锁省电模式并恢复追踪
         if (!this._lowBattery && this._powerSavingLocked && battery.charging) {
           this._powerSavingLocked = false;
-          if (CONFIG.DEBUG) console.log('[GPS] 电量恢复，省电模式已解锁');
+          if (CONFIG.DEBUG) Logger.log('[GPS] 电量恢复，省电模式已解锁');
           // 如果是因低电量自动停止的，恢复追踪
           if (this._autoStoppedByBattery && this.onRestoreTracking) {
             this._autoStoppedByBattery = false;
@@ -235,20 +235,20 @@ class GPSManager {
   togglePowerSaving(force) {
     // 锁定时不允许关闭
     if (this._powerSavingLocked && force === false) {
-      console.warn('[GPS] 电量不足，省电模式已锁定');
+      Logger.warn('[GPS] 电量不足，省电模式已锁定');
       return true;
     }
     const next = force !== undefined ? force : !this._powerSaving;
     if (next === this._powerSaving) return this._powerSaving;
     this._powerSaving = next;
-    if (CONFIG.DEBUG) console.log(`[GPS] 省电模式: ${next ? '开启' : '关闭'}`);
+    if (CONFIG.DEBUG) Logger.log(`[GPS] 省电模式: ${next ? '开启' : '关闭'}`);
 
     // 调整处理间隔（速度自适应，省电模式按 20s 下限）
     this._updateAdaptiveInterval(this.currentPosition ? this.currentPosition.speed : 0);
 
     // 省电模式下关闭 GNSS 卫星监听（节省 CPU + 电池）
     if (next && this._gnssListeningStarted) {
-      if (CONFIG.DEBUG) console.log('[GPS] 省电模式：关闭 GNSS 卫星监听');
+      if (CONFIG.DEBUG) Logger.log('[GPS] 省电模式：关闭 GNSS 卫星监听');
       this.stopGnss();
     } else if (!next && !this._gnssListeningStarted && this._gnssPlugin) {
       // 退出省电且 GNSS 插件存在 → 尝试重新激活
@@ -313,17 +313,17 @@ class GPSManager {
   _tryInitGnssPlugin() {
     if (typeof Capacitor === 'undefined' || !Capacitor.Plugins) {
       this._gnssInitError = 'not_capacitor';
-      console.info('[GPS] 非 Capacitor 环境，跳过 GNSS 插件探测');
+      Logger.info('[GPS] 非 Capacitor 环境，跳过 GNSS 插件探测');
       return;
     }
     const plugin = Capacitor.Plugins.GnssData;
     if (!plugin) {
       this._gnssInitError = 'plugin_not_registered';
-      console.info('[GPS] 未注册 GnssData 插件，跳过 GNSS 卫星数据');
+      Logger.info('[GPS] 未注册 GnssData 插件，跳过 GNSS 卫星数据');
       return;
     }
     this._gnssPlugin = plugin;
-    if (CONFIG.DEBUG) console.log('[GPS] GNSS 插件已探测到，等待 startGnss() 激活');
+    if (CONFIG.DEBUG) Logger.log('[GPS] GNSS 插件已探测到，等待 startGnss() 激活');
   }
 
   /**
@@ -335,7 +335,7 @@ class GPSManager {
       // 尝试重新探测（Capacitor 可能延迟加载）
       this._tryInitGnssPlugin();
       if (!this._gnssPlugin) {
-        console.warn('[GPS] startGnss 跳过：无 GNSS 插件引用');
+        Logger.warn('[GPS] startGnss 跳过：无 GNSS 插件引用');
         return;
       }
     }
@@ -369,7 +369,7 @@ class GPSManager {
       if (typeof Capacitor !== 'undefined' && Capacitor.requestPermissions) {
         const result = await Capacitor.requestPermissions({ permissions: ['location'] });
         if (result.location !== 'granted') {
-          console.warn('[GPS] GNSS 权限未授予:', result.location);
+          Logger.warn('[GPS] GNSS 权限未授予:', result.location);
           this._gnssInitError = 'permission_denied';
           return;
         }
@@ -381,12 +381,12 @@ class GPSManager {
       const gnssHandler = (event) => {
         if (event && event.satellites) {
           this._handleGnssSatellites(event.satellites);
-          if (CONFIG.DEBUG) console.log('[GPS] GNSS 事件收到，卫星数:', event.satellites.length);
+          if (CONFIG.DEBUG) Logger.log('[GPS] GNSS 事件收到，卫星数:', event.satellites.length);
         }
       };
       const nmeaHandler = (nmea) => {
         if (nmea && nmea.sentence) {
-          if (CONFIG.DEBUG) console.log('[GPS] NMEA:', nmea.sentence.substring(0, 20) + '...');
+          if (CONFIG.DEBUG) Logger.log('[GPS] NMEA:', nmea.sentence.substring(0, 20) + '...');
           this._parseNmea(nmea.sentence);
         }
       };
@@ -407,7 +407,7 @@ class GPSManager {
         // 把 PermissionDenied 直接显式说清楚，方便排查
         const code = startErr && startErr.code ? String(startErr.code) : 'NO_CODE';
         const msg = `[${code}] ${startErr?.message || '未知'}`;
-        console.warn('[GPS] startGnssListening 拒绝:', msg);
+        Logger.warn('[GPS] startGnssListening 拒绝:', msg);
         if (code === 'PERMISSION_DENIED') {
           Toast.show(` ACCESS_FINE_LOCATION 权限被拒 — 请到系统设置→应用→途刻→位置，开启"始终允许"`, 6000);
         }
@@ -424,7 +424,7 @@ class GPSManager {
       }
       this._gnssListeningStarted = true;
       this._gnssInitError = null;
-      if (CONFIG.DEBUG) console.log('[GPS] GNSS 插件已激活，卫星数据可用');
+      if (CONFIG.DEBUG) Logger.log('[GPS] GNSS 插件已激活，卫星数据可用');
 
       // 兜底轮询：前 15 秒每 2 秒主动拉取一次，防止事件丢失
       this._startGnssPollFallback();
@@ -432,7 +432,7 @@ class GPSManager {
       this._startWeakEvalTimer();
     } catch (err) {
       this._gnssInitError = err.message || 'start_failed';
-      console.warn('[GPS] GNSS 插件激活失败:', err.message);
+      Logger.warn('[GPS] GNSS 插件激活失败:', err.message);
       Toast.show(` GNSS 启动失败: ${err.message || '未知错误'}`, 4000);
       // 清理：移除 JS 监听器 + 停止原生 GNSS 监听
       this._removeGnssListeners();
@@ -464,7 +464,7 @@ class GPSManager {
       this._gnssPollRunning = true;
       // 如果事件已收到卫星数据，提前停止轮询
       if (this._gnssSatellites.length > 0) {
-        if (CONFIG.DEBUG) console.log('[GPS] GNSS 轮询兜底：已收到卫星数据，停止轮询');
+        if (CONFIG.DEBUG) Logger.log('[GPS] GNSS 轮询兜底：已收到卫星数据，停止轮询');
         this._stopGnssPollFallback();
         this._gnssPollRunning = false;
         return;
@@ -484,22 +484,22 @@ class GPSManager {
           for (const nmea of data.nmea) {
             if (nmea && nmea.sentence) this._parseNmea(nmea.sentence);
           }
-          if (CONFIG.DEBUG) console.log('[GPS] GNSS 轮询兜底：解析 NMEA 数:', data.nmea.length);
+          if (CONFIG.DEBUG) Logger.log('[GPS] GNSS 轮询兜底：解析 NMEA 数:', data.nmea.length);
         }
         if (data && data.satellites && data.satellites.length > 0) {
           this._handleGnssSatellites(data.satellites);
-          if (CONFIG.DEBUG) console.log('[GPS] GNSS 轮询兜底：收到卫星数:', data.satellites.length);
+          if (CONFIG.DEBUG) Logger.log('[GPS] GNSS 轮询兜底：收到卫星数:', data.satellites.length);
           this._stopGnssPollFallback();
         }
       } catch (e) {
-        console.warn('[GPS] GNSS 轮询兜底失败:', e.message);
+        Logger.warn('[GPS] GNSS 轮询兜底失败:', e.message);
       }
       this._gnssPollRunning = false;
       if (elapsed >= maxDuration) {
         this._stopGnssPollFallback();
         if (this._gnssSatellites.length === 0 && !toastedNoData) {
           toastedNoData = true;
-          console.warn('[GPS] GNSS 轮询兜底：15s 内未收到卫星数据');
+          Logger.warn('[GPS] GNSS 轮询兜底：15s 内未收到卫星数据');
         }
       }
     }, interval);
@@ -637,7 +637,7 @@ class GPSManager {
       if (CONFIG.ALT_USE_GEOID_BASELINE !== false && geoidSep != null && isFinite(geoidSep)) {
         if (this._geoidBaseline == null) {
           this._geoidBaseline = geoidSep;
-          if (CONFIG.DEBUG) console.log(`[ALT] 锁定大地水准面基准 sep=${geoidSep.toFixed(1)}m`);
+          if (CONFIG.DEBUG) Logger.log(`[ALT] 锁定大地水准面基准 sep=${geoidSep.toFixed(1)}m`);
         }
       }
       if (lat != null && lng != null && fixQuality > 0) this._updateNativeCoord(lat, lng);
@@ -766,7 +766,7 @@ class GPSManager {
         maximumAge: CONFIG.GPS_NATIVE_FALLBACK_MAX_AGE
       });
     }
-    if (CONFIG.DEBUG) console.log('[GPS] 定位源 → native（原生 GNSS 主导）');
+    if (CONFIG.DEBUG) Logger.log('[GPS] 定位源 → native（原生 GNSS 主导）');
   }
 
   /**
@@ -787,7 +787,7 @@ class GPSManager {
         maximumAge: 2000
       });
     }
-    if (CONFIG.DEBUG) console.log('[GPS] 定位源 → browser（浏览器定位顶上）');
+    if (CONFIG.DEBUG) Logger.log('[GPS] 定位源 → browser（浏览器定位顶上）');
   }
 
   /**
@@ -816,14 +816,14 @@ class GPSManager {
       this._coordConflictStreak++;
       if (this._coordConflictStreak >= CONFIG.NMEA_COORD_CONFLICT_STREAK && this._nativeCoordTrusted) {
         this._nativeCoordTrusted = false;
-        if (CONFIG.DEBUG) console.warn(`[GPS] 原生坐标(GGA ${this._lastGga.lat?.toFixed(5)},${this._lastGga.lng?.toFixed(5)}) 与浏览器偏差连续 ${this._coordConflictStreak} 次 > ${CONFIG.NMEA_COORD_CONFLICT_M}m，判定原生坐标不可信`);
+        if (CONFIG.DEBUG) Logger.warn(`[GPS] 原生坐标(GGA ${this._lastGga.lat?.toFixed(5)},${this._lastGga.lng?.toFixed(5)}) 与浏览器偏差连续 ${this._coordConflictStreak} 次 > ${CONFIG.NMEA_COORD_CONFLICT_M}m，判定原生坐标不可信`);
       }
     } else {
       // 偏差回到阈值内：计数回落，降至 0 恢复信任
       this._coordConflictStreak = Math.max(0, this._coordConflictStreak - 1);
       if (this._coordConflictStreak === 0 && !this._nativeCoordTrusted) {
         this._nativeCoordTrusted = true;
-        if (CONFIG.DEBUG) console.log(`[GPS] 原生坐标与浏览器偏差恢复正常，恢复信任（GGA 锚点 ${this._lastGga.lat?.toFixed(5)},${this._lastGga.lng?.toFixed(5)}）`);
+        if (CONFIG.DEBUG) Logger.log(`[GPS] 原生坐标与浏览器偏差恢复正常，恢复信任（GGA 锚点 ${this._lastGga.lat?.toFixed(5)},${this._lastGga.lng?.toFixed(5)}）`);
       }
     }
   }
@@ -1139,7 +1139,7 @@ class GPSManager {
     this._weakSignal = true;
     this._weakCnt = 0;
     this._strongCnt = 0;
-    if (CONFIG.DEBUG) console.warn(`[GPS] GNSS 弱信号（卫星<${CONFIG.GNSS_WEAK_USED_MAX} 且 信噪比<${CONFIG.GNSS_WEAK_SNR_MAX}dB 持续 ${CONFIG.GNSS_WEAK_HOLD_MS / 1000}s），进入省电降级`);
+    if (CONFIG.DEBUG) Logger.warn(`[GPS] GNSS 弱信号（卫星<${CONFIG.GNSS_WEAK_USED_MAX} 且 信噪比<${CONFIG.GNSS_WEAK_SNR_MAX}dB 持续 ${CONFIG.GNSS_WEAK_HOLD_MS / 1000}s），进入省电降级`);
     // 放宽节流：立即生效（覆盖当前窗口），后续由 _updateAdaptiveInterval 的弱信号钳制维持
     if (this._gpsMinInterval < CONFIG.GPS_WEAK_SIGNAL_INTERVAL) {
       this._gpsMinInterval = CONFIG.GPS_WEAK_SIGNAL_INTERVAL;
@@ -1160,7 +1160,7 @@ class GPSManager {
     this._weakSignal = false;
     this._weakCnt = 0;
     this._strongCnt = 0;
-    if (CONFIG.DEBUG) console.log(`[GPS] GNSS 信号恢复（卫星>=${CONFIG.GNSS_RECOVER_USED_MIN} 且 信噪比>=${CONFIG.GNSS_RECOVER_SNR_MIN}dB 持续 ${CONFIG.GNSS_RECOVER_HOLD_MS / 1000}s），退出省电降级`);
+    if (CONFIG.DEBUG) Logger.log(`[GPS] GNSS 信号恢复（卫星>=${CONFIG.GNSS_RECOVER_USED_MIN} 且 信噪比>=${CONFIG.GNSS_RECOVER_SNR_MIN}dB 持续 ${CONFIG.GNSS_RECOVER_HOLD_MS / 1000}s），退出省电降级`);
     // 恢复节流：按当前速度重新计算正常间隔
     this._updateAdaptiveInterval(this.currentPosition ? this.currentPosition.speed : 0);
     if (CONFIG.GPS_WEAK_SIGNAL_LOW_ACCURACY && this.isWatching) {
@@ -1210,7 +1210,7 @@ class GPSManager {
       const elapsed = Date.now() - this._lastPositionTime;
       if (elapsed > this._getCurrentTimeout()) {
         this._consecutiveTimeouts++;
-        if (CONFIG.DEBUG) console.warn(`[GPS] 超时 #${this._consecutiveTimeouts}（${(elapsed / 1000).toFixed(0)}s 无新位置）`);
+        if (CONFIG.DEBUG) Logger.warn(`[GPS] 超时 #${this._consecutiveTimeouts}（${(elapsed / 1000).toFixed(0)}s 无新位置）`);
         if (!this._downgraded && this._consecutiveTimeouts >= CONFIG.GPS_TIMEOUT_MAX_FAILURES) {
           this._downgrade();
         }
@@ -1237,7 +1237,7 @@ class GPSManager {
     if (this._downgraded) return;
     this._downgraded = true;
     this._consecutiveTimeouts = 0;
-    if (CONFIG.DEBUG) console.warn('[GPS] 连续超时达阈值，降级到低精度定位');
+    if (CONFIG.DEBUG) Logger.warn('[GPS] 连续超时达阈值，降级到低精度定位');
     if (this.onDowngrade) this.onDowngrade(this._consecutiveTimeouts);
 
     // 用新参数重启 watchPosition
@@ -1281,7 +1281,7 @@ class GPSManager {
     if (!this._downgraded || !this.isWatching) return;
     // 省电模式本身就是低精度 + 20s 节流，恢复高精度会破坏省电设定，直接跳过
     if (this._powerSaving) return;
-    if (CONFIG.DEBUG) console.log('[GPS] 尝试恢复高精度定位...');
+    if (CONFIG.DEBUG) Logger.log('[GPS] 尝试恢复高精度定位...');
     try {
       await this.getCurrentPosition(CONFIG.GPS_WATCH_TIMEOUT);
       // 成功 → 恢复高精度
@@ -1289,7 +1289,7 @@ class GPSManager {
       this._consecutiveTimeouts = 0;
       this._lastProcessedTime = Date.now();
       this._stopRecoveryTimer();
-      if (CONFIG.DEBUG) console.log('[GPS] 高精度定位恢复成功');
+      if (CONFIG.DEBUG) Logger.log('[GPS] 高精度定位恢复成功');
       if (this.onRecovery) this.onRecovery(true);
 
       // 用高精度参数重启 watchPosition
@@ -1303,7 +1303,7 @@ class GPSManager {
       }
     } catch (err) {
       // 失败 → 继续低精度
-      console.warn('[GPS] 恢复高精度失败:', err.message);
+      Logger.warn('[GPS] 恢复高精度失败:', err.message);
       if (this.onRecovery) this.onRecovery(false);
     }
   }
@@ -1313,7 +1313,7 @@ class GPSManager {
    */
   _resetTimeouts() {
     if (this._consecutiveTimeouts > 0) {
-      if (CONFIG.DEBUG) console.log(`[GPS] 位置更新，重置连续超时计数（was ${this._consecutiveTimeouts}）`);
+      if (CONFIG.DEBUG) Logger.log(`[GPS] 位置更新，重置连续超时计数（was ${this._consecutiveTimeouts}）`);
     }
     this._consecutiveTimeouts = 0;
     this._lastPositionTime = Date.now();
@@ -1373,7 +1373,7 @@ class GPSManager {
         // 高精度超时 → 退到低精度（IP / 基站定位）重试一次，兼容桌面端无 GPS 硬件
         if (error.code === error.TIMEOUT && !lowAccuracyFallback) {
           lowAccuracyFallback = true;
-          console.info('[GPS] 高精度定位超时，退用低精度（IP/基站）重试');
+          Logger.info('[GPS] 高精度定位超时，退用低精度（IP/基站）重试');
           navigator.geolocation.getCurrentPosition(handleSuccess, handleError, {
             enableHighAccuracy: false,
             timeout: t,
@@ -1416,7 +1416,7 @@ class GPSManager {
       if (options) {
         this.stopWatching();
       } else {
-        if (CONFIG.DEBUG) console.warn('GPS 已在监听中');
+        if (CONFIG.DEBUG) Logger.warn('GPS 已在监听中');
         return;
       }
     }
@@ -1683,7 +1683,7 @@ class GPSManager {
       this._altFilter.enabled = next;
       this._altFilter.reset();
     }
-    if (CONFIG.DEBUG) console.log(`[GPS] 海拔滤波: ${next ? '开启' : '关闭'}`);
+    if (CONFIG.DEBUG) Logger.log(`[GPS] 海拔滤波: ${next ? '开启' : '关闭'}`);
     return next;
   }
 
@@ -1699,7 +1699,7 @@ class GPSManager {
     if (this._posSmoother) {
       this._posSmoother.setEnabled(next);
     }
-    if (CONFIG.DEBUG) console.log(`[GPS] 位置滤波(滑动窗): ${next ? '开启' : '关闭'}`);
+    if (CONFIG.DEBUG) Logger.log(`[GPS] 位置滤波(滑动窗): ${next ? '开启' : '关闭'}`);
     return next;
   }
 
@@ -1719,6 +1719,12 @@ class GPSManager {
 
   /** 注入 MapManager：采集原始测量时预转 GCJ02，使 RTS 全程在 GCJ02 空间平滑 */
   setMapManager(mapManager) {
+    if (this.isWatching && !this._mapManager) {
+      // 防御性断言：watch 已启动却尚未注入 mapManager，会导致本段采集的原始测量未被预转
+      // GCJ02，与后续轨迹点（GCJ02 系）错位。正常启动顺序（App 构造 setMapManager → init 启动
+      // watch）不会出现此情况；若出现说明调用顺序有误。
+      Logger.warn('GPSManager.setMapManager 晚于 watchPosition 启动，已采集的测量未预转 GCJ02');
+    }
     this._mapManager = mapManager;
   }
 
@@ -1778,7 +1784,7 @@ class GPSManager {
     try {
       alt = this._altRts.smooth(fixes);
     } catch (e) {
-      if (CONFIG.DEBUG) console.warn('[ALT-RTS] 海拔平滑失败，保留原始:', e);
+      if (CONFIG.DEBUG) Logger.warn('[ALT-RTS] 海拔平滑失败，保留原始:', e);
       return horizontal.map(p => ({ ...p, alt: null }));
     }
     return horizontal.map((p, i) => ({ ...p, alt: alt[i] }));
@@ -2180,7 +2186,7 @@ class GPSManager {
     if (sep == null) return 0; // 实时口径无 sep → 不校正
     const corr = sep - this._geoidBaseline;
     if (Math.abs(corr) > CONFIG.ALT_GEOID_MAX_DIFF_M) {
-      if (CONFIG.DEBUG) console.warn(`[ALT] 大地水准面校正量 ${corr.toFixed(1)}m 超阈值，放弃校正`);
+      if (CONFIG.DEBUG) Logger.warn(`[ALT] 大地水准面校正量 ${corr.toFixed(1)}m 超阈值，放弃校正`);
       return null;
     }
     return corr;

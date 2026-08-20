@@ -67,7 +67,7 @@ class MapManager {
     this.overlayCtx = this.overlayCanvas ? this.overlayCanvas.getContext('2d') : null;
 
     if (typeof qq === 'undefined' || !qq.maps || typeof qq.maps.Map !== 'function') {
-      console.error('[MapManager] 腾讯地图 SDK 加载失败');
+      Logger.error('[MapManager] 腾讯地图 SDK 加载失败');
       try { Toast.show(' 地图加载失败，请检查网络后刷新页面'); } catch (_) {}
       throw new Error('腾讯地图 SDK 未加载');
     }
@@ -215,7 +215,7 @@ class MapManager {
         });
         return result;
       } catch (e) {
-        console.warn('wgs84ToGcj02: convertor API 失败，降级到手写算法', e.message);
+        Logger.warn('wgs84ToGcj02: convertor API 失败，降级到手写算法', e.message);
       }
     }
     return this._wgs84Gcj02(point);
@@ -1060,7 +1060,7 @@ class MapManager {
       try {
         await this._drawThumbnailTiles(ctx, { padX, padY, W, H, scale, offX, offY });
       } catch (e) {
-        if (typeof CONFIG !== 'undefined' && CONFIG.DEBUG) console.warn('[MapManager] 缩略图底图降级纯色:', e && e.message);
+        if (typeof CONFIG !== 'undefined' && CONFIG.DEBUG) Logger.warn('[MapManager] 缩略图底图降级纯色:', e && e.message);
       }
     }
 
@@ -1323,7 +1323,7 @@ class MapManager {
     try {
       return canvas.toDataURL('image/png');
     } catch (e) {
-      console.warn('[MapManager] 缩略图导出失败:', e.message);
+      Logger.warn('[MapManager] 缩略图导出失败:', e.message);
       return null;
     }
   }
@@ -1402,7 +1402,7 @@ class MapManager {
     try {
       return canvas.toDataURL('image/png');
     } catch (e) {
-      console.warn('[MapManager] 轨迹合集导出失败:', e.message);
+      Logger.warn('[MapManager] 轨迹合集导出失败:', e.message);
       return null;
     }
   }
@@ -1512,7 +1512,7 @@ class MapManager {
       try {
         await this._drawThumbnailTiles(ctx, { padX, padY: padTop, W, H, scale, offX, offY, padBottom });
       } catch (e) {
-        if (typeof CONFIG !== 'undefined' && CONFIG.DEBUG) console.warn('[MapManager] 分享卡片底图降级纯色:', e && e.message);
+        if (typeof CONFIG !== 'undefined' && CONFIG.DEBUG) Logger.warn('[MapManager] 分享卡片底图降级纯色:', e && e.message);
       }
     }
 
@@ -1680,7 +1680,7 @@ class MapManager {
     try {
       return canvas.toDataURL('image/png');
     } catch (e) {
-      console.warn('[MapManager] 分享卡片导出失败:', e.message);
+      Logger.warn('[MapManager] 分享卡片导出失败:', e.message);
       return null;
     }
   }

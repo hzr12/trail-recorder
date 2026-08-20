@@ -158,7 +158,7 @@ App.prototype._processBackgroundPosition = async function (pos) {
 
     this._saveState();
   } catch (e) {
-    if (CONFIG.DEBUG) console.error('[Background] _processBackgroundPosition error:', e.message);
+    if (CONFIG.DEBUG) Logger.error('[Background] _processBackgroundPosition error:', e.message);
   }
 };
 

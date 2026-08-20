@@ -72,6 +72,7 @@ class App {
     this._followMode = false;
     this._dirty = false;
     this._trailDirty = false;
+    this._lastTrailSaveTs = 0;
     this._lastGcj02ErrorToast = 0;
     this._lastWeatherFetch = 0;
     this._lastWeatherPos = null;
@@ -212,7 +213,7 @@ class App {
       if (this.trail.positions.length > 0 || this.trail.isRecording) {
         // 同步紧急快照：页面被杀时 IndexedDB 异步写可能来不及完成，先用 localStorage 兜底
         this._writeEmergencySnapshot();
-        Storage.saveTrail(this.trail);
+        this._forceSaveTrail();
       }
     };
     this._pageShowHandler = () => {
@@ -541,7 +542,7 @@ class App {
         if (this.gpsManager.isGnssActive) {
           Toast.show(` GNSS 卫星数据已激活`);
         }
-      }).catch(err => console.error('[GNSS] unexpected error:', err));
+      }).catch(err => Logger.error('[GNSS] unexpected error:', err));
     } catch (err) {
       Toast.show(' ' + err.message);
       this._gpsBtn.classList.remove('located');
@@ -591,7 +592,7 @@ class App {
         .finally(() => { if (this._queuePending > 0) this._queuePending--; });
     };
     this.gpsManager.onError = (err) => {
-      if (CONFIG.DEBUG) console.warn('[GPS] 追踪出错:', err.message);
+      if (CONFIG.DEBUG) Logger.warn('[GPS] 追踪出错:', err.message);
       Toast.show(' ' + err.message);
     };
     this.gpsManager.onDowngrade = () => {
@@ -677,7 +678,7 @@ class App {
       }
       this._updateTrailUI();
       this._trailDirty = false;
-      Storage.saveTrail(this.trail);
+      this._forceSaveTrail();
     });
   }
 
@@ -735,7 +736,7 @@ class App {
       // 停止记录：先用本次记录的全部原始测量做一次离线 RTS 平滑，
       // 把平滑后的坐标（WGS84→GCJ02）写回轨迹点，再保存
       this._applyTrailRtsSmoothing();
-      Storage.saveTrail(this.trail);
+      this._forceSaveTrail();
       this._saveCurrentTrail();
       // 停止记录：实时关键点层转成固定标记
       this.mapManager.clearRealtimeKeyPoints();
@@ -785,12 +786,12 @@ class App {
         }
       }
       if (CONFIG.DEBUG) {
-        console.log(`[RTS] 平滑 ${smoothed.length} 点，替换 ${replaced}/${this.trail.positions.length} 个轨迹点，含海拔 ${replacedAlt} 个`);
+        Logger.log(`[RTS] 平滑 ${smoothed.length} 点，替换 ${replaced}/${this.trail.positions.length} 个轨迹点，含海拔 ${replacedAlt} 个`);
       }
       // 刷新地图轨迹线
       this.mapManager.setTrail(this._getTrailPositions());
     } catch (e) {
-      if (CONFIG.DEBUG) console.warn('[RTS] 平滑失败，保留原始轨迹:', e);
+      if (CONFIG.DEBUG) Logger.warn('[RTS] 平滑失败，保留原始轨迹:', e);
     }
   }
 
@@ -1034,7 +1035,7 @@ class App {
     if (alt == null || !Number.isFinite(alt)) return null;
     if (this._altBase == null) {
       this._altBase = alt; // 锁定基准（只取第一个有效点）
-      if (CONFIG.DEBUG) console.log(`[ALT] 海拔基准锁定: ${alt.toFixed(1)}m`);
+      if (CONFIG.DEBUG) Logger.log(`[ALT] 海拔基准锁定: ${alt.toFixed(1)}m`);
     }
     return alt - this._altBase;
   }
@@ -1106,7 +1107,7 @@ class App {
             if (this.gpsManager.isGnssActive) {
               Toast.show(` GNSS 卫星数据已激活`);
             }
-          }).catch(err => console.error('[GNSS] unexpected error:', err));
+          }).catch(err => Logger.error('[GNSS] unexpected error:', err));
         }
       } else if (this._isWatching && !this._isReplaying) {
         if (this._followMode) {
@@ -1205,7 +1206,7 @@ class App {
         this._updateStatusBar();
       }
     } catch (e) {
-      if (CONFIG.DEBUG) console.error('_processPosition error:', e.message);
+      if (CONFIG.DEBUG) Logger.error('_processPosition error:', e.message);
       if (!this._lastGcj02ErrorToast || Date.now() - this._lastGcj02ErrorToast > 30000) {
         this._lastGcj02ErrorToast = Date.now();
         Toast.show(' 坐标转换失败，位置未更新');
@@ -1235,7 +1236,7 @@ class App {
 
       this._updateStatusBar(true);
     } catch (err) {
-      console.warn('[AutoRelocate] 重定位失败:', err.message);
+      Logger.warn('[AutoRelocate] 重定位失败:', err.message);
       Toast.show(' 自动重定位失败');
     } finally {
       this._relocating = false;
@@ -1352,11 +1353,22 @@ class App {
     btn.title = isDark ? '切换浅色主题' : '切换深色主题';
   }
 
+  // 节流保存：_trailDirty 置位后，距上次真正写盘未超过 TRAIL_SAVE_THROTTLE_MS 则仅保留
+  // 标记，等下一个定时器周期再判；既降低长轨迹 IndexedDB 写放大，又保证最终落盘。
   _saveState() {
-    if (this._trailDirty) {
-      this._trailDirty = false;
-      Storage.saveTrail(this.trail);
-    }
+    if (!this._trailDirty) return;
+    const now = Date.now();
+    if (now - this._lastTrailSaveTs < CONFIG.TRAIL_SAVE_THROTTLE_MS) return;
+    this._trailDirty = false;
+    this._lastTrailSaveTs = now;
+    Storage.saveTrail(this.trail);
+  }
+
+  // 强制立即保存（关键点：pagehide / 停止记录 / 恢复 / undo 等），不受节流窗口限制。
+  _forceSaveTrail() {
+    this._trailDirty = false;
+    this._lastTrailSaveTs = Date.now();
+    Storage.saveTrail(this.trail);
   }
 
   _writeEmergencySnapshot() {
@@ -1369,7 +1381,7 @@ class App {
       };
       localStorage.setItem(CONFIG.TRAIL_EMERGENCY_KEY, JSON.stringify(snap));
     } catch (e) {
-      if (CONFIG.DEBUG) console.warn('[App] 紧急快照写入失败:', e.message);
+      if (CONFIG.DEBUG) Logger.warn('[App] 紧急快照写入失败:', e.message);
     }
   }
 
@@ -1388,7 +1400,7 @@ class App {
     const dbTs = (indexedData && indexedData.updatedAt) || 0;
     if (snapTs < dbTs) return;
 
-    if (CONFIG.DEBUG) console.warn('[App] 检测到紧急快照，恢复', snap.positions.length, '个点');
+    if (CONFIG.DEBUG) Logger.warn('[App] 检测到紧急快照，恢复', snap.positions.length, '个点');
 
     this.trail.positions = snap.positions;
     this.trail.lastPos = snap.positions[snap.positions.length - 1];
@@ -1402,7 +1414,7 @@ class App {
     }
     this._updateTrailUI();
     // 同步持久化，防止再次因强杀丢失
-    Storage.saveTrail(this.trail);
+    this._forceSaveTrail();
     Toast.show('已恢复上次未保存的轨迹');
   }
 
@@ -1434,7 +1446,7 @@ class App {
 
       this._updateTrailUI();
     }).catch(err => {
-      console.warn('[App] 轨迹恢复失败:', err.message);
+      Logger.warn('[App] 轨迹恢复失败:', err.message);
       this._restoreEmergencySnapshot(null);
       this._updateTrailUI();
     });

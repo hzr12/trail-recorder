@@ -84,7 +84,7 @@ class Trail {
     // 防御：拒绝无效坐标
     if (typeof pt.lat !== 'number' || !isFinite(pt.lat) ||
         typeof pt.lng !== 'number' || !isFinite(pt.lng)) {
-      if (CONFIG.DEBUG) console.warn('[Trail] 丢弃无效点:', pt.lat, pt.lng);
+      if (CONFIG.DEBUG) Logger.warn('[Trail] 丢弃无效点:', pt.lat, pt.lng);
       return false;
     }
     if (this.lastPos) {
@@ -106,7 +106,7 @@ class Trail {
       const speed = pt.speed;
       if (typeof speed === 'number' && speed >= 0 && speed < CONFIG.TRAIL_STATIONARY_SPEED) {
         if (dist > jitterThreshold * 4) {
-          if (CONFIG.DEBUG) console.warn('[Trail] 丢弃静止漂移点:', dist.toFixed(1) + 'm', speed + 'm/s');
+          if (CONFIG.DEBUG) Logger.warn('[Trail] 丢弃静止漂移点:', dist.toFixed(1) + 'm', speed + 'm/s');
           return false;
         }
       }

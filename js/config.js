@@ -110,10 +110,6 @@ const CONFIG = {
   SIGNAL_LOSS_GREY: '#888888',        // 丢星段灰色
   // —— 记录健康分（计划 E）——
   HEALTH_GRADE_THRESHOLDS: [0.9, 0.75, 0.6], // A / B / C / D 分数阈值
-  // —— 卡尔曼自适应遗忘因子（计划 C，仅实时 IMM 层）——
-  IMM_FORGET_MAX: 3,                  // 遗忘因子上限（突变时放大过程噪声 Q）
-  IMM_FORGET_DECAY: 0.85,             // 每帧衰减系数，逐步回归常规平滑
-  IMM_FORGET_JUMP_M: 20,              // 触发遗忘因子的位置跳变阈值（米）
   // —— 海拔海平面基准校准（计划 D）——
   ALT_USE_GEOID_BASELINE: true,       // 用 GPGGA 大地水准面分离校正本地海拔基准
   ALT_GEOID_MAX_DIFF_M: 200,          // 大地水准面差超此值放弃校正（防坏数据跨城跳变）
@@ -243,33 +239,6 @@ const CONFIG = {
   GNSS_CN0_LERP_HIGH_SLOW: 30,   // 步行 C/N0 达此值即满权
   GNSS_CN0_LERP_HIGH_FAST: 40,   // 驾车 C/N0 需达此值才满权
 
-  // ----- IMM 交互式多模型滤波【实时定位，已弃用】-----
-  // 实时 2D 位置滤波已硬删（蓝点=原始单次定位，消除高铁/隧道场景系统性外推漂移）。
-  // 以下 IMM_* 常量现为死配置（gps-imm.js 已删除，无引用）。保留仅作历史参考，请勿新增引用。
-  // 三模型统一 6 维状态 [x,y,vx,vy,ax,ay]（局部 ENU 米坐标），差异仅在加速度过程噪声
-  // q_a（标准差）：STILL 极小 Q 强抑漂移、CV 中 Q 匀速跟随、CA 大 Q 机动跟踪。
-  // 模型间切换完全由「马尔可夫转移概率 × 测量似然」驱动，取代旧实现按速度手动调 q 的
-  // 启发式，逻辑更纯粹。Huber/冻结/时间重置/重锚/速度限幅等保护机制全部保留。
-  IMM_FILTER_ENABLED: true,          // 【已弃用】实时滤波总开关（实时滤波已删除）
-  IMM_MODEL_Q: [0.05, 0.25, 1.0],    // 【已弃用】STILL/CV/CA 三模型加速度过程噪声（m/s²，标准差）
-  IMM_TRANSITION: [                   // 马尔可夫转移矩阵 Π[i][j] = P(下一时刻模型=i | 当前=模型j)
-    [0.98, 0.015, 0.005],            // 列和=1（构造时自动归一防御）；STILL 惯性最强，CA 直连最弱
-    [0.015, 0.97, 0.015],
-    [0.005, 0.015, 0.98],
-  ],
-  IMM_INIT_PROB: [0.6, 0.3, 0.1],    // 【已弃用】初始模型概率（STILL/CV/CA）
-  IMM_POS_VAR: 2500,                 // 【已弃用】初始位置方差（米²，与单模型一致）
-  IMM_VEL_VAR: 0,                    // 【已弃用】初始速度方差（米²/s²，新轨迹速度未知）
-  IMM_ACC_VAR: 4,                    // 【已弃用】初始加速度方差（米²/s⁴，适度初始不确定度）
-  IMM_REANCHOR_M: 3000,              // 【已弃用】距参考点超此距离重锚（米，与单模型一致）
-  IMM_SPEED_LIMIT: 120,              // 【已弃用】模型速度模量限幅（m/s ≈ 432km/h）
-  IMM_FREEZE_ACC: 1750,              // 【已弃用】精度超此值冻结在最后可信位置（米，放宽：1750m 内均正常滤波）
-  IMM_LIKELIHOOD_TEMP: 2.0,          // 模型似然温度 γ（Λ^γ 放大模型差异，加速强模型主导；1 为标准 IMM）
-  IMM_SPEED_PRIOR: true,             // 【已弃用】速度辅助模型先验（用 GPS 上报 speed 软门控模型切换，弥补纯位置观测辨识慢）
-  IMM_MIN_PROB: 1e-6,                // 【已弃用】模型概率下界（防浮点死锁）
-  // 计划 #2：HDOP 实时调制观测噪声 R【已弃用，实时滤波删除后无引用】
-  IMM_HDOP_R_POW: 1.3,             // 【已弃用】HDOP→R 的指数（>1 放大弱信号惩罚）
-  IMM_HDOP_R_MAX: 6,               // 【已弃用】HDOP 调制 R 的上限，防极端值炸裂
   // ----- 模块4：多星座（Multi-GNSS）独立约束 -----
   // 核心：区分"4 颗全在一个星座"(几何弱) 与 "4 颗分布 4 星座"(几何鲁棒)。
   // 仅原生端生效（浏览器不暴露星座/频段，_computeSatStats 不跑 → 零回归）。
@@ -298,8 +267,10 @@ const CONFIG = {
   // ----- IMU 惯性导航融合（仅定位校准：加速度注入辅助滤波，不做航迹推算）-----
   // 职责收窄：只消费 TYPE_LINEAR_ACCELERATION（去重力线性加速度），用 rotation 四元数
   // 旋转到 ENU 地理系 → 滑窗均值（近 IMU_FEED_INTERVAL_MS 窗口，分 IMU_WIN_BUCKETS 个桶
-  // 环形缓冲持续输出）→ 一阶低通 → 注入 ImmFilter 的 CA 模型预测
-  // （x⁻=F·x̂+G·a_imu，仅运动学先验，GPS 仍是位置权威）。
+  // 环形缓冲持续输出）→ 一阶低通 → 注入离线 RTS 平滑器（KalmanFilter._offlineSmoother）
+  // 的 CA 模型预测（x⁻=F·x̂+G·a_imu，仅运动学先验，GPS 仍是位置权威）。
+  // 注：实时 2D 位置滤波（原 ImmFilter）已硬删，蓝点=原始单次定位，消除高铁/隧道外推漂移；
+  // IMU 仅作离线平滑的运动学先验注入，不影响实时定位。
   // 姿态-加速度时间对齐：插件下发 rotationTs（姿态事件时间戳），JS 侧姿态环形缓冲按
   // 加速度事件时间戳查询最近姿态（偏差 > IMU_ROT_MAX_DT_MS 视为不匹配，安全降级）。
   // 三轴输出：旋转后的 E/N/U 全部保留；U 轴（垂直）用于海拔卡尔曼 CA 注入（方向 3），
@@ -384,6 +355,11 @@ const CONFIG = {
   // 紧急快照 key：页面被强杀时 IndexedDB 异步写可能丢失，用 localStorage 同步兜底
   TRAIL_EMERGENCY_KEY: 'trailcraft_emergency',
 
+  // 轨迹持久化节流窗口（毫秒）：_trailDirty 置位后，至少间隔此时间才真正写盘。
+  // 避免长轨迹（数万点）每次采样都触发 IndexedDB 全量序列化写入。pagehide/停止记录/
+  // 恢复等关键点仍会强制立即保存（见 _forceSaveTrail）。
+  TRAIL_SAVE_THROTTLE_MS: 5000,
+
   // ----- Debug -----
   DEBUG: false,
 
@@ -391,6 +367,20 @@ const CONFIG = {
   MOBILE_BREAKPOINT: 480,
   DEFAULT_TOAST_DURATION: 3000,
   TOAST_FADE_MS: 300,
+};
+
+/**
+ * 全局日志代理（替代散落的 console.* 调用）。
+ * 受 CONFIG.DEBUG 控制：DEBUG=false 时 log/info/debug 静默，warn/error 始终输出（保留线上可观测性）。
+ * 用法：Logger.log(...) / Logger.warn(...) / Logger.error(...) 等。
+ */
+const Logger = {
+  _enabled() { return typeof CONFIG !== 'undefined' && CONFIG.DEBUG === true; },
+  log(...a)   { if (this._enabled()) console.log('[TraceCraft]', ...a); },
+  info(...a)  { if (this._enabled()) console.info('[TraceCraft]', ...a); },
+  debug(...a) { if (this._enabled()) console.debug('[TraceCraft]', ...a); },
+  warn(...a)  { console.warn('[TraceCraft]', ...a); },
+  error(...a) { console.error('[TraceCraft]', ...a); },
 };
 
 /**
@@ -407,17 +397,11 @@ function medianAbsDev(sortedArr, med) {
 }
 
 /**
- * 计算两点之间的球面距离（Haversine 公式）
+ * 计算两点之间的球面距离（Haversine 公式）。
+ * 单一实现来源：不依赖腾讯地图 SDK 加载时机，结果稳定可复现（与 SDK 实现有亚米级差异，
+ * 统一手写实现可避免"SDK 加载先后导致结果不一致"的隐患）。
  */
 function calcDistance(p1, p2) {
-  try {
-    if (typeof qq !== 'undefined' && qq.maps && qq.maps.spherical) {
-      return qq.maps.spherical.computeDistanceBetween(
-        new qq.maps.LatLng(p1.lat, p1.lng),
-        new qq.maps.LatLng(p2.lat, p2.lng)
-      );
-    }
-  } catch (_) {}
   const dLat = (p2.lat - p1.lat) * Math.PI / 180;
   const dLng = (p2.lng - p1.lng) * Math.PI / 180;
   const a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
@@ -427,18 +411,10 @@ function calcDistance(p1, p2) {
 }
 
 /**
- * 计算从 p1 到 p2 的方位角（正北顺时针）
+ * 计算从 p1 到 p2 的方位角（正北顺时针）。
+ * 单一实现来源：不依赖腾讯地图 SDK（见 calcDistance 说明）。
  */
 function calcBearing(p1, p2) {
-  try {
-    if (typeof qq !== 'undefined' && qq.maps && qq.maps.spherical) {
-      const h = qq.maps.spherical.computeHeading(
-        new qq.maps.LatLng(p1.lat, p1.lng),
-        new qq.maps.LatLng(p2.lat, p2.lng)
-      );
-      return ((h % 360) + 360) % 360;
-    }
-  } catch (_) {}
   const φ1 = p1.lat * Math.PI / 180;
   const φ2 = p2.lat * Math.PI / 180;
   const Δλ = (p2.lng - p1.lng) * Math.PI / 180;
@@ -536,8 +512,10 @@ function formatBeijing(ts, withDate = true) {
 }
 
 /**
- * 本地时区日期时间格式化（单一来源：详情弹窗、统计弹窗、导出报告共用）。
- * @param {number} ts 毫秒时间戳
+ * 日期时间格式化（单一来源：详情弹窗、统计弹窗、导出报告共用）。
+ * 统一使用东八区（北京时间）展示，与 formatBeijing 保持一致——全站时间给人看时
+ * 固定为北京时间，避免"同一 createdAt 在不同时区设备/弹窗显示不一致"。
+ * @param {number} ts 毫秒时间戳（UTC 绝对时间）
  * @param {Object} [opts]
  * @param {boolean} [opts.withSeconds=false] 是否输出秒
  * @param {boolean} [opts.shortDate=false] 短日期 "M/D"，否则 "YYYY-MM-DD"
@@ -548,14 +526,13 @@ function formatDateTime(ts, opts) {
   if (!ts) return '--';
   const d = new Date(ts);
   if (isNaN(d.getTime())) return '--';
-  const pad = (n) => String(n).padStart(2, '0');
+  const base = { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' };
   const datePart = o.shortDate
-    ? `${d.getMonth() + 1}/${d.getDate()}`
-    : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  const timePart = o.withSeconds
-    ? `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-    : `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  return `${datePart} ${timePart}`;
+    ? { month: 'numeric', day: 'numeric' }
+    : { year: 'numeric', month: '2-digit', day: '2-digit' };
+  const timePart = o.withSeconds ? { second: '2-digit' } : {};
+  const fmt = new Intl.DateTimeFormat('zh-CN', Object.assign({}, base, datePart, timePart));
+  return fmt.format(d);
 }
 
 /**

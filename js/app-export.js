@@ -486,7 +486,7 @@ App.prototype._exportReport = async function () {
       }
     }, 'image/png');
   } catch (e) {
-    console.error('[Export] 报告导出失败:', e);
+    Logger.error('[Export] 报告导出失败:', e);
     Toast.show(' 导出报告失败');
   }
 };
@@ -537,7 +537,7 @@ App.prototype._loadReportTiles = async function (tileRange, z, rect) {
         results[idx] = img;
       } catch (e) {
         results[idx] = null;
-        if (CONFIG.DEBUG) console.warn('[Report] 瓦片加载失败:', j.z, j.x, j.y, e.message);
+        if (CONFIG.DEBUG) Logger.warn('[Report] 瓦片加载失败:', j.z, j.x, j.y, e.message);
       }
     }
   });

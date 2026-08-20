@@ -4,14 +4,14 @@
 
 途刻 TraceCraft：一个**纯前端**的轨迹记录/回放 PWA（无构建工具、无框架、无测试套件），核心是腾讯地图 + GPS 追踪。根目录是可直接用静态服务器打开的 web 应用；`native/` 是 Capacitor 封装的 Android 壳（含 GNSS 卫星数据插件 `GnssData` 与 IMU 惯性传感器插件 `ImuData`）。
 
-**重要**：`native/web/` 是根目录资源的**手工同步副本**（当前与根目录不一致），用于打进 APK。修改根目录 `index.html`/`js/`/`css/` 后，如需发布 Android 版要手动把对应资源复制到 `native/web/`。
+**重要**：`native/web/` 是**构建产物**，由 CI（`.github/workflows/android-build.yml` 的「复制 Web 资源到 native/web/」步骤）在每次构建时用 `cp -R index.html js css native/web/` 自动从根目录最新源码覆盖生成并打进 APK。**开发者无需、也不应手工同步/提交 `native/web/`**（它已被 `.gitignore` 忽略）。修改根目录 `index.html`/`js/`/`css/` 后，直接推送即可触发 CI 重新打包。
 
 ## 常用命令
 
 无构建/打包步骤，web 端直接用任意静态服务器打开根目录即可调试（如 `npx serve .` 或 VS Code Live Server）。没有测试框架。
 
 - **开发运行（web）**：`npx serve .` 后浏览器打开 `http://localhost:3000`，或直接用 Live Server 打开 `index.html`。
-- **Android 打包**：`cd native && npm run build:plugin && npm run sync && npm run build:apk`（需要 Android SDK/Java；构建前先手动同步 web 资源到 `native/web/`）。
+- **Android 打包**：本地调试可 `cd native && npm run build:plugin && npm run sync && npm run build:apk`（需要 Android SDK/Java）。Web 资源由 CI 自动从根目录同步进 APK；本地构建也会经 `npm run sync` 覆盖 `native/web/`，无需手工复制。
 - **生成模拟轨迹测试数据**：浏览器控制台粘贴运行 `mock-data.js`（生成直线/折线/环线等模拟轨迹，用于无 GPS 环境测试回放与列表）。
 
 ## 架构总览

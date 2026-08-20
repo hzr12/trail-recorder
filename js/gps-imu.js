@@ -11,8 +11,8 @@
  * 职责收窄（本次重引入的唯一形态）：
  *  - 只消费 TYPE_LINEAR_ACCELERATION（去重力线性加速度）→ rotation 四元数旋转到 ENU
  *    地理系 → 滑窗均值（近 IMU_FEED_INTERVAL_MS 窗口，分桶环形缓冲持续输出）→ 一阶
- *    低通 → 供 GPSManager 在每次滤波 update 前 feedImu() 注入 ImmFilter CA 模型预测
- *    （仅运动学先验，GPS 仍是位置权威）。
+ *    低通 → 供 GPSManager 在每次滤波 update 前 feedImu() 注入离线 RTS 平滑器（KalmanFilter._offlineSmoother）的 CA 模型预测
+ *    （仅运动学先验，GPS 仍是位置权威；实时定位已改用原始单次定位，无实时 ImmFilter）。
  *  - 姿态-加速度时间对齐（方向 1）：插件下发 rotationTs（姿态事件时间戳，纳秒），
  *    此处维护带时间戳的姿态环形缓冲，旋转加速度时按加速度事件时间戳查询最近姿态，
  *    避免加速度被旋转到"错误时刻的姿态"（加速度与姿态来自不同传感器异步到达）。
@@ -177,7 +177,7 @@ class ImuManager {
         this._resetWindow();
         return true;
       } catch (err) {
-        if (CONFIG.DEBUG) console.warn('[IMU] 监听启动失败', err && err.message || err);
+        if (CONFIG.DEBUG) Logger.warn('[IMU] 监听启动失败', err && err.message || err);
         return false;
       } finally {
         this._starting = null;
@@ -350,7 +350,7 @@ class ImuManager {
     this._updateBiasStats(meanE, meanN, meanU);
 
     // 一阶低通（α=1 全信最新均值，α=0 保持旧值）+ 绝对安全上限限幅
-    // （注入前的速度分级 clamp 在 ImmFilter/AltKalmanFilter 侧按 GPS 速度动态收紧）
+    // （注入前的速度分级 clamp 在离线平滑器/AltKalmanFilter 侧按 GPS 速度动态收紧）
     // E/N 轴扣除在线零偏（biasReady 后启用）：剔除传感器固有直流偏移，防止持续虚假
     // 加速度注入 CA 预测导致长期漂移。U 轴偏置不在此扣除——它反映重力泄漏，交由
     // tiltLeakFactor 衰减水平注入（垂直 U 注入仍用原始均值，由 GPS 海拔权威零基准校正）。

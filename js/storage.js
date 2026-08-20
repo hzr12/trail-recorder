@@ -27,7 +27,7 @@ class Storage {
     }
 
     Storage._engineDetected = true;
-    if (CONFIG.DEBUG) console.info('[Storage] 轨迹存储引擎:', Storage._activeEngine);
+    if (CONFIG.DEBUG) Logger.info('[Storage] 轨迹存储引擎:', Storage._activeEngine);
     return Storage._activeEngine;
   }
 
@@ -83,13 +83,13 @@ class Storage {
         // 避免外部（loadTrail 等）在迁移完成前读到空数据
         Storage._migrateFromLocalStorage(Storage._db)
           .catch(err => {
-            console.warn('[Storage] 数据迁移失败:', err.message);
+            Logger.warn('[Storage] 数据迁移失败:', err.message);
           })
           .then(() => resolve(Storage._db));
       };
 
       request.onerror = (e) => {
-        console.warn('[Storage] IndexedDB 打开失败:', e.target.error);
+        Logger.warn('[Storage] IndexedDB 打开失败:', e.target.error);
         Storage._dbInitPromise = null;
         reject(e.target.error);
       };
@@ -130,7 +130,7 @@ class Storage {
           write.then(() => {
             try {
               localStorage.removeItem(Storage.TRAIL_KEY);
-              console.info('[Storage] 轨迹数据已迁移到 IndexedDB（', positions.length, '点）');
+              Logger.info('[Storage] 轨迹数据已迁移到 IndexedDB（', positions.length, '点）');
             } catch (_) {}
             resolve();
           }).catch(() => resolve());
@@ -190,7 +190,7 @@ class Storage {
         const step = Math.ceil(workingPositions.length / keepCount);
         workingPositions = workingPositions.filter((_, i) => i % step === 0);
         estimatedSize = Storage._estimateSize(workingPositions);
-        console.warn('[Storage] IndexedDB 轨迹超配额（', positions.length, '点），已抽稀至', workingPositions.length, '点');
+        Logger.warn('[Storage] IndexedDB 轨迹超配额（', positions.length, '点），已抽稀至', workingPositions.length, '点');
       }
 
       const trailData = {
@@ -206,9 +206,9 @@ class Storage {
       return Storage._saveToIndexedDB(trailData)
         .then(() => true)
         .catch(err => {
-          console.warn('[Storage] IndexedDB 保存失败:', err.message);
+          Logger.warn('[Storage] IndexedDB 保存失败:', err.message);
           if (Storage._activeEngine === 'indexeddb' && CONFIG.TRAIL_STORAGE_ENGINE === 'auto' && !Storage._fallbackAttempted) {
-            console.info('[Storage] IndexedDB 失败，降级到 localStorage');
+            Logger.info('[Storage] IndexedDB 失败，降级到 localStorage');
             Storage._fallbackAttempted = true;
             Storage._activeEngine = 'localstorage';
             return Storage._localStorageStore.save(trail);
@@ -233,9 +233,9 @@ class Storage {
           };
         })
         .catch(err => {
-          console.warn('[Storage] IndexedDB 恢复失败:', err.message);
+          Logger.warn('[Storage] IndexedDB 恢复失败:', err.message);
           if (Storage._activeEngine === 'indexeddb' && CONFIG.TRAIL_STORAGE_ENGINE === 'auto') {
-            console.info('[Storage] 降级到 localStorage 读取');
+            Logger.info('[Storage] 降级到 localStorage 读取');
             Storage._activeEngine = 'localstorage';
             return Storage._localStorageStore.load();
           }
@@ -296,25 +296,25 @@ class Storage {
           const keepCount = Math.max(10, Math.floor(workingPositions.length * ratio));
           const step = Math.ceil(workingPositions.length / keepCount);
           workingPositions = workingPositions.filter((_, i) => i % step === 0);
-          console.warn('[Storage] localStorage 超配额（', positions.length, '点），已抽稀至', workingPositions.length, '点');
+          Logger.warn('[Storage] localStorage 超配额（', positions.length, '点），已抽稀至', workingPositions.length, '点');
 
           try {
             const encodedHalf = Storage._encodeTrail(workingPositions);
             localStorage.setItem(Storage.TRAIL_KEY, encodedHalf);
             return Promise.resolve(true);
           } catch (e2) {
-            console.warn('[Storage] localStorage 抽稀保存也失败:', e2.message);
+            Logger.warn('[Storage] localStorage 抽稀保存也失败:', e2.message);
           }
         } else {
-          console.warn('[Storage] localStorage 保存失败:', e.message);
+          Logger.warn('[Storage] localStorage 保存失败:', e.message);
         }
 
         if (Storage._activeEngine === 'localstorage' && CONFIG.TRAIL_STORAGE_ENGINE === 'auto' && Storage._isIndexedDBAvailable() && !Storage._fallbackAttempted) {
-          console.info('[Storage] localStorage 失败，回退到 IndexedDB');
+          Logger.info('[Storage] localStorage 失败，回退到 IndexedDB');
           Storage._fallbackAttempted = true;
           Storage._activeEngine = 'indexeddb';
           return Storage._indexedDBStore.save(trail).catch(err => {
-            console.warn('[Storage] IndexedDB 降级保存也失败:', err.message);
+            Logger.warn('[Storage] IndexedDB 降级保存也失败:', err.message);
             return false;
           });
         }
@@ -388,7 +388,7 @@ class Storage {
 
         return null;
       } catch (e) {
-        console.warn('[Storage] localStorage 恢复失败:', e.message);
+        Logger.warn('[Storage] localStorage 恢复失败:', e.message);
         return null;
       }
     },
@@ -461,7 +461,7 @@ class Storage {
     Storage._activeEngine = null;
     Storage._fallbackAttempted = false;
     const resolved = Storage._resolveEngine();
-    if (CONFIG.DEBUG) console.info('[Storage] 切换存储引擎:', resolved);
+    if (CONFIG.DEBUG) Logger.info('[Storage] 切换存储引擎:', resolved);
   }
 
   static getEngine() {
@@ -534,7 +534,7 @@ class Storage {
         transaction.onerror = (e) => reject(e.target.error);
       });
     }).catch(err => {
-      console.warn('[Storage] 轨迹列表保存失败:', err.message);
+      Logger.warn('[Storage] 轨迹列表保存失败:', err.message);
       return null;
     });
   }
@@ -566,7 +566,7 @@ class Storage {
       // 旧库（v1）回退：遍历 trail store 提取 meta，并在返回后懒迁移到 meta store
       return Storage._loadTrailListFromTrail(db);
     }).catch(err => {
-      console.warn('[Storage] 加载轨迹列表失败:', err.message);
+      Logger.warn('[Storage] 加载轨迹列表失败:', err.message);
       return [];
     });
   }
@@ -623,7 +623,7 @@ class Storage {
           Storage._migrateMeta(toMigrate).then(() => {
             Storage._markMetaMigrated();
           }).catch(err => {
-            if (CONFIG.DEBUG) console.warn('[Storage] meta 懒迁移失败:', err.message);
+            if (CONFIG.DEBUG) Logger.warn('[Storage] meta 懒迁移失败:', err.message);
           });
         } else {
           // 无待迁移记录也视为迁移完成，避免每次加载都回退扫描 trail store
@@ -727,7 +727,7 @@ class Storage {
         request.onerror = (e) => reject(e.target.error);
       });
     }).catch(err => {
-      console.warn('[Storage] 加载轨迹失败:', err.message);
+      Logger.warn('[Storage] 加载轨迹失败:', err.message);
       return null;
     });
   }
@@ -769,7 +769,7 @@ class Storage {
         transaction.onerror = (e) => reject(e.target.error);
       });
     }).catch(err => {
-      console.warn('[Storage] 批量加载轨迹失败:', err.message);
+      Logger.warn('[Storage] 批量加载轨迹失败:', err.message);
       return [];
     });
   }
@@ -814,7 +814,7 @@ class Storage {
         transaction.onerror = (e) => reject(e.target.error);
       });
     }).catch(err => {
-      console.warn('[Storage] 删除轨迹失败:', err.message);
+      Logger.warn('[Storage] 删除轨迹失败:', err.message);
       return false;
     });
   }
@@ -854,7 +854,7 @@ class Storage {
         transaction.onerror = (e) => reject(e.target.error);
       });
     }).catch(err => {
-      console.warn('[Storage] 重命名失败:', err.message);
+      Logger.warn('[Storage] 重命名失败:', err.message);
       return false;
     });
   }
@@ -890,7 +890,7 @@ class Storage {
         request.onerror = (e) => reject(e.target.error);
       });
     }).catch(err => {
-      console.warn('[Storage] 切换收藏失败:', err.message);
+      Logger.warn('[Storage] 切换收藏失败:', err.message);
       return false;
     });
   }
@@ -938,7 +938,7 @@ class Storage {
         request.onerror = (e) => reject(e.target.error);
       });
     }).catch(err => {
-      console.warn('[Storage] 更新轨迹失败:', err.message);
+      Logger.warn('[Storage] 更新轨迹失败:', err.message);
       return false;
     });
   }
@@ -982,7 +982,7 @@ class Storage {
     if (bytes.length < 4 || bytes[0] !== 67 || bytes[1] !== 84 || bytes[2] !== 49) return null;
     const ver = bytes[3];
     if (ver !== 1 && ver !== 2) {
-      console.warn('[Storage] 轨迹格式版本不兼容:', ver, '（当前', Storage._TRAIL_VERSION, '）');
+      Logger.warn('[Storage] 轨迹格式版本不兼容:', ver, '（当前', Storage._TRAIL_VERSION, '）');
       return null;
     }
     const PB = Storage._TRAIL_POINT_BYTES;
