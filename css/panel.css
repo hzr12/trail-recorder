@@ -108,11 +108,7 @@
 /* ---------- 通用玻璃卡片（毛玻璃 + 反光条 + 悬浮发光） ---------- */
 .panel-card {
   position: relative;
-  /* 卡片底色 + 磨砂噪点纹理（G1）：噪点叠加制造真实玻璃颗粒感，避免纯色塑料感 */
   background-color: rgba(18, 28, 50, 0.55);
-  background-image: var(--glass-noise);
-  background-blend-mode: overlay;
-  background-size: 120px 120px;
   -webkit-backdrop-filter: blur(14px) saturate(160%);
   backdrop-filter: blur(14px) saturate(160%);
   border: 1px solid rgba(255, 255, 255, 0.10);
