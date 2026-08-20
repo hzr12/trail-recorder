@@ -270,10 +270,21 @@ const CONFIG = {
   // 计划 #2：HDOP 实时调制观测噪声 R【已弃用，实时滤波删除后无引用】
   IMM_HDOP_R_POW: 1.3,             // 【已弃用】HDOP→R 的指数（>1 放大弱信号惩罚）
   IMM_HDOP_R_MAX: 6,               // 【已弃用】HDOP 调制 R 的上限，防极端值炸裂
-  // 计划 #6：多频/双频 GNSS 融合（可用即用、不可用降级单频）
-  // GNSS_DUALBAND_* 仍被 GPSManager.dualBandAvailable 使用（原生端卫星统计，与实时滤波解耦），保留。
+  // ----- 模块4：多星座（Multi-GNSS）独立约束 -----
+  // 核心：区分"4 颗全在一个星座"(几何弱) 与 "4 颗分布 4 星座"(几何鲁棒)。
+  // 仅原生端生效（浏览器不暴露星座/频段，_computeSatStats 不跑 → 零回归）。
+  GNSS_MULTI_CONST: {
+    ENABLED: true,                  // 总开关
+    MIN_PER_CONST: 1,               // 每个参与星座至少需 1 颗加权有效星，否则该星座视为不可信
+    MIN_CONST_FOR_TRUST: 2,         // 可信解算至少需 2 个独立星座（单星座几何弱）
+    SINGLE_CONST_PENALTY: 0.6,      // 仅单星座(且总星数达门槛)时，qualScore 乘此惩罚 → 平滑自动收紧
+    GDOP_FLOOR_CONST: 4,            // 单星座可用星数下限：低于则几何差，触发弱信号
+  },
+
+  // ----- 计划 #6：多频/双频 GNSS 融合（可用即用、不可用降级单频）-----
+  // GNSS_DUALBAND_* 仍被 GPSManager.dualBandAvailable / _starWeight 使用（原生端卫星统计，与实时滤波解耦），保留。
   GNSS_DUALBAND_ENABLED: true,     // 总开关；false → 全程按单频处理
-  GNSS_DUALBAND_R_SCALE: 0.7,      // 双频卫星观测噪声缩放（<1 更可信），与 HDOP 因子相乘
+  GNSS_DUALBAND_R_SCALE: 0.7,      // 双频卫星观测噪声缩放（<1 更可信）：_starWeight 中权重 w /= R_SCALE（封顶 1）
 
   // ----- IMU 惯性导航融合（仅定位校准：加速度注入辅助滤波，不做航迹推算）-----
   // 职责收窄：只消费 TYPE_LINEAR_ACCELERATION（去重力线性加速度），用 rotation 四元数

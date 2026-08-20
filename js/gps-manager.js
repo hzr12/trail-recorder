@@ -728,9 +728,13 @@ class GPSManager {
     const ggaFix = this.ggaFixValid;
     const ggaFixOk = ggaFix == null ? true : ggaFix;
     // 信号好：卫星数达标，且 HDOP 在阈值内（HDOP 缺失但有 RMC 有效定位时放行），且 GGA fix 有效
+    // 模块4：单星座（达标星座数<MIN_CONST_FOR_TRUST）且 HDOP 缺失 → 几何弱，不放行 native（浏览器混合定位可能更稳）
+    const sat = this._satStatsCache;
+    const singleConstNoHdop = !!sat && sat.multiSingle && hdop == null &&
+      CONFIG.GNSS_MULTI_CONST.ENABLED;
     const gnssGood = used >= CONFIG.GPS_TAKEOVER_MIN_SATS &&
       ggaFixOk &&
-      (hdop == null ? rmcValid : hdop <= CONFIG.GPS_TAKEOVER_HDOP);
+      (hdop == null ? (rmcValid && !singleConstNoHdop) : hdop <= CONFIG.GPS_TAKEOVER_HDOP);
     const hold = Math.max(1, Math.round(CONFIG.GPS_SOURCE_HOLD_MS / 1000));
     if (gnssGood) {
       this._sourceBrowserCnt = 0;
@@ -918,7 +922,7 @@ class GPSManager {
   }
 
   _computeSatStats(satellites) {
-    const stats = { used: 0, visible: 0, snrSum: 0, avgSnr: 0, weightedUsed: 0, weightedSnrSum: 0, weightedAvgSnr: 0, consts: { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 }, usedConsts: { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 } };
+    const stats = { used: 0, visible: 0, snrSum: 0, avgSnr: 0, weightedUsed: 0, weightedSnrSum: 0, weightedAvgSnr: 0, consts: { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 }, usedConsts: { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 }, constEff: { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 } };
     if (!satellites || satellites.length === 0) return stats;
     // 模块3：随速度自适应的仰角掩码 / C/N0 门限（弱信号或低质量 fix 时套用最严档）
     const mask = this._selectElevMask();
@@ -940,19 +944,20 @@ class GPSManager {
         const w = this._starWeight(s, mask, cn0Min, cn0High);
         stats.weightedUsed += w;
         stats.weightedSnrSum += (s.cn0DbHz || 0) * w;
+        // 模块4：逐星座加权有效星数（用于多星座独立约束：每星座最小星数保障 + 几何最弱环）
         switch (c) {
-          case 'GPS': stats.usedConsts.gps++; break;
-          case 'BEIDOU': stats.usedConsts.beidou++; break;
-          case 'GLONASS': stats.usedConsts.glonass++; break;
-          case 'GALILEO': stats.usedConsts.galileo++; break;
-          default: stats.usedConsts.other++; break;
+          case 'GPS': stats.usedConsts.gps++; stats.constEff.gps += w; break;
+          case 'BEIDOU': stats.usedConsts.beidou++; stats.constEff.beidou += w; break;
+          case 'GLONASS': stats.usedConsts.glonass++; stats.constEff.glonass += w; break;
+          case 'GALILEO': stats.usedConsts.galileo++; stats.constEff.galileo += w; break;
+          default: stats.usedConsts.other++; stats.constEff.other += w; break;
         }
       }
     }
     stats.visible = satellites.length;
     stats.avgSnr = stats.used > 0 ? stats.snrSum / stats.used : 0;
     stats.weightedAvgSnr = stats.weightedUsed > 0 ? stats.weightedSnrSum / stats.weightedUsed : 0;
-    // 计划 #6：双频探测——同系统存在 L5(≈1176.45MHz) 与 L1(≈1575.42MHz) 观测
+    // 计划 #6：双频探测（芯片级：同系统 L1 与 L5/E5 共存）
     let hasL1 = false, hasL5 = false;
     for (const s of satellites) {
       const f = s.carrierFreqHz;
@@ -962,13 +967,27 @@ class GPSManager {
       }
     }
     stats.dualBand = hasL1 && hasL5;
-    // 模块1：GNSS 质量评分（反哺平滑强度），归一化 0~1
+    // 模块4：多星座独立约束统计
     const usedConsts = stats.usedConsts;
+    const MIN = CONFIG.GNSS_MULTI_CONST.MIN_PER_CONST;
+    // 达标星座数：每星座加权有效星数 >= MIN_PER_CONST
+    stats.trustedConstCount = ['gps', 'beidou', 'glonass', 'galileo', 'other']
+      .filter(k => stats.constEff[k] >= MIN).length;
+    // 几何最弱环：参与定位星座中加权有效星最少的那个的星数（单星座几何差判定用）
+    const perConstEff = ['gps', 'beidou', 'glonass', 'galileo', 'other']
+      .map(k => stats.constEff[k]).filter(n => n >= MIN);
+    stats.minConstEff = perConstEff.length ? Math.min(...perConstEff) : 0;
+    stats.multiSingle = stats.trustedConstCount < CONFIG.GNSS_MULTI_CONST.MIN_CONST_FOR_TRUST;
+    // 模块1：GNSS 质量评分（反哺平滑强度），归一化 0~1
     const constCount = ['gps', 'beidou', 'glonass', 'galileo'].filter(k => (usedConsts[k] || 0) > 0).length;
     // 模块3：质量评分改用加权有效星数（低仰角/低 C/N0 星被降权，反映真实可用星）
     let q = stats.effUsed * CONFIG.GNSS_QUAL.USED_W
           + (constCount - 1) * CONFIG.GNSS_QUAL.CONST_DIV_W
           + (stats.dualBand ? CONFIG.GNSS_QUAL.DUALBAND_W : 0);
+    // 模块4：仅单星座(且总星数达门槛) → 几何弱，qualScore 惩罚 → 平滑自动收紧
+    if (stats.multiSingle && stats.effUsed >= CONFIG.GNSS_QUAL.WEAK_USED_MAX) {
+      q *= CONFIG.GNSS_MULTI_CONST.SINGLE_CONST_PENALTY;
+    }
     stats.qualScore = Math.max(0, Math.min(1, q / CONFIG.GNSS_QUAL.MAX));
     // 模块3：弱信号判定改用加权有效星数（低仰角/低 C/N0 星被降权，不被虚高卫星数误导）
     stats.effUsed = stats.weightedUsed;
@@ -1059,6 +1078,9 @@ class GPSManager {
     }
     const used = this.gnssWeightedUsedCount;   // 模块3：加权有效星数
     const snr = this.gnssWeightedAvgSnr;        // 模块3：加权平均 SNR
+    const sat = this._satStatsCache;
+    // 模块4：多星座几何弱——单星座(达标星座数<2)且最弱环星数不足 GDOP_FLOOR_CONST → 视为弱信号
+    const multiWeak = !!sat && sat.multiSingle && sat.minConstEff < CONFIG.GNSS_MULTI_CONST.GDOP_FLOOR_CONST;
     if (this._weakSignal) {
       if (used >= CONFIG.GNSS_RECOVER_USED_MIN && snr >= CONFIG.GNSS_RECOVER_SNR_MIN) {
         this._strongCnt++;
@@ -1069,7 +1091,7 @@ class GPSManager {
         this._exitWeakSignal();
       }
     } else {
-      if (used < CONFIG.GNSS_WEAK_USED_MAX && snr < CONFIG.GNSS_WEAK_SNR_MAX) {
+      if ((used < CONFIG.GNSS_WEAK_USED_MAX && snr < CONFIG.GNSS_WEAK_SNR_MAX) || multiWeak) {
         this._weakCnt++;
       } else {
         this._weakCnt = Math.max(0, this._weakCnt - 1);
@@ -1825,6 +1847,20 @@ class GPSManager {
   get dualBandAvailable() {
     if (CONFIG.GNSS_DUALBAND_ENABLED === false) return false;
     return !!(this._satStatsCache && this._satStatsCache.dualBand);
+  }
+
+  /**
+   * 模块4：达标星座数（每星座加权有效星数 ≥ MIN_PER_CONST）。单星座几何弱时为 1。
+   */
+  get gnssTrustedConstCount() {
+    return this._satStatsCache ? (this._satStatsCache.trustedConstCount || 0) : 0;
+  }
+
+  /**
+   * 模块4：几何最弱环星数（参与定位星座中加权有效星最少的那个）。供弱信号/源决策使用。
+   */
+  get gnssMinConstEff() {
+    return this._satStatsCache ? (this._satStatsCache.minConstEff || 0) : 0;
   }
 
   /**
