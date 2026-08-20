@@ -331,3 +331,30 @@
     right: 480px;
   }
 }
+
+/* ---------- 无障碍：尊重系统的"减少动态效果"偏好 ---------- */
+/* 关闭流光/呼吸/弹性动画，仅保留必要过渡，避免眩晕（G12） */
+@media (prefers-reduced-motion: reduce) {
+  .bottom-panel::before {
+    animation: none;
+  }
+  .gps-dot.tracking,
+  .gps-dot.tracking::after {
+    animation: none;
+  }
+  .panel-card,
+  .bottom-panel .panel-body,
+  .bottom-panel .panel-header,
+  .bottom-panel .panel-body > .tab-pane {
+    animation: none !important;
+    transition: opacity 0.2s ease !important;
+  }
+  .bottom-panel {
+    transition: max-height 0.2s ease, box-shadow 0.2s ease;
+  }
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+  }
+}

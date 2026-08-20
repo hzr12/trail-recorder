@@ -22,12 +22,24 @@
   -webkit-overflow-scrolling: touch;
   scroll-behavior: smooth;
   overscroll-behavior: contain;
-  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+  transition: max-height 0.42s cubic-bezier(0.34, 1.56, 0.64, 1),
               box-shadow 0.35s ease;
 }
 
 .bottom-panel.collapsed {
   max-height: 48px;
+}
+
+/* 收起时面板体淡出 + 下沉，避免内容被裁切突兀（G3） */
+.bottom-panel .panel-body,
+.bottom-panel .panel-header {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+.bottom-panel.collapsed .panel-body,
+.bottom-panel.collapsed .panel-header {
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
 }
 
 /* 面板顶部流动双色光带：让面板"活"起来（G2 流光） */
