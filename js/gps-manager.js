@@ -628,6 +628,7 @@ class GPSManager {
         geoidSep: isNaN(geoidSep) ? null : geoidSep,
         lat: lat,
         lng: lng,
+        fixQuality: Number.isInteger(fixQuality) ? fixQuality : null,
         fixValid: Number.isInteger(fixQuality) && fixQuality > 0,
         receivedAt: Date.now()
       };
@@ -1029,11 +1030,14 @@ class GPSManager {
   }
 
   /**
-   * 仰角掩码选择器：按速度自适应（模块3 速度自适应部分）。
-   * 弱信号时套用最严档（疑似峡谷/多径）。
+   * 仰角掩码选择器（B 多径抑制，无 UI）：
+   * - 弱信号 / fixQuality≤1（SPS 无差分）→ 套用最严档（疑似峡谷/多径）
+   * - 否则按速度自适应
    */
   _selectElevMask() {
     if (this._weakSignal) return CONFIG.GNSS_ELEV_MASK_FAST;
+    const fq = this.ggaFixQuality;
+    if (fq != null && fq <= 1) return CONFIG.GNSS_ELEV_MASK_FAST;
     return this._adaptiveElevMask();
   }
 
@@ -2117,6 +2121,16 @@ class GPSManager {
     if (!this._lastGga) return null;
     if (Date.now() - this._lastGga.receivedAt > CONFIG.NMEA_GGA_MAX_AGE_MS) return null;
     return this._lastGga.fixValid;
+  }
+
+  /**
+   * $GPGGA 定位质量指示（fixQuality 数值：0=无效,1=单点SPS,2=DGPS,4=RTK浮点,5=RTK固定…）。
+   * 过期/缺失返回 null。模块3 多径抑制用：fixQuality≤1（单点无差分）视为疑似多径 → 收紧仰角掩码。
+   */
+  get ggaFixQuality() {
+    if (!this._lastGga) return null;
+    if (Date.now() - this._lastGga.receivedAt > CONFIG.NMEA_GGA_MAX_AGE_MS) return null;
+    return this._lastGga.fixQuality != null ? this._lastGga.fixQuality : null;
   }
 
   /**
