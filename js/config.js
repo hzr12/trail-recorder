@@ -223,7 +223,25 @@ const CONFIG = {
     QUAL_DUALBAND_MAD_K: 4,      // 双频/星多可用时放宽 Hampel（点更可信，少丢有效点）
     QUAL_WEAK_MAD_K: 2,          // 弱信号（星少单频）时收紧 Hampel（更信模型）
     QUAL_WEAK_STATIC_RATIO: 0.7, // 弱信号时更易判定静止（防抖动拖影）
+    // 模块3：卫星加权（仰角掩码 + C/N0 加权），由速度因子自适应插值（见 GNSS_* 配置）
+    ADAPTIVE_WEIGHT: true,       // 启用逐星权重（web 端无 elevation 时自动退化为仅 C/N0）
+    WEIGHT_ELEV_FLOOR: 0.3,      // 低仰角星最低权重（仰角≥mask 时从 floor 升到 1）
+    WEIGHT_ELEV_SPAN_DEG: 60,    // 仰角从 mask 升到满权所需跨度（度）
   },
+
+  // ----- 模块3：卫星加权速度自适应（仰角掩码 + C/N0 门限随速度插值）-----
+  // 低速（步行）保卫星数：掩码放宽、C/N0 门限低；
+  // 高速（驾车/高铁）保信号干净：掩码收紧、C/N0 门限高，压多径。
+  GNSS_SPEED_SLOW_MAX: 2,        // ≤此速度(m/s)视为步行/静止 → 取 slow 档参数
+  GNSS_SPEED_FAST_MIN: 15,       // ≥此速度(m/s)视为驾车/高铁 → 取 fast 档参数
+  GNSS_SPEED_HYST: 2,            // 速度因子滞回带(m/s)，防档位边缘颤动
+  GNSS_ELEV_MASK_SLOW: 3,        // 步行仰角掩码(度)：尽量多收星
+  GNSS_ELEV_MASK_FAST: 25,       // 驾车仰角掩码(度)：收紧压多径
+  GNSS_CN0_MIN_SLOW: 15,         // 步行 C/N0 门限(dB-Hz)：弱星也接纳
+  GNSS_CN0_MIN_FAST: 28,         // 驾车 C/N0 门限(dB-Hz)：只留强星
+  GNSS_CN0_LERP_LOW: 18,         // C/N0 权重起算点(dB-Hz，固定)
+  GNSS_CN0_LERP_HIGH_SLOW: 30,   // 步行 C/N0 达此值即满权
+  GNSS_CN0_LERP_HIGH_FAST: 40,   // 驾车 C/N0 需达此值才满权
 
   // ----- IMM 交互式多模型滤波【实时定位，已弃用】-----
   // 实时 2D 位置滤波已硬删（蓝点=原始单次定位，消除高铁/隧道场景系统性外推漂移）。

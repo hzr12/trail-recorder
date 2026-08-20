@@ -50,6 +50,7 @@ class GPSManager {
     this._weakEvalId = null;        // 弱信号状态机常驻重算定时器（与卫星事件流解耦，防事件停推时徽章冻结）
     this._lastVtg = null;          // 最近一条 $GPVTG 航向/速度（VTG 优先源）
     this._smoothSpeed = null;      // 模块2：一阶低通后的平滑速度（抑制低速抖动锯齿）
+    this._lastSpeedT = 0.3;        // 模块3：速度因子上次值（滞回防颤），初始偏慢保星
     this._staticCnt = 0;           // 模块2：连续低速帧计数（ZUPT 钉零速）
     this._utcOffsetMs = 0;         // 设备时钟校准偏移（RMC UTC - 本地时钟，±12h 过滤）
     this._lastUtcReceivedAt = 0;   // 上次采纳 UTC 的时间（防旧 NMEA 回灌）
@@ -914,8 +915,12 @@ class GPSManager {
   }
 
   _computeSatStats(satellites) {
-    const stats = { used: 0, visible: 0, snrSum: 0, avgSnr: 0, consts: { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 }, usedConsts: { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 } };
+    const stats = { used: 0, visible: 0, snrSum: 0, avgSnr: 0, weightedUsed: 0, weightedSnrSum: 0, weightedAvgSnr: 0, consts: { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 }, usedConsts: { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 } };
     if (!satellites || satellites.length === 0) return stats;
+    // 模块3：随速度自适应的仰角掩码 / C/N0 门限（弱信号或低质量 fix 时套用最严档）
+    const mask = this._selectElevMask();
+    const cn0Min = this._adaptiveCn0Min();
+    const cn0High = this._adaptiveCn0LerpHigh();
     for (const s of satellites) {
       const c = s.constellation;
       switch (c) {
@@ -928,6 +933,10 @@ class GPSManager {
       if (s.usedInFix) {
         stats.used++;
         stats.snrSum += s.cn0DbHz || 0;
+        // 模块3：逐星权重（仰角掩码 + C/N0 加权），累加权有效星数与加权 SNR
+        const w = this._starWeight(s, mask, cn0Min, cn0High);
+        stats.weightedUsed += w;
+        stats.weightedSnrSum += (s.cn0DbHz || 0) * w;
         switch (c) {
           case 'GPS': stats.usedConsts.gps++; break;
           case 'BEIDOU': stats.usedConsts.beidou++; break;
@@ -939,6 +948,7 @@ class GPSManager {
     }
     stats.visible = satellites.length;
     stats.avgSnr = stats.used > 0 ? stats.snrSum / stats.used : 0;
+    stats.weightedAvgSnr = stats.weightedUsed > 0 ? stats.weightedSnrSum / stats.weightedUsed : 0;
     // 计划 #6：双频探测——同系统存在 L5(≈1176.45MHz) 与 L1(≈1575.42MHz) 观测
     let hasL1 = false, hasL5 = false;
     for (const s of satellites) {
@@ -952,12 +962,79 @@ class GPSManager {
     // 模块1：GNSS 质量评分（反哺平滑强度），归一化 0~1
     const usedConsts = stats.usedConsts;
     const constCount = ['gps', 'beidou', 'glonass', 'galileo'].filter(k => (usedConsts[k] || 0) > 0).length;
-    let q = stats.used * CONFIG.GNSS_QUAL.USED_W
+    // 模块3：质量评分改用加权有效星数（低仰角/低 C/N0 星被降权，反映真实可用星）
+    let q = stats.effUsed * CONFIG.GNSS_QUAL.USED_W
           + (constCount - 1) * CONFIG.GNSS_QUAL.CONST_DIV_W
           + (stats.dualBand ? CONFIG.GNSS_QUAL.DUALBAND_W : 0);
     stats.qualScore = Math.max(0, Math.min(1, q / CONFIG.GNSS_QUAL.MAX));
-    stats.weak = stats.used < CONFIG.GNSS_QUAL.WEAK_USED_MAX; // 弱信号标记（供平滑收紧）
+    // 模块3：弱信号判定改用加权有效星数（低仰角/低 C/N0 星被降权，不被虚高卫星数误导）
+    stats.effUsed = stats.weightedUsed;
+    stats.weak = stats.effUsed < CONFIG.GNSS_QUAL.WEAK_USED_MAX; // 弱信号标记（供平滑收紧）
     return stats;
+  }
+
+  // ----- 模块3：卫星加权（仰角掩码 + C/N0 加权）速度自适应 -----
+
+  /**
+   * 速度因子 t∈[0,1]：0=慢(步行) 1=快(驾车/高铁)。
+   * 复用 _smoothSpeed（已一阶低通），并加滞回防止档位边缘颤动。
+   * 无平滑速度时返回偏慢值（保卫星数优先）。
+   */
+  _speedFactor() {
+    const v = this._smoothSpeed;
+    if (v == null || !Number.isFinite(v)) return this._lastSpeedT; // 无估计→维持上次，避免初值跳变
+    const s = CONFIG.GNSS_SPEED_SLOW_MAX, f = CONFIG.GNSS_SPEED_FAST_MIN, hyst = CONFIG.GNSS_SPEED_HYST;
+    // 滞回：已 FAST 需降到 f-hyst 才退出；已 SLOW 需超过 s+hyst 才进入
+    if (this._lastSpeedT >= 1 && v >= f - hyst) { this._lastSpeedT = 1; return 1; }
+    if (this._lastSpeedT <= 0 && v <= s + hyst) { this._lastSpeedT = 0; return 0; }
+    const t = v <= s ? 0 : v >= f ? 1 : (v - s) / (f - s);
+    this._lastSpeedT = t;
+    return t;
+  }
+
+  /** 仰角掩码随速度插值（度）：低速放宽保星、高速收紧压多径 */
+  _adaptiveElevMask() {
+    const t = this._speedFactor();
+    return CONFIG.GNSS_ELEV_MASK_SLOW + t * (CONFIG.GNSS_ELEV_MASK_FAST - CONFIG.GNSS_ELEV_MASK_SLOW);
+  }
+  /** C/N0 门限随速度插值（dB-Hz） */
+  _adaptiveCn0Min() {
+    const t = this._speedFactor();
+    return CONFIG.GNSS_CN0_MIN_SLOW + t * (CONFIG.GNSS_CN0_MIN_FAST - CONFIG.GNSS_CN0_MIN_SLOW);
+  }
+  /** C/N0 满权线随速度插值（dB-Hz） */
+  _adaptiveCn0LerpHigh() {
+    const t = this._speedFactor();
+    return CONFIG.GNSS_CN0_LERP_HIGH_SLOW + t * (CONFIG.GNSS_CN0_LERP_HIGH_FAST - CONFIG.GNSS_CN0_LERP_HIGH_SLOW);
+  }
+
+  /**
+   * 单星权重 0~1：仰角掩码剔除低仰角星 + C/N0 加权。
+   * web 端 s.elevation 为 undefined → 退化为仅 C/N0 加权（elevW=1），无 elevation 数据不报错。
+   * @returns {number} 0 表示剔除（低于掩码或低于 C/N0 门限）
+   */
+  _starWeight(s, mask, cn0Min, cn0High) {
+    // 仰角权重
+    let elevW = 1;
+    if (typeof s.elevation === 'number') {
+      if (s.elevation < mask) return 0;                  // 低于掩码直接剔除（多径最重）
+      const span = CONFIG.WEIGHT_ELEV_SPAN_DEG;
+      elevW = Math.min(1, CONFIG.WEIGHT_ELEV_FLOOR + (1 - CONFIG.WEIGHT_ELEV_FLOOR) * (s.elevation - mask) / span);
+    }
+    // C/N0 权重
+    const c = s.cn0DbHz || 0;
+    if (c < cn0Min) return 0;                            // 低于门限剔除
+    const cn0W = c >= cn0High ? 1 : (c - cn0Min) / (cn0High - cn0Min);
+    return elevW * cn0W;
+  }
+
+  /**
+   * 仰角掩码选择器：按速度自适应（模块3 速度自适应部分）。
+   * 弱信号时套用最严档（疑似峡谷/多径）。
+   */
+  _selectElevMask() {
+    if (this._weakSignal) return CONFIG.GNSS_ELEV_MASK_FAST;
+    return this._adaptiveElevMask();
   }
 
   /**
@@ -974,8 +1051,8 @@ class GPSManager {
       this._resetWeakSignalState();
       return;
     }
-    const used = this.gnssUsedCount;
-    const snr = this.gnssAvgSnr;
+    const used = this.gnssWeightedUsedCount;   // 模块3：加权有效星数
+    const snr = this.gnssWeightedAvgSnr;        // 模块3：加权平均 SNR
     if (this._weakSignal) {
       if (used >= CONFIG.GNSS_RECOVER_USED_MIN && snr >= CONFIG.GNSS_RECOVER_SNR_MIN) {
         this._strongCnt++;
@@ -1700,6 +1777,25 @@ class GPSManager {
    */
   get gnssUsedCount() {
     return this._satStatsCache ? this._satStatsCache.used : 0;
+  }
+
+  /**
+   * 模块3：加权有效卫星数（低仰角/低 C/N0 星被降权后，回退到 raw used 的稳健值）。
+   * web 端无 elevation → weightedUsed≈used（仅 C/N0 加权），数值略小但仍反映可用星。
+   */
+  get gnssWeightedUsedCount() {
+    const s = this._satStatsCache;
+    if (!s) return 0;
+    return s.weightedUsed > 0 ? s.weightedUsed : (s.used || 0);
+  }
+
+  /**
+   * 模块3：加权平均信噪比 (dB-Hz)（读预计算缓存，回退到 raw avgSnr）
+   */
+  get gnssWeightedAvgSnr() {
+    const s = this._satStatsCache;
+    if (!s) return 0;
+    return s.weightedAvgSnr > 0 ? s.weightedAvgSnr : (s.avgSnr || 0);
   }
 
   /**
