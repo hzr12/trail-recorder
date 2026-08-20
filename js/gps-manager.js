@@ -47,6 +47,7 @@ class GPSManager {
     this._gnssStatusHandle = null; // gnssStatus 事件监听器句柄
     this._gnssNmeaHandle = null;   // nmeaSentence 事件监听器句柄
     this._gnssPollId = null;       // GNSS 轮询兜底定时器
+    this._weakEvalId = null;        // 弱信号状态机常驻重算定时器（与卫星事件流解耦，防事件停推时徽章冻结）
     this._lastVtg = null;          // 最近一条 $GPVTG 航向/速度（VTG 优先源）
     this._smoothSpeed = null;      // 模块2：一阶低通后的平滑速度（抑制低速抖动锯齿）
     this._staticCnt = 0;           // 模块2：连续低速帧计数（ZUPT 钉零速）
@@ -425,6 +426,8 @@ class GPSManager {
 
       // 兜底轮询：前 15 秒每 2 秒主动拉取一次，防止事件丢失
       this._startGnssPollFallback();
+      // 弱信号状态机常驻重算（与事件流解耦，防事件停推时徽章冻结）
+      this._startWeakEvalTimer();
     } catch (err) {
       this._gnssInitError = err.message || 'start_failed';
       console.warn('[GPS] GNSS 插件激活失败:', err.message);
@@ -505,6 +508,28 @@ class GPSManager {
     if (this._gnssPollId) {
       clearInterval(this._gnssPollId);
       this._gnssPollId = null;
+    }
+  }
+
+  /**
+   * 弱信号状态机常驻重算定时器：与卫星事件流解耦。
+   * 卫星事件可能因原生插件/监听异常停推，导致 _evaluateWeakSignal 不再被调用，
+   * 使 isWeakSignal 永久冻结（徽章卡住不消失/不进入）。
+   * 这里每 WEAK_EVAL_INTERVAL_MS 主动重算一次，保证信号恢复能被及时感知。
+   * 仅在 GNSS 监听激活且无初始化错误时运行；_evaluateWeakSignal 内部已自行处理省电复位与缓存空保护。
+   */
+  _startWeakEvalTimer() {
+    this._stopWeakEvalTimer();
+    this._weakEvalId = setInterval(() => {
+      if (!this._gnssListeningStarted || this._gnssInitError) return;
+      this._evaluateWeakSignal();
+    }, CONFIG.GNSS_WEAK_EVAL_INTERVAL_MS);
+  }
+
+  _stopWeakEvalTimer() {
+    if (this._weakEvalId) {
+      clearInterval(this._weakEvalId);
+      this._weakEvalId = null;
     }
   }
 
@@ -852,6 +877,7 @@ class GPSManager {
     // 不清除 _gnssStarting，让 finally 块中的 generation 检查处理
     this._removeGnssListeners();
     this._stopGnssPollFallback();
+    this._stopWeakEvalTimer();
     if (this._gnssPlugin && this._gnssListeningStarted) {
       try {
         this._gnssPlugin.stopGnssListening?.();
@@ -888,7 +914,7 @@ class GPSManager {
   }
 
   _computeSatStats(satellites) {
-    const stats = { used: 0, visible: 0, snrSum: 0, consts: { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 }, usedConsts: { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 } };
+    const stats = { used: 0, visible: 0, snrSum: 0, avgSnr: 0, consts: { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 }, usedConsts: { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 } };
     if (!satellites || satellites.length === 0) return stats;
     for (const s of satellites) {
       const c = s.constellation;

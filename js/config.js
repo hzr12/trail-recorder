@@ -153,6 +153,7 @@ const CONFIG = {
   GNSS_RECOVER_SNR_MIN: 30,             // 恢复阈值：平均信噪比下限（滞回）
   GNSS_WEAK_HOLD_MS: 30000,             // 进入需持续时长（GNSS 事件约 1s/次 → 约 30 次）
   GNSS_RECOVER_HOLD_MS: 10000,          // 恢复需持续时长（约 10 次）
+  GNSS_WEAK_EVAL_INTERVAL_MS: 5000,     // 弱信号状态机常驻重算间隔（与卫星事件流解耦，防事件停推时徽章冻结）
   GPS_WEAK_SIGNAL_INTERVAL: 120000,     // 弱信号期间定位心跳间隔（ms），覆盖 GPS_MAX_INTERVAL
   GPS_WEAK_SIGNAL_LOW_ACCURACY: false,  // 弱信号是否同时降精度（重启 watch 用低精度，更省电但有重启失锁风险）
 
