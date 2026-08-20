@@ -95,6 +95,7 @@ class GPSManager {
     // 海拔独立滤波链（L2 自适应卡尔曼 + L3 中值/Huber 实时，L4 离线 1D RTS）
     this._altFilter = new AltFilterPipeline();
     this._altRts = new AltRtsSmoother();
+    this._lastGoodAlt = null;     // 模块3(C)：最近一次可信 GPS 海拔基准（弱信号时保持，避免断崖）
 
     // 电量监控
     this._lowBattery = false;   // 是否处于低电量状态（<20%）
@@ -891,6 +892,7 @@ class GPSManager {
     this._gnssSatellites = [];
     this._satStatsCache = null;
     this._gnssInitError = null;
+    this._lastGoodAlt = null; // 模块3(C)：复位海拔保持基准
     // 弱信号状态机依赖 GNSS 监听，监听已关闭 → 复位
     this._resetWeakSignalState();
   }
@@ -2298,15 +2300,23 @@ class GPSManager {
 
   /**
    * 海拔解算：GGA 椭球高（MSL+分离，与浏览器口径一致）优先，浏览器 coords.altitude 兜底。
-   * 弱信号（GNSS 降级）时不接收任何海拔数据——弱信号下垂直精度极差，海拔无意义。
+   * 弱信号（GNSS 降级）时不再返回 null（旧逻辑会让海拔滤波链重置、曲线断崖），
+   * 改为保持最近一次可信 GPS 海拔基准 _lastGoodAlt（由 IMU 垂直 U 轴持续注入推演），
+   * 信号恢复后由 GPS 重新校正该基准，消除累积漂移（零基准仍由 GPS 持续掌控，绝不做纯积分）。
    */
   _resolveAltitude(browserAltitude) {
-    if (this._weakSignal) return null;
     const corr = this.geoidCorrectionM; // null=放弃校正, 0=无基准不校, 数值=校正量
     const gga = this.ellipsoidalAltitude;
     let raw = gga != null ? gga : (browserAltitude != null ? browserAltitude : null);
+    if (this._weakSignal) {
+      // 弱信号：保持基准（无基准则真实 null，让滤波链重置，仍安全）
+      return this._lastGoodAlt != null ? this._lastGoodAlt : null;
+    }
     if (raw == null) return null;
     // 校正：把椭球高换算到以本地 geoid 基准对齐的口径，跨口径（GGA↔browser）不跳变
-    return corr == null ? raw : raw - corr;
+    const resolved = corr == null ? raw : raw - corr;
+    // 记录可信基准（供弱信号保持；仅在非弱信号且有效时更新）
+    this._lastGoodAlt = resolved;
+    return resolved;
   }
 }
