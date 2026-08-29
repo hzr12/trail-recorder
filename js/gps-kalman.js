@@ -75,7 +75,7 @@ class KalmanFilter {
       const f = fixes[0];
       return [{ lat: f.lat, lng: f.lng, time: f.time, ts: f.ts }];
     }
-    // 分段：时间断裂 / 精度失效 / 距段首超 3km（重锚等价物）→ 段边界
+    // 分段：时间断裂 / 精度失效 / 距段首超速度自适应阈值 → 段边界
     const segments = [];
     let seg = [];
     for (let i = 0; i < fixes.length; i++) {
@@ -86,7 +86,9 @@ class KalmanFilter {
         const ref = seg[0];
         const mx = (f.lng - ref.lng) * M_PER_DEG * Math.cos(ref.lat * DEG2RAD);
         const my = (f.lat - ref.lat) * M_PER_DEG;
-        const breakSeg = dt <= 0 || dt > 60 || (f.accuracy || 0) > 2000 || Math.hypot(mx, my) > 3000;
+        // 速度自适应距离阈值：至少 3km，或速度×60s（高铁 300km/h≈83m/s → 阈值≈8km）
+        const distThresh = Math.max(3000, (f.speed || 0) * 60);
+        const breakSeg = dt <= 0 || dt > 60 || (f.accuracy || 0) > 2000 || Math.hypot(mx, my) > distThresh;
         if (breakSeg) { segments.push(seg); seg = []; }
       }
       seg.push(f);

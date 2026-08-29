@@ -65,6 +65,7 @@
       this._buf = [];      // 原始 fix 缓冲 {lat,lng,accuracy,time}
       this._lastT = 0;     // 上次 push 的时间戳（ms）
       this._rejected = 0;  // 累计 Hampel 拒绝鬼点数（调试用）
+      this._lastOutput = null; // 上次输出位置（静止检测参考点，避免用过时的 _buf[0]）
     }
 
     /**
@@ -107,11 +108,16 @@
       // 窗不足 3 点：直接输出原始点（避免初期抖动）
       if (this._buf.length < 3) return { lat: fix.lat, lng: fix.lng };
 
-      // 2) 静止冻结：与窗首位移 < accuracy×ratio → 直接输出最新原始点（消除拖影）
+      // 2) 静止冻结：与上次输出位移 < accuracy×ratio → 直接输出最新原始点（消除拖影）
+      //    用 _lastOutput 替代 _buf[0]：_buf[0] 是窗口最旧点（可能 5 fix 前），静止时
+      //    漂移累积可能导致 d0 偏大，不触发冻结 → 蓝点仍有微小拖影。
       const acc = fix.accuracy || 10;
-      const d0 = distM(fix, this._buf[0]);
+      const ref = this._lastOutput || this._buf[0];
+      const d0 = distM(fix, ref);
       if (d0 < acc * staticRatio) {
-        return { lat: fix.lat, lng: fix.lng };
+        const out = { lat: fix.lat, lng: fix.lng };
+        this._lastOutput = out;
+        return out;
       }
 
       // 3) 横纵分别取中位数（抗单点粗差）
@@ -120,13 +126,16 @@
       const mlat = median(lats);
       const mlng = median(lngs);
 
-      // 4) Hampel 截断：最新点偏离中位数超 k·MAD → 用中位数替换（防鬼点）
+      // 4) Hampel 统计：最新点偏离中位数超 k·MAD → 计为鬼点拒绝（输出仍是中位数，天然抗粗差）
       const madLat = 1.4826 * madOf(lats, mlat);
-      if (madLat > 1e-9 && Math.abs(fix.lat - mlat) > madK * madLat) {
+      const madLng = 1.4826 * madOf(lngs, mlng);
+      if ((madLat > 1e-9 && Math.abs(fix.lat - mlat) > madK * madLat) ||
+          (madLng > 1e-9 && Math.abs(fix.lng - mlng) > madK * madLng)) {
         this._rejected++;
-        return { lat: mlat, lng: mlng };
       }
-      return { lat: mlat, lng: mlng };
+      const out = { lat: mlat, lng: mlng };
+      this._lastOutput = out;
+      return out;
     }
 
     /** 清空状态（watch 停止/恢复/切换源时调用） */
@@ -134,6 +143,7 @@
       this._buf = [];
       this._lastT = 0;
       this._rejected = 0;
+      this._lastOutput = null;
     }
 
   }
