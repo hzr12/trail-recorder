@@ -1,0 +1,8 @@
+/* ---------- 地图 Canvas 版本背景 fallback ---------- */
+/* 三层降级：Layer 2/3 时为 #map 提供纯色背景 */
+#map {
+  background: #0f1419; /* 暗色模式 fallback（Layer 3 默认） */
+}
+[data-theme="light"] #map {
+  background: #e8ecf0; /* 亮色模式 fallback */
+}
