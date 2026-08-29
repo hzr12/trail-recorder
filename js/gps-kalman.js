@@ -1,9 +1,12 @@
 /**
- * 圆圈地图 - GPS 定位（共享常量 + 二维卡尔曼滤波）
+ * 圆圈地图 - GPS 定位（共享常量 + 离线 RTS 平滑）
  * ============================================
  * gps.js 拆分后的第一个文件。顶部定义跨文件共享常量（var 顶层声明，挂全局，
- * 供 gps-imm.js / gps-manager.js 引用），并包含离线 RTS 平滑用的 KalmanFilter。
- * 加载顺序：本文件必须先于 gps-imm.js / gps-manager.js 加载。
+ * 供 trail-denoise.js / gps-manager.js 引用），并提供离线 RTS 平滑用的 KalmanFilter。
+ *
+ * 注意：本类只做「离线批处理 RTS」——对整段原始测量做前向滤波 + 反向递推。
+ * 实时 2D 位置滤波早已移除（蓝点走 PositionSmoother 滑动窗，见 gps-window.js），
+ * 与之配套的单步 update()/init()/reset() 一并删除，避免留下无人调用的实时路径。
  */
 
 /** 角度转弧度系数（多次使用，避免重复 Math.PI / 180） */
@@ -16,73 +19,22 @@ var S_DET_EPSILON = 1e-9;
 var RTS_MIN_DT = 1e-6;
 
 /**
- * 二维卡尔曼滤波器 — 2D 恒速模型（位置+速度矢量），局部 ENU 米坐标
- * 以首次定位为参考点，lat/lng → 米滤波 → 逆变换输出
- * Q/R 自适应 accuracy，速度更新带阻尼 + 模量限幅
- * 更新采用 Huber Loss 鲁棒化（M-估计）：超出阈值的测量残差降权，抑制 GPS 粗差/漂移点
+ * 二维卡尔曼滤波器（离线 RTS 平滑专用）— 2D 恒速模型（位置+速度矢量），局部 ENU 米坐标
+ * 以段首为参考点，lat/lng → 米 → 前向滤波 + 反向 RTS 递推 → 逆变换输出
+ * Q/R 自适应 accuracy，更新采用 Huber Loss 鲁棒化（M-估计）：超出阈值的测量残差降权，
+ * 抑制 GPS 粗差/漂移点。所有临时数组预分配，消除长轨迹下的 GC 压力。
  */
 class KalmanFilter {
   constructor() {
-    this._x = 0;          // 位置估计 x（米，相对参考点）
-    this._y = 0;          // 位置估计 y（米，相对参考点）
-    this._vx = 0;         // 速度估计 vx（米/秒）
-    this._vy = 0;         // 速度估计 vy（米/秒）
-    // 协方差 P（4×4 行主序 [x, y, vx, vy]）
-    // 所有临时数组在构造时一次性预分配（Float64Array 固定内存），update() 只读写不新建，
-    // 消除高频定位下的 GC 压力
-    this._P = new Float64Array(16);     // 状态协方差
-    this._fp = new Float64Array(16);    // 前向投影 F·P
-    this._Ppred = new Float64Array(16); // 预测协方差 P⁻ = F·P·Fᵀ + Q
-    this._IKH = new Float64Array(16);   // I − K·H
-    this._Pnew = new Float64Array(16);  // (I−K·H)·P⁻ 中间结果
-    this._setInitP(25);   // 初始速度不确定度 5m/s → 方差 25
-    this._refLat = 0;     // 参考点纬度（度）
-    this._refLng = 0;     // 参考点经度（度）
-    this._cosLat = 1;     // cos(refLat)，经度→米换算系数
-    this._lastTime = 0;
-    this._initialized = false;
-    this._lastFiltered = null;   // 最近一次滤波输出缓存（精度差时冻结用）
-
-    // Huber Loss 鲁棒更新：0 表示禁用（纯最小二乘）。
+    // Huber Loss 鲁棒更新的基准阈值（标准化残差，无量纲）：0 表示禁用（纯最小二乘）。
     // |残差|/σ ≤ k 的点正常更新；超过的点残差收缩到 k·σ（M-估计），抑制 GPS 粗差/漂移点。
-    // 这里存的是「基准值」（CONFIG.GPS_HUBER_K），实际生效阈值由 _huberKFor()
-    // 按速度+精度启发式在基准值基础上自适应缩放（用户无需也无法手动调参）。
+    // 实际生效阈值由 _huberKFor() 按「速度+精度」启发式在基准值上自适应缩放。
     this._huberK = (typeof CONFIG !== 'undefined' && CONFIG.GPS_HUBER_K != null)
       ? CONFIG.GPS_HUBER_K : 2.0;
-    this._lastHuberK = this._huberK > 0 ? this._huberK : 0; // 最近一次实际生效的 K（调试用）
 
     // RTS 离线平滑的求逆工作区（构造时预分配，避免平滑期逐点分配）
     this._rtsInvA = new Float64Array(16); // inv 高斯-约当：当前矩阵副本
     this._rtsInvI = new Float64Array(16); // inv 高斯-约当：单位阵侧
-  }
-
-  /**
-   * 原地填充初始协方差（位置不确定度 50m → 2500m²，速度方差可指定）
-   * @param {number} speedVar 速度方差（m²/s²），新轨迹未知取 0，恢复会话取 25
-   */
-  _setInitP(speedVar) {
-    this._P.fill(0);
-    this._P[0] = 2500;
-    this._P[5] = 2500;
-    this._P[10] = speedVar;
-    this._P[15] = speedVar;
-  }
-
-  /**
-   * 重置滤波器并设置初始值（当前点即参考点）
-   */
-  init(lat, lng, time) {
-    this._refLat = lat;
-    this._refLng = lng;
-    this._cosLat = Math.cos(lat * DEG2RAD);
-    this._x = 0;
-    this._y = 0;
-    this._vx = 0;
-    this._vy = 0;
-    this._setInitP(0);   // 新轨迹速度未知 → 速度方差 0（原地填充，避免 GC）
-    this._lastTime = time;
-    this._initialized = true;
-    this._lastFiltered = { lat, lng };
   }
 
   /**
@@ -104,211 +56,6 @@ class KalmanFilter {
     k *= Math.max(0.65, accFactor);
     // 硬上下限兜底：防止极端场景完全失效或正常机动被误伤
     return Math.max(1.0, Math.min(4.0, k));
-  }
-
-  /**
-   * 更新测量值 → 返回滤波后结果
-   * @param {number} zLat 测量纬度
-   * @param {number} zLng 测量经度
-   * @param {number} accuracy GPS 精度（米）
-   * @param {number} time 时间戳（毫秒）
-   * @param {number} [speed] 速度（m/s），用于动态调整响应
-   * @returns {{lat: number, lng: number}} 滤波后坐标
-   */
-  update(zLat, zLng, accuracy, time, speed) {
-    if (!this._initialized) {
-      // 未初始化 → 以测量为初始状态
-      this.init(zLat, zLng, time);
-      this._lastFiltered = { lat: zLat, lng: zLng };
-      return { lat: zLat, lng: zLng };
-    }
-    if (accuracy > 2000) {
-      // 精度极差（>2000m，地下/信号遮挡）：测量坐标不可信，保持上次滤波输出（冻结），
-      // 避免「init 重置 + 接受跳变测量」导致的轨迹被突然拉回又回去。
-      // 实时显示位置暂停，但 _rawFixes 仍记录原始测量，结束记录后 RTS 离线平滑
-      // 会用未来测量修正这段轨迹，最终落库的是修正后的路径。
-      // 更新时间戳，避免信号恢复时 dt 过大触发重置、再次跳变。
-      this._lastTime = time;
-      return this._lastFiltered || { lat: zLat, lng: zLng };
-    }
-
-    const dt = (time - this._lastTime) / 1000; // 秒
-    this._lastTime = time;
-
-    if (dt <= 0 || dt > 60) {
-      // 时间异常或间隙过大 → 重置
-      this.init(zLat, zLng, time);
-      return { lat: zLat, lng: zLng };
-    }
-
-    // 坐标正变换：lat/lng → 局部米
-    let mx = (zLng - this._refLng) * M_PER_DEG * this._cosLat;
-    let my = (zLat - this._refLat) * M_PER_DEG;
-
-    // 距参考点超 3km → 重新锚定（x/y 平移，速度不变）
-    if (Math.hypot(mx, my) > 3000) {
-      this._reanchor();
-      mx = (zLng - this._refLng) * M_PER_DEG * this._cosLat;
-      my = (zLat - this._refLat) * M_PER_DEG;
-    }
-
-    // 动态 q（m/s²）：精度好时跟手（响应快），精度差时平滑（抑制噪声）
-    // 系数 0.5 + 速度自适应 speedFactor（clamp(speed/0.5,1,12)）：
-    // 静止 q=0.1、步行 1.5m/s q=0.3、高速 40m/s q=1.2 m/s²。
-    // 经参数扫描校准（5 次运行全过：静止 RMSE 2.3-2.9m ≤3.5；轨迹 RMSE
-    // 3.4-3.8m < 1D 3.9-4.1m；重锚 40m/s 误差 40m <60m。原固定 sf=3 时
-    // 高速场景速度收敛过慢 → 重锚误差 97.5m 超标）
-    const accClamped = Math.max(Math.min(accuracy || 10, 2000), 1);
-    const speedFactor = Math.min(12, Math.max(1, (speed || 0) / 0.5)); // 速度越快机动越强，q 越大
-    const q = Math.max(0.1, (0.5 / accClamped) * speedFactor);
-
-    // ── Predict（预测）──
-    this._x += this._vx * dt;
-    this._y += this._vy * dt;
-    const dt2 = dt * dt;
-    // P⁻ = F·P·Fᵀ + Q（Q: DWNA 块对角，q²·[¼dt⁴, ½dt³; ½dt³, dt²]）
-    const q2 = q * q;
-    const q00 = 0.25 * q2 * dt2 * dt2;
-    const q02 = 0.5 * q2 * dt2 * dt;
-    const q22 = q2 * dt2;
-    // F·P（F: [1,0,dt,0; 0,1,0,dt; 0,0,1,0; 0,0,0,1]）→ 写入预分配 this._fp
-    // 正确展开：A[i][j] = P[i][j] + dt·P[(i+2)][j]（i<2 时，列方向 j 遍历）；i≥2 时 A[i][j] = P[i][j]
-    for (let i = 0; i < 4; i++) {
-      const dRow = i < 2 ? dt : 0;
-      const pr = i * 4;
-      // i≥2 时 dRow=0，不读取越界行（i+2 行超出 4×4 范围，避免 0×undefined=NaN）
-      const pr2 = i < 2 ? (i + 2) * 4 : pr;
-      this._fp[pr + 0] = this._P[pr + 0] + dRow * this._P[pr2 + 0];
-      this._fp[pr + 1] = this._P[pr + 1] + dRow * this._P[pr2 + 1];
-      this._fp[pr + 2] = this._P[pr + 2] + dRow * this._P[pr2 + 2];
-      this._fp[pr + 3] = this._P[pr + 3] + dRow * this._P[pr2 + 3];
-    }
-    // (F·P)·Fᵀ：B[i][0]=A[i][0]+dt·A[i][2], B[i][1]=A[i][1]+dt·A[i][3], B[i][2]=A[i][2], B[i][3]=A[i][3]
-    // → 写入预分配 this._Ppred
-    for (let i = 0; i < 4; i++) {
-      this._Ppred[i * 4 + 0] = this._fp[i * 4 + 0] + dt * this._fp[i * 4 + 2];
-      this._Ppred[i * 4 + 1] = this._fp[i * 4 + 1] + dt * this._fp[i * 4 + 3];
-      this._Ppred[i * 4 + 2] = this._fp[i * 4 + 2];
-      this._Ppred[i * 4 + 3] = this._fp[i * 4 + 3];
-    }
-    // + Q（DWNA 块对角，对称叠加：行主序 P00/P11/P22/P33 对角，P02=P20、P13=P31 交叉对）
-    this._Ppred[0] += q00;  this._Ppred[5] += q00;   // 位置对角 (x,x),(y,y)
-    this._Ppred[2] += q02;  this._Ppred[8] += q02;   // x/vx 交叉（对称对）
-    this._Ppred[7] += q02;  this._Ppred[13] += q02;  // y/vy 交叉（对称对）
-    this._Ppred[10] += q22; this._Ppred[15] += q22;  // 速度对角 (vx,vx),(vy,vy)
-
-    // ── Update（更新）──
-    const sigma = Math.max(3, Math.min(accClamped, 2000)); // 米
-    const r = sigma * sigma;
-    // S = H·P⁻·Hᵀ + R（2×2：P 的位置块 + diag(r, r)）
-    const s00 = this._Ppred[0] + r, s01 = this._Ppred[1],
-          s10 = this._Ppred[4], s11 = this._Ppred[5] + r;
-    const det = s00 * s11 - s01 * s10;
-    // 数值稳定性：det 过小 → S 奇异（GPS 精度极高且滤波器极度自信时 P→0 的极端数值退化）。
-    // 直接做 s/det 会得到 Infinity/NaN 污染状态并剧烈震荡。退化时重置并接受测量（安全回退）。
-    if (!(Math.abs(det) > S_DET_EPSILON)) {
-      this.init(zLat, zLng, time);
-      this._lastFiltered = { lat: zLat, lng: zLng };
-      return { lat: zLat, lng: zLng };
-    }
-    const si00 = s11 / det, si01 = -s01 / det, si10 = -s10 / det, si11 = s00 / det;
-    // K = P⁻·Hᵀ·S⁻¹（4×2，取 P 前两列 × S⁻¹）
-    const k00 = (this._Ppred[0] * si00 + this._Ppred[1] * si10);
-    const k01 = (this._Ppred[0] * si01 + this._Ppred[1] * si11);
-    const k10 = (this._Ppred[4] * si00 + this._Ppred[5] * si10);
-    const k11 = (this._Ppred[4] * si01 + this._Ppred[5] * si11);
-    const k20 = (this._Ppred[8] * si00 + this._Ppred[9] * si10);
-    const k21 = (this._Ppred[8] * si01 + this._Ppred[9] * si11);
-    const k30 = (this._Ppred[12] * si00 + this._Ppred[13] * si10);
-    const k31 = (this._Ppred[12] * si01 + this._Ppred[13] * si11);
-
-    // Huber Loss 鲁棒更新（与离线 RTS 一致）：按标准化残差降权粗差/漂移点。
-    // e 服从 ~N(0, S)，|e|/√S 超过阈值 k 的测量残差收缩到 k·√S（M-估计）。
-    // 平方比较避免开方；k=0 时退化为标准最小二乘更新。
-    let e0 = mx - this._x;
-    let e1 = my - this._y;
-    // 自适应 K：低速静止漂移压狠、高速机动放宽、精度差收紧（用户无需手动调参）
-    const hk = (this._lastHuberK = this._huberKFor(speedFactor, accClamped));
-    if (hk > 0) {
-      const n0 = e0 * e0 / s00, n1 = e1 * e1 / s11;
-      if (n0 > hk * hk) e0 *= hk / Math.sqrt(n0);
-      if (n1 > hk * hk) e1 *= hk / Math.sqrt(n1);
-    }
-    this._x += k00 * e0 + k01 * e1;
-    this._y += k10 * e0 + k11 * e1;
-
-    // 速度更新：增益 k20/k21 的量纲为 1/s（协方差比），k20·e 即为 m/s 速度增量，
-    // 无需再除 dt 也无需手动阻尼系数——速度自适应完全交给动态 Q。原先的
-    // 「0.3 阻尼 + /dtSafe」实为掩盖「多除了 dt」的维度错误，现已修正。
-    this._vx += k20 * e0 + k21 * e1;
-    this._vy += k30 * e0 + k31 * e1;
-
-    // 速度模量限幅（120m/s ≈ 432km/h，防止突发漂移）
-    const spd = Math.hypot(this._vx, this._vy);
-    if (spd > 120) {
-      const k = 120 / spd;
-      this._vx *= k;
-      this._vy *= k;
-    }
-
-    // P = (I − K·H)·P⁻，随后对称化（全部写入预分配数组）
-    this._IKH[0] = 1 - k00;  this._IKH[1] = -k01;  this._IKH[2] = 0;  this._IKH[3] = 0;
-    this._IKH[4] = -k10;     this._IKH[5] = 1 - k11; this._IKH[6] = 0; this._IKH[7] = 0;
-    this._IKH[8] = -k20;     this._IKH[9] = -k21;  this._IKH[10] = 1; this._IKH[11] = 0;
-    this._IKH[12] = -k30;    this._IKH[13] = -k31; this._IKH[14] = 0; this._IKH[15] = 1;
-    for (let i = 0; i < 4; i++) {
-      for (let j = 0; j < 4; j++) {
-        let sum = 0;
-        for (let k = 0; k < 4; k++) sum += this._IKH[i * 4 + k] * this._Ppred[k * 4 + j];
-        this._Pnew[i * 4 + j] = sum;
-      }
-    }
-    // 对称化 (P + Pᵀ) / 2
-    for (let i = 0; i < 4; i++) {
-      for (let j = 0; j < 4; j++) {
-        this._P[i * 4 + j] = (this._Pnew[i * 4 + j] + this._Pnew[j * 4 + i]) / 2;
-      }
-    }
-
-    // 逆变换：米 → lat/lng
-    const filtered = {
-      lat: this._refLat + this._y / M_PER_DEG,
-      lng: this._refLng + this._x / (M_PER_DEG * this._cosLat)
-    };
-    this._lastFiltered = filtered;
-    return filtered;
-  }
-
-  /**
-   * 重新锚定参考点到当前状态位置（x/y 平移，速度不变）
-   * 速度协方差（P 中 vx、vy 对角元素）放大 ×2：
-   * 触发重锚说明已移动较长距离，期间速度可能已变化，适度放大速度不确定度
-   * 可让滤波器对后续速度变化更敏感（更快收敛），又不至于完全重置丢失历史。
-   */
-  _reanchor() {
-    // 当前估计位置成为新参考点（x/y 平移，速度不变）
-    const curLat = this._refLat + this._y / M_PER_DEG;
-    const curLng = this._refLng + this._x / (M_PER_DEG * this._cosLat);
-    this._refLat = curLat;
-    this._refLng = curLng;
-    this._cosLat = Math.cos(curLat * DEG2RAD);
-    this._x = 0;
-    this._y = 0;
-    // 触发重锚说明已移动较长距离，期间速度可能已变化：
-    // 适度放大速度不确定度（×2），让滤波器对后续速度变化更敏感，又不至于完全重置
-    this._P[10] *= 2; // vx 协方差放大 ×2
-    this._P[15] *= 2; // vy 协方差放大 ×2
-  }
-
-  /** 重置滤波器（原地填充，避免 GC） */
-  reset() {
-    this._initialized = false;
-    this._x = 0;
-    this._y = 0;
-    this._vx = 0;
-    this._vy = 0;
-    this._setInitP(0);
-    this._lastFiltered = null;
   }
 
   /**
@@ -394,7 +141,7 @@ class KalmanFilter {
       // F 物理意义错误、平滑结果炸裂。钳制到极小正值：状态几乎不转移、结果≈测量，
       // 避免溢出/炸裂（正常路径 dt>0 完全不受影响）。
       if (!(dt > RTS_MIN_DT)) dt = RTS_MIN_DT;
-      // 动态 q（与 update() 完全一致）
+      // 动态 q：精度好时跟手（响应快），精度差时平滑（抑制噪声）；速度越快机动越强，q 越大
       const accClamped = Math.max(Math.min(fixes[i].accuracy || 10, 2000), 1);
       const speedFactor = Math.min(12, Math.max(1, (fixes[i].speed || 0) / 0.5));
       const q = Math.max(0.1, (0.5 / accClamped) * speedFactor);
@@ -408,7 +155,7 @@ class KalmanFilter {
       const P20 = Pf[po + 8], P21 = Pf[po + 9], P22 = Pf[po + 10], P23 = Pf[po + 11];
       const P30 = Pf[po + 12], P31 = Pf[po + 13], P32 = Pf[po + 14], P33 = Pf[po + 15];
 
-      // Predict：P⁻ = F·P·Fᵀ + Q（F 恒速模型，解析展开，与 update() 两次循环等价）
+      // Predict：P⁻ = F·P·Fᵀ + Q（F 恒速模型，解析展开）
       // (F·P)[i][j] = P[i][j] + dt·P[i+2][j]（i<2），否则 P[i][j]
       const a00 = P00 + dt * P20, a01 = P01 + dt * P21, a02 = P02 + dt * P22, a03 = P03 + dt * P23;
       const a10 = P10 + dt * P30, a11 = P11 + dt * P31, a12 = P12 + dt * P32, a13 = P13 + dt * P33;
@@ -438,7 +185,7 @@ class KalmanFilter {
       xp[p4] = px0; xp[p4 + 1] = px1; xp[p4 + 2] = px2; xp[p4 + 3] = px3;
       Pp.set(Ppred, i * 16);
 
-      // Update：S、K 计算与 update() 一致
+      // Update：S、K 计算
       const sigma = Math.max(3, Math.min(accClamped, 2000));
       // accuracy 加权（RTS_ACC_WEIGHT）：低精度点（sigma 大）的噪声方差被放大，
       // RTS 反向递推时更信任模型预测而非该测量；高精度点反之亦然。
@@ -465,8 +212,8 @@ class KalmanFilter {
       const k30 = Ppred[12] * si00 + Ppred[13] * si10;
       const k31 = Ppred[12] * si01 + Ppred[13] * si11;
 
-      // Huber Loss 鲁棒更新（与实时 update() 一致）：粗差/漂移点残差降权。
-      // K 按该点速度/精度自适应（与 update() 相同启发式）
+      // Huber Loss 鲁棒更新：粗差/漂移点残差降权。
+      // K 按该点速度/精度自适应
       let e0 = zx[i] - px0;
       let e1 = zy[i] - px1;
       const hk = this._huberKFor(speedFactor, accClamped);

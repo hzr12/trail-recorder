@@ -332,7 +332,6 @@ const CONFIG = {
   DEFAULT_CENTER: { lat: 23.1291, lng: 113.2644 },  // 广州塔
   DEFAULT_ZOOM: 12,
   LOCATION_ZOOM: 15,
-  MIN_DRAW_PX: 4,                                  // 画布最小绘制像素阈值
 
   // —— GPS 超时与降级 ——
   GPS_TIMEOUT: 10000,
@@ -425,7 +424,6 @@ const CONFIG = {
   // —— GNSS 定位源接管（原生主导 + 浏览器低频兜底）——
   GPS_TAKEOVER_MIN_SATS: 4,     // 接管所需最少卫星
   GPS_TAKEOVER_HDOP: 4,         // HDOP 优于此→信号好(原生主导)
-  GPS_NATIVE_FALLBACK_INTERVAL: 30000,   // native 档浏览器兜底心跳(ms)
   GPS_NATIVE_FALLBACK_MAX_AGE: 30000,    // native 档浏览器 maximumAge(ms)
   GPS_SOURCE_HOLD_MS: 5000,     // 源切换滞回
 
@@ -445,50 +443,58 @@ const CONFIG = {
   HEADING_DIFF_MIN_SPEED: 1.0,    // 低于此速度 GPS 航向不再可信→用差分
   HEADING_DIFF_LPF_ALPHA: 0.3,    // 差分航向一阶低通系数
 
-  // —— Huber 鲁棒滤波基准阈值（标准化残差；0=禁用）——
+  // —— Huber 鲁棒滤波基准阈值（标准化残差；0=禁用；离线 RTS 用）——
   GPS_HUBER_K: 2.0,               // 实际阈值由 KalmanFilter._huberKFor() 按速度+精度自适应缩放
 
-  // —— IMM 实时滤波 ——
-  IMM_FILTER_ENABLED: true,
-  IMM_MODEL_Q: [0.05, 0.25, 1.0],   // STILL/CV/CA 加速度过程噪声(m/s² 标准差)
-  IMM_TRANSITION: [                 // 马尔可夫转移 Π[i][j]=P(下一=模型i|当前=模型j)，列和=1
-    [0.98, 0.015, 0.005],
-    [0.015, 0.97, 0.015],
-    [0.005, 0.015, 0.98],
-  ],
-  IMM_INIT_PROB: [0.6, 0.3, 0.1],    // 初始模型概率(STILL/CV/CA)
-  IMM_POS_VAR: 2500,                 // 初始位置方差(米²)
-  IMM_VEL_VAR: 0,                    // 初始速度方差(米²/s²)
-  IMM_ACC_VAR: 4,                    // 初始加速度方差(米²/s⁴)
-  IMM_REANCHOR_M: 3000,              // 距参考点超此重锚(米)
-  IMM_SPEED_LIMIT: 120,              // 模型速度模量限幅(m/s)
-  IMM_FREEZE_ACC: 1750,              // 精度超此冻结在最后可信位置(米)
-  IMM_LIKELIHOOD_TEMP: 2.0,          // 模型似然温度 γ（Λ^γ 放大模型差异）
-  IMM_SPEED_PRIOR: true,             // 速度辅助模型先验(GPS speed 软门控)
-  IMM_MIN_PROB: 1e-6,                // 模型概率下界
+  // —— 实时水平位置稳健滑动窗滤波（gps-window.js；实时 IMM/Kalman 已删除）——
+  POS_FILTER: {
+    ENABLED: true,          // 总开关（关闭则蓝点=原始单次定位）
+    WIN: 5,                 // 滑动窗大小（个 fix，奇数）
+    MAD_K: 3,               // Hampel 截断倍数（残差 > k·MAD 视为鬼点，用中位数替换）
+    FREEZE_DT_MS: 3000,     // 丢点冻结：距上次定位超此值(ms)直接回退原始点，不外推
+    STATIC_RATIO: 1.0,      // 静止判定：位移 < accuracy×该值 → 输出原始点（防拖影）
+    QUAL_DUALBAND_MAD_K: 4,      // 星多/双频：放宽 Hampel（点更可信，少丢有效点）
+    QUAL_WEAK_MAD_K: 2,          // 弱信号：收紧 Hampel（更信模型）
+    QUAL_WEAK_STATIC_RATIO: 0.7, // 弱信号时更易判定静止（防抖动拖影）
+    WEIGHT_ELEV_FLOOR: 0.3,      // 低仰角星最低权重（仰角≥mask 时从 floor 升到 1）
+    WEIGHT_ELEV_SPAN_DEG: 60,    // 仰角从 mask 升到满权所需跨度（度）
+  },
+  GNSS_QUAL: {              // 卫星质量评分 qualScore（归一化 0~1），反哺平滑强度
+    USED_W: 1.0, CONST_DIV_W: 2.0, DUALBAND_W: 3.0, MAX: 16, WEAK_USED_MAX: 4,
+  },
+  GNSS_SPEED_SLOW_MAX: 2, GNSS_SPEED_FAST_MIN: 15, GNSS_SPEED_HYST: 2,
+  GNSS_ELEV_MASK_SLOW: 3, GNSS_ELEV_MASK_FAST: 25,   // 仰角掩码(度)：低速保星、高速压多径
+  GNSS_CN0_MIN_SLOW: 15, GNSS_CN0_MIN_FAST: 28,      // C/N0 门限(dB-Hz)
+  GNSS_CN0_LERP_HIGH_SLOW: 30, GNSS_CN0_LERP_HIGH_FAST: 40,
+  GNSS_MULTI_CONST: {       // 多星座几何约束（区分「4 颗同一星座」与「4 星座各 1 颗」）
+    ENABLED: true, MIN_PER_CONST: 1, MIN_CONST_FOR_TRUST: 2,
+    SINGLE_CONST_PENALTY: 0.6, GDOP_FLOOR_CONST: 4,
+  },
+  GNSS_DUALBAND_ENABLED: true, GNSS_DUALBAND_R_SCALE: 0.7,
 
-  // —— IMU 惯性导航融合（仅定位校准）——
+  // —— 轨迹级后处理（离线：跳变修复 + RTS + 运动学约束）——
+  RTS_ACC_WEIGHT: 1.3,              // accuracy→R 权重指数（>1：低精度点更不被信任）
+  RTS_GAP_MAX_DT_S: 60,             // 时间缺口阈值(秒)
+  TRAIL_DENOISE_MAX_JUMP_FACTOR: 5, // 跳变判定：相对「速度×时间」倍数上限
+  TRAIL_DENOISE_BASE_M: 10,         // 跳变判定：无速度时的基础兜底阈值(米)
+  TRAIL_KINEMATIC_MAX_SPEED: 60,    // 运动学限幅：最大瞬时速度(m/s)
+  TRAIL_KINEMATIC_MAX_ACC: 12,      // 运动学限幅：最大加速度(m/s²)
+  SIGNAL_LOSS_MIN_WEAK_PTS: 3,      // 连续弱信号点数达此值才标为「信号丢失段」
+  SIGNAL_LOSS_ACC_M: 50,            // 弱信号点阈值(米)：accuracy 超此值即弱信号点
+  SIGNAL_LOSS_GREY: '#888888',      // 丢星段灰色
+  HEALTH_GRADE_THRESHOLDS: [0.9, 0.75, 0.6],  // 健康分 A/B/C/D 阈值
+
+  // —— IMU 惯性传感器（仅海拔垂直校准：U 轴注入）——
   IMU_ENABLED: true,
   IMU_FEED_INTERVAL_MS: 1000,        // 加速度滑窗聚合时长(1Hz)
   IMU_WIN_BUCKETS: 4,                // 滑窗分桶数
   IMU_FEED_MAX_AGE_MS: 2000,         // 聚合值新鲜度上限
   IMU_ACC_LPF_ALPHA: 0.4,            // 窗口均值后一阶低通
-  IMU_ACC_TRUST: 0.6,                // 注入强度基础值(0=纯GPS,1=全信IMU;随一致性自适应)
-  IMU_ACC_TRUST_MIN: 0.2,            // trust 自适应下限(一致性冲突/低速噪声时回落)
-  IMU_ACC_TRUST_MAX: 0.8,            // trust 自适应上限(一致性一致时抬升)
-  IMU_TRUST_STEP: 0.08,              // trust 每帧调整步长(方向一致性余弦加权)
-  IMU_TRUST_LOWSPEED_RETURN: 0.05,   // 低速(<0.5m/s)时 trust 回归基础值速率
   IMU_ACC_CLAMP: 30,                 // 加速度绝对安全上限(m/s²,防传感器粗差)
-  IMU_ACC_CLAMP_LEVELS: [            // 注入 clamp 按 GPS 速度分级(静止收紧防噪声、高速放宽保机动)
-    { maxSpeed: 1, clamp: 1.0 }, { maxSpeed: 3, clamp: 3.0 },
-    { maxSpeed: 8, clamp: 6.0 }, { maxSpeed: Infinity, clamp: 10.0 },
-  ],
   IMU_MIN_USED_SATS: 5,              // 启用 IMU 所需的最少解算中卫星数(usedInFix > 此值才开启)
   IMU_ROT_MAX_DT_MS: 200,            // 姿态-加速度最大时间差(毫秒,超窗视为不匹配降级)
   IMU_ROT_BUF_MAX: 32,               // 姿态环形缓冲容量(姿态约 5-10Hz,32 条≈3-6s)
-  IMU_U_RMS_LPF_ALPHA: 0.2,          // U 轴抖动 RMS 一阶低通系数
-  IMU_U_BIAS_LPF_ALPHA: 0.05,        // U 轴偏置慢速低通系数(重力泄漏量级估计)
-  IMU_U_BIAS_LOW_RMS_MAX: 1.0,       // 仅当 U 轴 RMS 低于此值(m/s²)才更新偏置
+  // 注：注入强度与按速度分级 clamp 在海拔侧（ALT_IMU_TRUST / ALT_IMU_U_CLAMP_LEVELS）
 
   // —— 海拔独立滤波（四级融合 + IMU 垂直注入）——
   ALT_FILTER_ENABLED: true,
@@ -507,11 +513,9 @@ const CONFIG = {
   ALT_KALMAN_Q_REF_VEL: 5,           // Q 自适应参考垂直速度(m/s)
   ALT_RESIDUAL_WINDOW: 20,           // 残差滑动窗口
   ALT_MEDIAN_WINDOW: 5,              // 中值预滤波窗口(奇数)
-  ALT_HUBER_K: 2.0,                  // 海拔残差 Huber 阈值系数
-  ALT_HUBER_K_MIN: 1.0,              // Huber 阈值下限
+  ALT_HUBER_K: 2.0,                  // 海拔残差 Huber 阈值系数（×鲁棒尺度 σ̂，自适应）
   ALT_VELOCITY_LIMIT: 30,            // 海拔变化速率上限(m/s)
-  ALT_RTS_ALPHA_MAX: 0.3,            // 海拔 RTS 反向平滑最大权重
-  ALT_RTS_ALPHA_MIN: 0.1,            // 海拔 RTS 反向平滑最小权重
+  ALT_RTS_ALPHA_MAX: 0.3,            // 海拔 RTS 反向平滑权重 α：out[i]=fwd[i]·(1−α)+out[i+1]·α
 
   // —— 存储引擎 ——
   TRAIL_STORAGE_ENGINE: 'auto',      // 'auto'|'indexeddb'|'localstorage'
@@ -751,72 +755,54 @@ const Toast = {
    var S_DET_EPSILON = 1e-9;   // 矩阵行列式下限，防除零
    var RTS_MIN_DT = 200;       // ms，RTS 最小步长
    ```
-2. **`KalmanFilter`**：4 维状态 `[x,y,vx,vy]ᵀ`（局部米坐标），**仅服务离线 RTS 平滑**，与实时 `ImmFilter` 解耦。
+2. **`KalmanFilter`**：4 维状态 `[x,y,vx,vy]ᵀ`（局部米坐标），**仅服务离线 RTS 平滑**，与实时层彻底解耦（实时水平位置走 `PositionSmoother`）。
    - 预测 `F=[[1,0,dt,0],[0,1,0,dt],[0,0,1,0],[0,0,0,1]]`；`P⁻=F·P·Fᵀ+Q`，`Q=diag([q_pos,q_pos,q_vel,q_vel])`，`q_pos=RTS_Q*dt²/3` 量级、`q_vel=RTS_Q*dt`。
    - 更新 `H=[[1,0,0,0],[0,1,0,0]]`，`R=diag([r,r])`；标准 KF 增益 `K=P⁻Hᵀ(HP⁻Hᵀ+R)⁻¹`；含 **Huber 鲁棒**（见下）。
    - **`_huberKFor(speed, acc)`**：按速度+精度自适应缩放 Huber 阈值（`GPS_HUBER_K` 基准）：低速静止压狠、高速机动放宽、精度差收紧；返回 `k`（标准化残差阈值，0=禁用）。
-   - **`smooth(pts)`**：前向 KF + 后向 RTS 平滑，返回平滑后同结构点序列（WGS84 输入/输出，内部转局部米坐标，参考点取段首）。
+   - **`smoothTrail(fixes)`**：先按「时间断裂（dt≤0 或 >60s）/ accuracy>2000m / 距段首 >3km」分段，再逐段做前向 KF + 后向 RTS，返回与输入等长的平滑序列（输入由调用方预转 GCJ02，内部转局部米坐标系、参考点取段首；`ts` 原样透传，供按时间戳回写轨迹）。
 
-> 实时定位**不**用此类；实时用 `ImmFilter`（9.8）。
+> 实时定位**不**用此类；实时水平位置用 `PositionSmoother`（9.8）。
 
-### 9.8 gps-imm.js
-`ImmFilter`：交互式多模型（IMM）实时滤波，**统一 6 维状态 `[x,y,vx,vy,ax,ay]ᵀ`（局部 ENU 米坐标）**，三模型差异仅在加速度过程噪声 `q_a`（来自 `IMM_MODEL_Q=[STILL,CV,CA]`）。
+### 9.8 gps-window.js
+`PositionSmoother`：**实时水平位置平滑**（替代已删除的 IMM / 实时 Kalman 2D 滤波）。
 
-**F（各模型，3×3 块 ×2 轴）**：
+**设计约束：零外推**——输出永远是「已观测到的点之间」的统计量，绝不按最后速度往前冲。
+这是删掉实时卡尔曼的核心原因：移动场景（高铁/隧道）丢点时，带速度状态的滤波器会按最后
+速度持续外推，产生系统性拉偏（典型症状：火车上蓝点整体北偏几十公里）。
+
+**算法（每次 `push(fix, qualScore)`）**：
 ```
-STILL: F=[[1,0,0],[0,0,0],[0,0,0]]   // 位置不变，速度/加速度衰减
-CV:    F=[[1,dt,0],[0,1,0],[0,0,0]] // 加速度=0
-CA:    F=[[1,dt,dt²/2],[0,1,dt],[0,0,1]]
-```
-
-**IMM 四步（每次 `update(z, dt)`）**：
-```
-1) 交互混合：c_j=Σ_i μ_i·Π_ij；x0_j=Σ_i (μ_i·Π_ij/c_j)·x_i；
-            P0_j=Σ_i (μ_i·Π_ij/c_j)·(P_i+(x_i−x0_j)(x_i−x0_j)ᵀ)
-2) 各模型 KF：x_j,P_j,Λ_j = KF(x0_j,P0_j,z,dt,F_j,Q_j,R)
-   Q_j = diag(q_a_j² 相关块)；R 由 GPS 精度自适应（见 gps-manager）
-3) 概率更新：μ_j = (c_j·Λ_j^γ) / Σ_k(c_k·Λ_k^γ)，γ=IMM_LIKELIHOOD_TEMP（放大模型差异）
-   Λ_j = exp(−½·νⱼᵀSⱼ⁻¹νⱼ)/√(2π|Sⱼ|)
-   若 IMM_SPEED_PRIOR：用 GPS 上报 speed 软门控（速度大→抬 CV/CA 概率，静止→抬 STILL）
-4) 融合：x_fused=Σ_j μ_j·x_j；P_fused=Σ_j μ_j·(P_j+(x_j−x_fuse)ᵀ)
+1) 丢点冻结：距上次定位 > FREEZE_DT_MS(3s) → 清空窗口，直接返回原始点（绝不外推）
+2) 入窗：滑动窗保留最近 WIN(5) 个 fix；窗内不足 3 点 → 返回原始点（避免初期抖动）
+3) 静止冻结：与窗首位移 < accuracy × STATIC_RATIO → 返回最新原始点（消除站定拖影）
+4) 横纵分别取中位数：mlat = median(lats)，mlng = median(lngs)（抗单点粗差）
+5) Hampel 截断：|fix.lat − mlat| > madK × (1.4826 × MAD) → 判为鬼点，用中位数替换
 ```
 
-**保护机制**（全部保留）：
-- **Huber/冻结**：残差超 `_huberKFor` 降权；精度 `> IMM_FREEZE_ACC` 冻结在最后可信位置。
-- **时间重置/重锚**：`dt>IMM_DT_MAX` 重置模型概率；距参考点 `> IMM_REANCHOR_M` 重锚（参考点取段首 WGS84）。
-- **速度限幅**：模型速度模量 `> IMM_SPEED_LIMIT(120m/s)` 截断。
-- **概率下界**：`μ_j=max(μ_j, IMM_MIN_PROB)`，列归一防浮点死锁。
+**质量自适应**：`qualScore`（0~1，由 `GPSManager._computeSatStats` 综合参与定位星数、
+星座多样性、双频可用性算出）调节平滑强度——星多/双频时放宽 Hampel（少丢有效点），
+弱信号时收紧 Hampel 并降低静止门限。
 
-**IMU 注入（纯加速度先验）** `feedImu(a_enu, speed, tiltFactor)`：
-```
-// a_enu: 水平 ENU 加速度 [a_east,a_north]（来自 ImuManager，见 9.10）
-// speed: GPS 速度(m/s)，用于注入 clamp 分级
-// tiltFactor: 重力泄漏衰减因子 0~1（ImuManager.tiltLeakFactor，姿态误差使约 g·sinε 重力泄漏到水平轴时削减注入）
-// 仅注入 CA 模型预测：
-a_imu = clamp(a_enu, IMU_ACC_CLAMP_LEVELS[speed 档]) · tiltFactor
-G = [½dt², dt, 0]ᵀ                  // 只影响位置/速度预测，加速度状态保持模型自持
-x⁻_CA = F_CA·x̂_CA + G·a_imu
-// 注入期 CA 模型 Q 缩放：Q_CA *= max(0.3, 1 − 0.7·trust)   // trust 见下
-// 仅运动学先验，GPS 仍是位置权威（更新步仍用 GPS z）
-// trust 自适应：每帧按「IMU 推断速度变化 a·dt 与滤波输出速度变化 Δv_state 的方向一致性
-// 余弦」步进调整（IMU_TRUST_STEP），限幅于 [IMU_ACC_TRUST_MIN, IMU_ACC_TRUST_MAX]；
-// 低速(<0.5m/s)时 GPS 速度噪声主导一致性判断，向基础值 IMU_ACC_TRUST 回归。
-```
-> **明确不做**：GPS 丢失纯积分航迹推算（无 `predictOnly`/DR 状态机）、IMU 航向解算（航向完全由 GPS 权威 + `coords.heading`）。
+> 只输出 `lat/lng`，不动 `accuracy/speed/heading`（这些由 `GPSManager` 直接透传）。
+> 原始测量同时存入 `GPSManager._rawFixes` 供离线 RTS 使用，两条路径彻底解耦。
 
-**ENU 旋转**（设备系→地理系，IMU 用）：设备线性加速度经 `rotation` 四元数旋到 ENU 得到三轴 `[E,N,U]`；`E/N` 供水平注入，`U`（垂直）供海拔 CA 融合（见 9.9）。
+**ENU 旋转**（设备系→地理系，IMU 用）：设备线性加速度经 `rotation` 四元数旋到 ENU 得到三轴 `[E,N,U]`；只有 `U`（垂直）被消费，注入海拔 CA 融合（见 9.9）。
 
 ### 9.9 gps-alt.js
 海拔滤波链，**完全独立于水平滤波**，四级融合 + IMU 垂直注入：
 1. **L1 源头质量门 `_resolveAltitude`**：按口径来源（`gga` 来自 NMEA `$GPGGA` 海拔 / `browser` 来自 `coords.altitude`）与历史一致性筛除野值。
 2. **L2 `AltKalmanFilter`**（1D 自适应卡尔曼）：状态 `[alt, vAlt]`；`R` 在 `[ALT_KALMAN_R_MIN, ALT_KALMAN_R_MAX]` 间按残差自适应（基准 `ALT_KALMAN_R_BASE`）；`Q` 在 `[ALT_KALMAN_Q_BASE, ALT_KALMAN_Q_MAX]` 间按垂直速度（`ALT_KALMAN_Q_REF_VEL`）自适应。**IMU 垂直融合（方向 3）**：`feedAccU(aU, speed)` 把 ENU U 轴线性加速度（`TYPE_LINEAR_ACCELERATION` 已去重力，无需再减 g）注入 CA 预测 `x⁻ = F·x̂ + G·u`（`G=[½dt²,dt]ᵀ`，仅运动学先验），GPS 海拔仍是观测权威（零基准由 GPS 持续校正，绝不做纯积分）；垂直注入按 `ALT_IMU_U_CLAMP_LEVELS` 分级 clamp + `ALT_IMU_TRUST` 缩放，注入期 Q 同步缩小（`max(0.3, 1−0.7·trust)`）；web 无插件时静默跳过。
-3. **L3 `AltFilterPipeline`**：中值预滤波（`ALT_MEDIAN_WINDOW=5` 奇数）→ 自适应 Huber（`ALT_HUBER_K`，下限 `ALT_HUBER_K_MIN`，基于 `ALT_RESIDUAL_WINDOW=20` 残差窗口估计鲁棒尺度 σ̂）；速率限幅 `ALT_VELOCITY_LIMIT=30m/s`；透传 `feedAccU()` 到卡尔曼。
-4. **L4 `AltRtsSmoother`**（离线 1D RTS）：结束记录后处理；反向平滑权重 `α∈[ALT_RTS_ALPHA_MIN, ALT_RTS_ALPHA_MAX]`，残差大时权重高。
+3. **L3 `AltFilterPipeline`**：中值预滤波（`ALT_MEDIAN_WINDOW=5` 奇数）→ 自适应 Huber（`ALT_HUBER_K` × 鲁棒尺度 σ̂，σ̂ 由 `ALT_RESIDUAL_WINDOW=20` 残差窗口的 MAD×1.4826 估计）；速率限幅 `ALT_VELOCITY_LIMIT=30m/s`；透传 `feedAccU()` 到卡尔曼。口径切换（gga↔browser）自动重置，避免平台基准跳变。
+4. **L4 `AltRtsSmoother`**（离线 1D RTS）：结束记录后处理；前向 1D 卡尔曼 + 反向固定权重递推 `out[i]=fwd[i]·(1−α)+out[i+1]·α`（`α=ALT_RTS_ALPHA_MAX`）；`null` 点不内插、保持缺口。
 
 > 海拔链实时消费「原始海拔 + 时间戳 + 口径来源 + IMU U 轴加速度（可选）」，参数全走 `ALT_*`，不读水平精度/`GPS_HUBER_K`。离线 RTS 仍只消费原始海拔序列。
 
 ### 9.10 gps-imu.js
-`ImuManager`：原生 `ImuData` 插件桥接，**仅定位校准**。
+`ImuManager`：原生 `ImuData` 插件桥接，**仅海拔垂直校准**（U 轴加速度注入）。
+
+> 水平 `[E,N]` 注入已随实时 2D 滤波（ImmFilter）一并移除：单靠加速度计在数学上不可观测
+> 航向（绕重力轴旋转无信息），航向缺失时盲注会给轨迹引入一个未知固定角偏差。垂直 `U`
+> 不依赖航向（只依赖俯仰/翻滚），因此保留。
 
 **生命周期**：随 watch 启停（`GPSManager._startImu`/`_stopImu`），省电模式同步关闭；web 端无插件时 `isAvailable()===false`，静默跳过，**纯 GPS 零回归**。
 
@@ -831,43 +817,41 @@ ImuData 回调(线性加速度 ax/ay/az + rotation 四元数 + timestamp/rotatio
   → 设备系线性加速度经该姿态旋到 ENU → 三轴 [E,N,U]
   → 滑窗均值（IMU_FEED_INTERVAL_MS 窗口，分 IMU_WIN_BUCKETS=4 个桶环形缓冲，持续输出近 1s 均值）
   → 一阶低通 a_lpf = α·a_new + (1−α)·a_old   (α=IMU_ACC_LPF_ALPHA)
-  → 绝对安全上限限幅 |a_lpf|>IMU_ACC_CLAMP → 截断
-  → U 轴偏置/抖动统计（_updateUStats）→ tiltLeakFactor 供水平注入衰减
-  → GPSManager 每次滤波 update 前：
-      feedImu(a_enu, speed, tiltFactor)    注入 ImmFilter CA 模型（分级 clamp + 泄漏衰减）
-      feedAccU(aU, speed)                  注入 AltKalmanFilter 海拔 CA 融合（方向 3）
+  → 绝对安全上限限幅 |a_lpf| > IMU_ACC_CLAMP → 截断
+  → GPSManager 每个 fix 取 [U] 调用 AltFilterPipeline.feedAccU(aU, speed)
+      （按速度分级 clamp + ALT_IMU_TRUST 缩放由海拔侧完成，见 9.9）
 ```
 **新鲜度门**：聚合值年龄 `> IMU_FEED_MAX_AGE_MS(2000)` 视为过期，本次不注入。
+
+**状态栏指示**：`GPSManager.imuAssistActive = !!imuAcc`（存在新鲜三轴数据即为 true），驱动状态栏「IMU 惯性校准辅助中」提示。
 
 **明确不做**：航向解算（陀螺仪不融合）。航向由 GPS 权威（NMEA VTG/RMC + `coords.heading`）；GPS 航向缺失/低速时由 `GPSManager._resolveHeadingFallback` 用滤波后相邻点位移差分兜底（`HEADING_DIFF_*`）。
 
 ### 9.11 gps-manager.js
-`GPSManager` 主控制器。构造内实例化 `ImmFilter`/`KalmanFilter`(离线)/`AltFilterPipeline`/`AltRtsSmoother`/`ImuManager`。
+`GPSManager` 主控制器。构造内实例化 `PositionSmoother`/`KalmanFilter`(离线 RTS)/`AltFilterPipeline`/`AltRtsSmoother`/`ImuManager`。
 
 **关键方法**：
 
 | 方法 | 说明 |
 |---|---|
-| `startWatching(opts)` | `navigator.geolocation.watchPosition`；成功 `_onGeoSuccess`；失败 `_onGeoError`；同时 `_startImu()`。 |
-| `stopWatching()` | 清 watch + `_stopImu()`。 |
-| `_onGeoSuccess(pos)` | 解析 `coords`(WGS84) → 推入 `_rawFixes`(WGS84) → 速度自适应节流 → `ImmFilter.update(z,dt)`(或单模型 `KalmanFilter` 当 `IMM_FILTER_ENABLED=false`) → `AltFilterPipeline.push(alt,口径)` → 注入 IMU → `_resolveHeadingFallback` → 回调 `onPositionChange(filtered)`。 |
-| `_onGeoError(err)` | 精度降级/权限拒绝 → `onError`；超时失败累计达 `GPS_TIMEOUT_MAX_FAILURES` 触发降级策略。 |
+| `startWatching(opts)` | `navigator.geolocation.watchPosition`；成功回调内联处理；失败走错误回调；同时 `_startImu()`。 |
+| `stopWatching()` | 清 watch + `_stopImu()` + 复位滑动窗 / 差分航向 / 时钟漂移估计。 |
+| watch 成功回调 | 解析 `coords`(WGS84) → 原生坐标交叉校验 → 速度自适应节流（窗口内择优 + 运动击穿）→ 解算 speed/heading/altitude → IMU 取 `[U]` 注入 + `AltFilterPipeline.push(alt, 口径)` → 原始测量**预转 GCJ02** 推入 `_rawFixes` → `PositionSmoother.push()` 平滑 lat/lng → `_resolveHeadingFallback()` → 回调 `onPositionChange(pos)`。 |
+| `getCurrentPosition(timeout)` | 单次定位（初始中心/天气/重定位）。**不经过滑动窗平滑，也不写 `_rawFixes`**。 |
 | `_startImu()`/`_stopImu()` | IMU 启停；web 无插件跳过。 |
-| `feedImu(a)` | 供 ImuManager 回调注入。 |
-| `_resolveHeadingFallback()` | GPS 航向权威（VTG/`coords.heading`）；低速/缺失用相邻滤波点位移差分 + `HEADING_DIFF_LPF_ALPHA` 一阶低通。 |
-| `getFilteredState()` | 当前滤波后 `{lat,lng,alt,speed,heading,accuracy}`（WGS84 局部）。 |
-| `setPowerSave(bool)` | 省电：关 IMU、降 `enableHighAccuracy`、拉长间隔到 `BG_LOCATE_INTERVAL_POWER_SAVE`。 |
-| `singleLocate()` | `getCurrentPosition` 单次（初始中心/天气）。 |
+| `_resolveHeadingFallback()` | GPS 航向权威（VTG/`coords.heading`）；低速/缺失用相邻**平滑后**点位移差分 + `HEADING_DIFF_LPF_ALPHA` 一阶低通。 |
+| `smoothTrailRts3d()` | 停止记录时的离线后处理：取走 `_rawFixes` → `TrailDenoise.denoiseTrail` → 水平 2D RTS → `kinematicClamp` → 海拔 1D RTS → 返回含 `alt` 的 GCJ02 序列（由 `App._applyTrailRtsSmoothing` 按 `ts` 写回轨迹点）。 |
+| `filterAltitude(alt, time)` | 海拔滤波统一入口（后台定位路径复用）。 |
 
 **NMEA 增强**（原生插件推送）：`addListener('nmea',...)` 解析 `$GPVTG`(航向/速度)、`$GPGGA`(海拔/大地水准面)、`$G?GSA`(PDOP/HDOP/VDOP)、`$GPRMC`(速度/航向/有效性)；交叉验证：`NMEA_SPEED_CONFLICT_*`(VTG vs RMC 速度)、`NMEA_HEADING_CONFLICT_DEG`、`NMEA_COORD_CONFLICT_M`+`STREAK`(原生 GGA/RMC vs 浏览器点)；UTC 时钟校准 `NMEA_UTC_MAX_AGE_MS`。
 
-**定位源接管**（折中方案）：`GPS_TAKEOVER_MIN_SATS`+`GPS_TAKEOVER_HDOP` 判原生主导；否则浏览器低频兜底（`GPS_NATIVE_FALLBACK_INTERVAL`/`MAX_AGE`）；`GPS_SOURCE_HOLD_MS` 滞回防抖。
+**定位源接管**（折中方案）：`GPS_TAKEOVER_MIN_SATS`+`GPS_TAKEOVER_HDOP` 判原生主导；否则浏览器兜底（放宽缓存窗口 `GPS_NATIVE_FALLBACK_MAX_AGE`）；`GPS_SOURCE_HOLD_MS` 滞回防抖。源切换只调整 watch 参数，坐标仍由浏览器 `coords` 提供。
 
 **GNSS 弱信号省电联动**：参与卫星数/平均 SNR 经 `GNSS_WEAK_*`/`GNSS_RECOVER_*` 滞回带判定进入/恢复降级；降级时定位心跳拉长到 `GPS_WEAK_SIGNAL_INTERVAL`(120s)，可选 `GPS_WEAK_SIGNAL_LOW_ACCURACY` 降精度。
 
-**速度自适应节流**：`interval = clamp(GPS_ADAPTIVE_K/speed 相关, GPS_MIN_INTERVAL, GPS_MAX_INTERVAL)`，弱信号覆盖 `GPS_WEAK_SIGNAL_INTERVAL`。
+**速度自适应节流**：`interval = clamp(GPS_ADAPTIVE_K / speed, GPS_MIN_INTERVAL, GPS_MAX_INTERVAL)`（静止即 60s 心跳），弱信号覆盖 `GPS_WEAK_SIGNAL_INTERVAL`；节流窗口内保留精度最优的 fix（优于当前点一半才替换），且浏览器上报速度 > `GPS_MOVE_THRESHOLD` 时立即击穿窗口，避免静止起步要等 60s。
 
-**回调**：`onPositionChange`/`onError`/`onStateChange` 由 `App` 构造后赋值（见 9.13）。
+**回调**：`onPositionChange`/`onError`/`onDowngrade`/`onRecovery`/`onPowerSavingChange`/`onWeakSignalChange`/`onSatellitesChange`/`onCriticalBattery`/`onRestoreTracking` 由 `App` 构造后赋值（见 9.13）。
 
 ### 9.12 replay.js
 `TrailPlayer`：`requestAnimationFrame` 驱动回放播放器。

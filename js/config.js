@@ -14,9 +14,6 @@ const CONFIG = {
   // 定位后缩放级别
   LOCATION_ZOOM: 15,
 
-  // 画布最小绘制像素阈值
-  MIN_DRAW_PX: 4,
-
   // GPS 超时时间（毫秒）
   GPS_TIMEOUT: 10000,
   GPS_WATCH_TIMEOUT: 5000,
@@ -28,7 +25,6 @@ const CONFIG = {
 
   // 地球半径（米）
   EARTH_RADIUS: 6371000,
-  GRAVITY: 9.81,                   // 标准重力加速度（m/s²，IMU U 轴泄漏比估计用）
 
   // localStorage 存储键名
   STORAGE_KEY: 'trailcraft_data',
@@ -107,6 +103,11 @@ const CONFIG = {
   TRAIL_DENOISE_BASE_M: 10,
   // —— 信号丢失段标记（计划 A）——
   SIGNAL_LOSS_MIN_WEAK_PTS: 3,        // 连续弱信号点数达此值才标为「信号丢失段」
+  // 弱信号点判定阈值（米）：单点 accuracy 超过此值即视为弱信号点。
+  // 同时供 detectSignalLoss（灰色丢星段）与 analyzeHealth（健康分 weakRatio）使用。
+  // 取值参考：开阔天空 5~15m，城市峡谷/树荫 20~50m，>50m 基本为明显遮挡或丢星。
+  // 沿革：原名 CONFIG.IMM_FREEZE_ACC（IMM 冻结阈值），随实时 IMM 删除后独立命名。
+  SIGNAL_LOSS_ACC_M: 50,
   SIGNAL_LOSS_GREY: '#888888',        // 丢星段灰色
   // —— 记录健康分（计划 E）——
   HEALTH_GRADE_THRESHOLDS: [0.9, 0.75, 0.6], // A / B / C / D 分数阈值
@@ -163,7 +164,6 @@ const CONFIG = {
   // ----- GNSS 定位源接管（折中方案：原生主导 + 浏览器低频兜底）-----
   GPS_TAKEOVER_MIN_SATS: 4,             // 接管所需最少参与定位卫星数
   GPS_TAKEOVER_HDOP: 4,                 // HDOP 优于此值视为信号好（原生主导）
-  GPS_NATIVE_FALLBACK_INTERVAL: 30000,  // native 档浏览器兜底心跳间隔（ms）
   GPS_NATIVE_FALLBACK_MAX_AGE: 30000,   // native 档浏览器 maximumAge（ms）
   GPS_SOURCE_HOLD_MS: 5000,             // 源切换滞回持续时长（防边界抖动，约 1s/次 GNSS 事件）
 
@@ -214,13 +214,11 @@ const CONFIG = {
     MAD_K: 3,                 // Hampel 截断倍数（残差 > k·MAD 视为鬼点，用中位数替换）
     FREEZE_DT_MS: 3000,       // 丢点冻结：距上次定位超此值(ms)直接回退原始点，不外推
     STATIC_RATIO: 1.0,        // 静止判定：位移 < accuracy×该值 → 输出原始点（防拖影）
-    // 模块1：qualScore → 平滑强度自适应
-    QUAL_ADAPT: true,            // 用 GNSS 质量评分调节 Hampel 阈值与静止门限
+    // 模块1：qualScore → 平滑强度自适应（评分由 GPSManager.qualScore 按卫星统计给出）
     QUAL_DUALBAND_MAD_K: 4,      // 双频/星多可用时放宽 Hampel（点更可信，少丢有效点）
     QUAL_WEAK_MAD_K: 2,          // 弱信号（星少单频）时收紧 Hampel（更信模型）
     QUAL_WEAK_STATIC_RATIO: 0.7, // 弱信号时更易判定静止（防抖动拖影）
     // 模块3：卫星加权（仰角掩码 + C/N0 加权），由速度因子自适应插值（见 GNSS_* 配置）
-    ADAPTIVE_WEIGHT: true,       // 启用逐星权重（web 端无 elevation 时自动退化为仅 C/N0）
     WEIGHT_ELEV_FLOOR: 0.3,      // 低仰角星最低权重（仰角≥mask 时从 floor 升到 1）
     WEIGHT_ELEV_SPAN_DEG: 60,    // 仰角从 mask 升到满权所需跨度（度）
   },
@@ -235,7 +233,6 @@ const CONFIG = {
   GNSS_ELEV_MASK_FAST: 25,       // 驾车仰角掩码(度)：收紧压多径
   GNSS_CN0_MIN_SLOW: 15,         // 步行 C/N0 门限(dB-Hz)：弱星也接纳
   GNSS_CN0_MIN_FAST: 28,         // 驾车 C/N0 门限(dB-Hz)：只留强星
-  GNSS_CN0_LERP_LOW: 18,         // C/N0 权重起算点(dB-Hz，固定)
   GNSS_CN0_LERP_HIGH_SLOW: 30,   // 步行 C/N0 达此值即满权
   GNSS_CN0_LERP_HIGH_FAST: 40,   // 驾车 C/N0 需达此值才满权
 
@@ -264,53 +261,28 @@ const CONFIG = {
     { lo: 1565, hi: 1585 },   // L1 主频段（用于同系统双频共存探测，与 L5 配对）
   ],
 
-  // ----- IMU 惯性导航融合（仅定位校准：加速度注入辅助滤波，不做航迹推算）-----
-  // 职责收窄：只消费 TYPE_LINEAR_ACCELERATION（去重力线性加速度），用 rotation 四元数
-  // 旋转到 ENU 地理系 → 滑窗均值（近 IMU_FEED_INTERVAL_MS 窗口，分 IMU_WIN_BUCKETS 个桶
-  // 环形缓冲持续输出）→ 一阶低通 → 注入离线 RTS 平滑器（KalmanFilter._offlineSmoother）
-  // 的 CA 模型预测（x⁻=F·x̂+G·a_imu，仅运动学先验，GPS 仍是位置权威）。
-  // 注：实时 2D 位置滤波（原 ImmFilter）已硬删，蓝点=原始单次定位，消除高铁/隧道外推漂移；
-  // IMU 仅作离线平滑的运动学先验注入，不影响实时定位。
+  // ----- IMU 惯性传感器（仅海拔垂直校准：U 轴加速度注入）-----
+  // 职责：只消费 TYPE_LINEAR_ACCELERATION（去重力线性加速度），用 rotation 四元数旋转到
+  // ENU 地理系 → 滑窗均值（近 IMU_FEED_INTERVAL_MS，分 IMU_WIN_BUCKETS 个桶的环形缓冲，
+  // 均值持续更新）→ 一阶低通 → 输出 [E,N,U]。GPSManager 只取 U 轴注入海拔卡尔曼的 CA
+  // 预测（x⁻ = F·x̂ + G·u，G=[½dt², dt]ᵀ），GPS 海拔仍是观测权威、绝不做纯积分。
+  // 实时 2D 位置滤波（原 ImmFilter）已删除：水平 E/N 注入随之移除——单靠加速度计在数学上
+  // 不可观测航向（绕重力轴旋转无信息），盲注会给轨迹引入一个未知固定角偏差；U 轴注入
+  // 保留（垂直只依赖俯仰/翻滚，是加速度可观测部分，且不需要航向）。
+  // 不做 GPS 丢失时的纯推算（无 predictOnly / DR 状态机）。web 端无插件零回归。
   // 姿态-加速度时间对齐：插件下发 rotationTs（姿态事件时间戳），JS 侧姿态环形缓冲按
   // 加速度事件时间戳查询最近姿态（偏差 > IMU_ROT_MAX_DT_MS 视为不匹配，安全降级）。
-  // 三轴输出：旋转后的 E/N/U 全部保留；U 轴（垂直）用于海拔卡尔曼 CA 注入（方向 3），
-  // 并做 U 轴偏置统计估计重力泄漏量级，衰减水平注入（方向 6）。
-  // 注入强度自适应：IMU 推断速度变化与滤波速度变化方向一致 → trust 抬升，冲突 → 回落
-  // （方向 4）；clamp 按 GPS 速度分级：静止收紧防噪声、高速放宽保机动（方向 5）。
-  // 航向由 GPS 权威（NMEA VTG/RMC + 浏览器 coords.heading），GPS 航向缺失/低速时由
-  // HEADING_DIFF_* 位置差分兜底；IMU 不参与航向解算。
-  // 不做 GPS 丢失时的纯推算（无 predictOnly / DR 状态机）。web 端无插件零回归。
-  // IMU_HORIZONTAL_REQUIRE_HEADING：水平 E/N 注入要求 GPS 航向可靠（非低速且航向源有效）。
-  // 单靠加速度计在数学上不可观测航向（绕重力轴旋转不可解），航向缺失时水平注入方向
-  // 会差一个未知固定角 → 错误拉偏轨迹。故航向不可靠（低速起步/遮挡/丢星）时禁用水平
-  // 注入、只保留 U 轴海拔注入（垂直不依赖航向，只依赖俯仰/翻滚，是加速度可观测部分）。
-  // 设 false 则回归旧行为（航向缺失仍注入水平，靠 tiltLeakFactor/trust 自适应兜底）。
-  IMU_HORIZONTAL_REQUIRE_HEADING: true,
+  // 注：注入强度与分级 clamp 在海拔侧（ALT_IMU_TRUST / ALT_IMU_U_CLAMP_LEVELS），
+  // 这里的 IMU_ACC_CLAMP 只是传感器粗差的绝对安全上限。
   IMU_ENABLED: true,               // IMU 总开关（false 完全禁用；web 无插件自动跳过）
   IMU_FEED_INTERVAL_MS: 1000,      // 加速度滑窗聚合时长（1Hz，对齐 GPS 秒级步长）
   IMU_WIN_BUCKETS: 4,              // 滑窗分桶数（窗口均分，桶粒度=窗口/桶数，滑动输出近 1s 均值）
   IMU_FEED_MAX_AGE_MS: 2000,       // 聚合值新鲜度上限：超时视为过期不注入（防陈旧数据）
   IMU_ACC_LPF_ALPHA: 0.4,          // 窗口均值后一阶低通系数（0=保持旧值，1=全信最新均值）
-  IMU_ACC_TRUST: 0.6,              // 注入强度基础值（0=纯 GPS，1=完全信任 IMU 加速度；随一致性自适应）
-  IMU_ACC_TRUST_MIN: 0.2,          // trust 自适应下限（一致性冲突/低速噪声时回落）
-  IMU_ACC_TRUST_MAX: 0.8,          // trust 自适应上限（一致性一致时抬升）
-  IMU_TRUST_STEP: 0.08,            // trust 每帧调整步长（方向一致性余弦加权）
-  IMU_TRUST_LOWSPEED_RETURN: 0.05, // 低速（<0.5m/s）时 trust 回归基础值的速率（GPS 速度噪声大，一致性不可靠）
-  IMU_ACC_CLAMP: 30,               // 加速度绝对安全上限（m/s²，防传感器粗差；注入前再按速度分级收紧）
-  IMU_ACC_CLAMP_LEVELS: [          // 注入 clamp 分级（按 GPS 速度 m/s）：静止收紧防噪声、高速放宽保机动
-    { maxSpeed: 1, clamp: 1.0 },    // 静止：微小抖动视为噪声
-    { maxSpeed: 3, clamp: 3.0 },    // 步行
-    { maxSpeed: 8, clamp: 6.0 },    // 骑行
-    { maxSpeed: Infinity, clamp: 10.0 }, // 机动/高速
-  ],
+  IMU_ACC_CLAMP: 30,               // 加速度绝对安全上限（m/s²，防传感器粗差）
   IMU_MIN_USED_SATS: 5,            // 参与定位（解算中）卫星数阈值：仅当 usedInFix 卫星数 > 此值时才启用 IMU
-  IMU_ROT_MAX_DT_MS: 200,          // 姿态-加速度最大时间差（毫秒）：姿态事件与加速度事件时间戳偏差超此值视为不匹配，安全降级不注入
+  IMU_ROT_MAX_DT_MS: 200,          // 姿态-加速度最大时间差（毫秒）：偏差超此值视为不匹配，安全降级不注入
   IMU_ROT_BUF_MAX: 32,             // 姿态环形缓冲容量（姿态约 5-10Hz，32 条 ≈ 3-6s 历史）
-  IMU_U_RMS_LPF_ALPHA: 0.2,        // U 轴抖动 RMS 一阶低通系数（垂直动态检测）
-  IMU_U_BIAS_LPF_ALPHA: 0.05,      // U 轴偏置慢速低通系数（姿态误差 → 重力泄漏到水平轴的量级估计）
-  IMU_U_BIAS_LOW_RMS_MAX: 1.0,     // 仅当 U 轴 RMS 低于此值（m/s²，低动态）才更新偏置（防运动加速度污染）
-  IMU_BIAS_STILL_SPEED: 0.3,       // 零偏学习"真静止"的 GPS 速度阈值（m/s）：速度低于此且 U 轴低动态才更新 E/N/U 零偏
-  IMU_BIAS_MIN_STILL: 30,          // 偏置可信度门槛：连续静止帧数达此值才启用 E/N 零偏扣除（防运动段误学立即污染）
 
   // ----- 海拔独立滤波（完全自洽，不依赖水平滤波/Huber/RTS 机制）-----
   // 四级融合：L1 源头质量门(_resolveAltitude) → L2 1D 自适应卡尔曼(AltKalmanFilter)
@@ -336,10 +308,8 @@ const CONFIG = {
   ALT_RESIDUAL_WINDOW: 20,            // 残差滑动窗口（自适应 R/Huber 估计共用）
   ALT_MEDIAN_WINDOW: 5,               // 中值预滤波窗口（奇数，去瞬态尖刺）
   ALT_HUBER_K: 2.0,                   // 海拔残差 Huber 阈值系数（×鲁棒尺度 σ̂，自适应）
-  ALT_HUBER_K_MIN: 1.0,               // Huber 阈值下限（σ̂ 倍数，防止过度收缩）
   ALT_VELOCITY_LIMIT: 30,             // 海拔变化速率上限（m/s）
-  ALT_RTS_ALPHA_MAX: 0.3,             // 海拔 RTS 反向平滑最大权重（残差大时）
-  ALT_RTS_ALPHA_MIN: 0.1,             // 海拔 RTS 反向平滑最小权重（残差小时）
+  ALT_RTS_ALPHA_MAX: 0.3,             // 海拔 RTS 反向平滑权重 α：out[i]=fwd[i]·(1−α)+out[i+1]·α
 
   // ----- 存储引擎 -----
   TRAIL_STORAGE_ENGINE: 'auto',

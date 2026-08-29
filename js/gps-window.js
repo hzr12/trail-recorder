@@ -136,10 +136,6 @@
       this._rejected = 0;
     }
 
-    setEnabled(on) {
-      this.enabled = !!on;
-      if (!this.enabled) this.reset();
-    }
   }
 
   global.PositionSmoother = PositionSmoother;

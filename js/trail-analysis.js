@@ -429,7 +429,7 @@ const TrailAnalysis = {
     if (!Array.isArray(positions) || positions.length < 2) return { segments: [] };
     const weakLimit = CONFIG.SIGNAL_LOSS_MIN_WEAK_PTS;
     const gapMs = CONFIG.RTS_GAP_MAX_DT_S * 1000;
-    const accLimit = CONFIG.IMM_FREEZE_ACC;
+    const accLimit = CONFIG.SIGNAL_LOSS_ACC_M;
     const segs = [];
     let weakRun = 0, weakStart = -1;
     for (let i = 0; i < positions.length; i++) {
@@ -462,7 +462,7 @@ const TrailAnalysis = {
     let weak = 0, jump = 0, gap = 0;
     for (let i = 1; i < n; i++) {
       const p = positions[i], prev = positions[i - 1];
-      if (p.accuracy != null && p.accuracy > CONFIG.IMM_FREEZE_ACC) weak++;
+      if (p.accuracy != null && p.accuracy > CONFIG.SIGNAL_LOSS_ACC_M) weak++;
       const dt = (p.time && prev.time) ? (p.time - prev.time) / 1000 : 0;
       const expDist = (p.speed || 0) * dt;
       const realDist = calcDistance(prev, p);

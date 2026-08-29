@@ -2,8 +2,10 @@
  * 圆圈地图 - GPS 定位管理器（主控制器）
  * ============================================
  * gps.js 拆分后的最后一个文件：GPSManager 实例化并协调前面所有类
- * （KalmanFilter[离线RTS] / AltFilterPipeline / AltRtsSmoother / ImuManager）。
- * 实时 2D 位置滤波已移除（蓝点=原始单次定位）；IMM 类(gps-imm.js)已删除。
+ * （PositionSmoother[实时水平滑动窗] / AltFilterPipeline + AltRtsSmoother[海拔]
+ *  / KalmanFilter[离线 RTS] / ImuManager[U 轴加速度注入]）。
+ * 实时水平位置不再做卡尔曼外推（ImmFilter / gps-imm.js 已删除）：蓝点=滑动窗口中位数
+ * + Hampel 平滑结果（见 gps-window.js），零外推；整段离线 RTS 只在停止记录时跑一次。
  * 依赖 gps-kalman.js 的全局常量 DEG2RAD / M_PER_DEG、config.js 的 calcDistance、
  * toast.js 的 Toast，必须在其后加载。
  */
@@ -87,7 +89,6 @@ class GPSManager {
     this._tsAnchorLocal = 0;    // 锚点本地时刻
     this._tsDriftBuf = [];      // 最近 N 次漂移估计（滑动均值）
     this._tsDriftEst = 0;       // 当前漂移估计（ms）
-    this._rawPosition = null;         // 滤波前的原始位置（保留供 trail 等使用）
     this._rawFixes = [];              // 原始测量缓冲（滤波前），供结束记录时 RTS 离线平滑
     this._maxRawFixes = 50000;        // 缓冲上限（超出丢弃最旧，防止内存膨胀）
     this._mapManager = null;          // 注入 mapManager，采集时把原始坐标预转 GCJ02（与轨迹点同系）
@@ -128,7 +129,6 @@ class GPSManager {
     // 位置差分航向兜底（GPS 航向缺失/低速时，用滤波后相邻点位移反推航向 + 一阶低通）
     this._diffHeading = null;          // 低通后的差分航向（度，0~360）
     this._diffHeadingPos = null;       // 上一次用于差分的滤波后位置 {lat, lng}
-    this._lastHeadingSource = 'none';  // 航向来源（vtg/browser/none），驱动 IMU 水平注入开关
 
   }
 
@@ -983,7 +983,11 @@ class GPSManager {
     stats.multiSingle = stats.trustedConstCount < CONFIG.GNSS_MULTI_CONST.MIN_CONST_FOR_TRUST;
     // 模块1：GNSS 质量评分（反哺平滑强度），归一化 0~1
     const constCount = ['gps', 'beidou', 'glonass', 'galileo'].filter(k => (usedConsts[k] || 0) > 0).length;
-    // 模块3：质量评分改用加权有效星数（低仰角/低 C/N0 星被降权，反映真实可用星）
+    // 模块3：质量评分用加权有效星数（低仰角/低 C/N0 星被降权，反映真实可用星）。
+    // effUsed 必须在算 q 之前赋值：此前「先读后写」（stats 每次新建，读到 undefined）
+    // 使 q 恒为 NaN → qualScore 恒 NaN → 平滑层按质量自适应 Hampel/静止门限的档位
+    // （QUAL_DUALBAND_MAD_K / QUAL_WEAK_MAD_K / QUAL_WEAK_STATIC_RATIO）永远进不去。
+    stats.effUsed = stats.weightedUsed;
     let q = stats.effUsed * CONFIG.GNSS_QUAL.USED_W
           + (constCount - 1) * CONFIG.GNSS_QUAL.CONST_DIV_W
           + (stats.dualBand ? CONFIG.GNSS_QUAL.DUALBAND_W : (hasDualFreqSat ? CONFIG.GNSS_QUAL.DUALBAND_W * 0.6 : 0));
@@ -992,8 +996,6 @@ class GPSManager {
       q *= CONFIG.GNSS_MULTI_CONST.SINGLE_CONST_PENALTY;
     }
     stats.qualScore = Math.max(0, Math.min(1, q / CONFIG.GNSS_QUAL.MAX));
-    // 模块3：弱信号判定改用加权有效星数（低仰角/低 C/N0 星被降权，不被虚高卫星数误导）
-    stats.effUsed = stats.weightedUsed;
     stats.weak = stats.effUsed < CONFIG.GNSS_QUAL.WEAK_USED_MAX; // 弱信号标记（供平滑收紧）
     return stats;
   }
@@ -1043,8 +1045,11 @@ class GPSManager {
     let elevW = 1;
     if (typeof s.elevation === 'number') {
       if (s.elevation < mask) return 0;                  // 低于掩码直接剔除（多径最重）
-      const span = CONFIG.WEIGHT_ELEV_SPAN_DEG;
-      elevW = Math.min(1, CONFIG.WEIGHT_ELEV_FLOOR + (1 - CONFIG.WEIGHT_ELEV_FLOOR) * (s.elevation - mask) / span);
+      // 注意：这两个常量在 CONFIG.POS_FILTER 下（曾写成 CONFIG.WEIGHT_ELEV_*，
+      // 读到 undefined → span 参与除法 → 权重 NaN → weightedUsed/effUsed/qualScore 全链 NaN）
+      const span = CONFIG.POS_FILTER.WEIGHT_ELEV_SPAN_DEG;
+      elevW = Math.min(1, CONFIG.POS_FILTER.WEIGHT_ELEV_FLOOR +
+        (1 - CONFIG.POS_FILTER.WEIGHT_ELEV_FLOOR) * (s.elevation - mask) / span);
     }
     // C/N0 权重
     const c = s.cn0DbHz || 0;
@@ -1484,24 +1489,10 @@ class GPSManager {
         // 信号质量评分（0-100）写入轨迹点，供后续轨迹质量分聚合使用
         pos.signalQuality = this.signalQualityScore;
 
-        // 方向 5 增强：水平 E/N 注入依赖航向（ENU 旋转需要航向信息）。单靠加速度计
-        // 在数学上不可观测航向（绕重力轴旋转无信息），航向缺失/低速时水平方向会差
-        // 一个未知固定角 → 错误拉偏轨迹。故航向不可靠时禁用水平注入、只保留 U 轴
-        // 海拔注入（垂直不依赖航向，只依赖俯仰/翻滚，是加速度可观测部分）。
-        // 航向可靠 = GPS 航向源有效（vtg 原生 / browser 物理测量）且非低速。
-        // IMU_HORIZONTAL_REQUIRE_HEADING=false → 回归旧行为（恒可靠，不受航向约束）。
-        const hdrSrc = this._lastHeadingSource;
-        const hdrReliable = CONFIG.IMU_HORIZONTAL_REQUIRE_HEADING === false ? true :
-          (hdrSrc === 'vtg' || hdrSrc === 'browser') &&
-          (pos.speed == null || pos.speed >= CONFIG.HEADING_DIFF_MIN_SPEED);
-        if (this._imuManager) this._imuManager.setHeadingReliable(hdrReliable);
-        // 注入 GPS 速度供 IMU 零偏估计的"真静止"判定（方向 6 扩展：E/N 轴零偏仅静止时学习）
-        if (this._imuManager) this._imuManager.setGpsSpeed(pos.speed);
-
         // ── IMU 校准：三轴加速度一次取用 ──
         // web 无插件 / 事件流过期 / 未启动 → getLatestAccEnu() 返回 null，跳过注入纯 GPS 不变。
-        // 实时 2D 位置滤波已删除，水平 [E,N] 注入随之移除；
-        // 仅垂直 [U] 注入海拔 CA 融合（GPS 仍是海拔权威，方向 3）。
+        // 实时 2D 位置滤波（原 IMM）已删除，水平 [E,N] 注入随之移除；
+        // 仅垂直 [U] 注入海拔 CA 融合（GPS 仍是海拔权威）。
         const imuAcc = this._imuManager ? this._imuManager.getLatestAccEnu() : null;
         // IMU 辅助状态：本帧有可用三轴加速度（参与海拔/水平注入）即为辅助激活。
         // web 无插件 / 事件流过期 → imuAcc 为 null → 关闭（状态栏胶囊淡紫发光随之熄灭）。
@@ -1516,11 +1507,10 @@ class GPSManager {
         const rawAltitude = pos.altitude;
         pos.altitude = this._altFilter.push(rawAltitude, this.altitudeSource, now);
 
-        // 保存原始位置（滤波前），供结束记录时的 RTS 离线平滑使用。
+        // 原始测量入缓冲（滤波前），供结束记录时的 RTS 离线平滑使用。
         // 坐标预转 GCJ02（与 trail.positions 同系），时间戳用 pos.timestamp（与 addPoint 的 pt.ts 同源）。
         // 修复：此前存 WGS84 + 用收到时刻 now，导致 RTS 输出被写回 GCJ02 轨迹时出现
         // 坐标系错位（整体漂移 ~500m）与匹配失败（byTs 查 pt.time 落空）。
-        this._rawPosition = { lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, speed: pos.speed, heading: pos.heading, altitude: rawAltitude, timestamp: pos.timestamp };
         if (this._rawFixes.length < this._maxRawFixes) {
           const fixLatLng = this._mapManager
             ? this._mapManager.wgs84ToGcj02Sync({ lat: pos.lat, lng: pos.lng })
@@ -1663,53 +1653,6 @@ class GPSManager {
     return this.currentPosition;
   }
 
-  /**
-   * 获取最近一次原始（未滤波）位置
-   */
-  get lastRawPosition() {
-    return this._rawPosition ? { ...this._rawPosition } : null;
-  }
-
-  /**
-   * 切换/设置海拔滤波链（实时 2D 位置滤波独立控制，见 togglePositionFilter）
-   * @param {boolean} [force] - 不传则切换
-   * @returns {boolean} 当前海拔滤波是否启用
-   */
-  toggleFilter(force) {
-    const cur = this._altFilter ? this._altFilter.enabled : false;
-    const next = force !== undefined ? force : !cur;
-    if (next === cur) return cur;
-    if (this._altFilter) {
-      this._altFilter.enabled = next;
-      this._altFilter.reset();
-    }
-    if (CONFIG.DEBUG) Logger.log(`[GPS] 海拔滤波: ${next ? '开启' : '关闭'}`);
-    return next;
-  }
-
-  /**
-   * 切换/设置实时位置稳健滑动窗滤波（蓝点平滑；零外推，与海拔滤波独立）
-   * @param {boolean} [force] - 不传则切换
-   * @returns {boolean} 当前位置滤波是否启用
-   */
-  togglePositionFilter(force) {
-    const cur = this._posSmoother ? this._posSmoother.enabled : false;
-    const next = force !== undefined ? force : !cur;
-    if (next === cur) return cur;
-    if (this._posSmoother) {
-      this._posSmoother.setEnabled(next);
-    }
-    if (CONFIG.DEBUG) Logger.log(`[GPS] 位置滤波(滑动窗): ${next ? '开启' : '关闭'}`);
-    return next;
-  }
-
-  /**
-   * 获取原始测量缓冲（WGS84，滤波前）
-   */
-  get rawFixes() {
-    return this._rawFixes;
-  }
-
   /** 清空原始测量缓冲（同步清空海拔实时滤波链状态） */
   clearRawFixes() {
     this._rawFixes = [];
@@ -1726,19 +1669,6 @@ class GPSManager {
       Logger.warn('GPSManager.setMapManager 晚于 watchPosition 启动，已采集的测量未预转 GCJ02');
     }
     this._mapManager = mapManager;
-  }
-
-  /**
-   * 对缓冲内所有原始测量做离线 RTS 平滑（整段后处理）
-   * 用于结束记录后提升轨迹精度。会清空缓冲，返回平滑结果。
-   * @returns {Array<{lat:number,lng:number,time:number,ts:*}>} 平滑后 GCJ02 坐标序列
-   */
-  smoothTrailRts() {
-    const fixes = this._rawFixes;
-    this._rawFixes = [];
-    if (!fixes.length) return [];
-    // 离线平滑固定走独立单模型实例（与实时 IMM 彻底解耦）
-    return this._offlineSmoother.smoothTrail(fixes);
   }
 
   /**
@@ -2312,16 +2242,13 @@ class GPSManager {
           if (diff > 180) diff = 360 - diff;
           if (diff > CONFIG.NMEA_HEADING_CONFLICT_DEG) {
             const h = browserHeading != null ? browserHeading : null;
-            this._lastHeadingSource = h != null ? 'browser' : 'none';
             return h;
           }
         }
       }
-      this._lastHeadingSource = 'vtg';
       return vtg;
     }
     const h = browserHeading != null ? browserHeading : null;
-    this._lastHeadingSource = h != null ? 'browser' : 'none';
     return h;
   }
 

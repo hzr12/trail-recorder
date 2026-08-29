@@ -224,19 +224,42 @@ const testCode = `
   const psoff = new PositionSmoother({ enabled: false });
   check('enabled=false 纯透传', psoff.push({ lat: 9, lng: 9 }).lat === 9);
 
-  console.log('=== 11. KalmanFilter 离线滤波 (运行期) ===');
+  console.log('=== 11. KalmanFilter 离线 RTS 平滑 (运行期) ===');
+  // 注：实时单步 update() 已随实时 2D 滤波（原 IMM）一并删除，本类只保留离线 RTS 批处理
   const k = new KalmanFilter();
-  const f1 = k.update(0, 0, 5, 1000, 0);
-  check('KF 首点透传', f1.lat === 0 && f1.lng === 0);
-  let last = f1;
-  for (let i = 1; i <= 20; i++) last = k.update(0, i * 0.0001, 5, 1000 + i * 1000, 11);
-  check('KF 20点收敛接近真值(偏差<40m)', Math.abs(last.lng - 0.002) * 111194 < 40, 'got lng=' + last.lng);
-  const bad = k.update(0, 0.002 + 0.005, 5, 22000, 11);
-  check('KF 单点粗差(556m)拉偏<400m', Math.abs(bad.lng - last.lng) * 111194 < 400, 'got delta=' + (Math.abs(bad.lng - last.lng) * 111194) + 'm');
-  const rst = k.update(0, 1.0, 5, 83000, 0);
-  check('KF dt>60s 重置透传新点', rst.lng === 1.0, 'got ' + rst.lng);
-  const fz = k.update(0, 2.0, 3000, 84000, 0);
-  check('KF accuracy>2000 冻结(不跳向2.0)', fz.lng !== 2.0, 'got ' + fz.lng);
+  // 匀速直线 11m/s 向东（0.0001° ≈ 11.1m/s）
+  const track = [];
+  for (let i = 0; i < 21; i++) {
+    track.push({ lat: 0, lng: i * 0.0001, time: (i + 1) * 1000, accuracy: 5, speed: 11, ts: i });
+  }
+  const sm = k.smoothTrail(track);
+  eq('RTS 输出等长', sm.length, track.length);
+  eq('RTS ts 原样透传（回写轨迹的匹配 key）', sm[7].ts, 7);
+  check('RTS 输出无 NaN', sm.every(function (p) { return isFinite(p.lat) && isFinite(p.lng); }));
+  check('RTS 末点收敛接近真值(偏差<60m)', Math.abs(sm[20].lng - 0.002) * 111194 < 60,
+    'got ' + (Math.abs(sm[20].lng - 0.002) * 111194) + 'm');
+  // 第 10 点注入 555m 粗差 → RTS（双向平滑 + Huber）应显著抑制
+  const noisyT = track.map(function (p, i) {
+    return i === 10 ? { lat: p.lat, lng: p.lng + 0.005, time: p.time, accuracy: 5, speed: 11, ts: i } : p;
+  });
+  const sm2 = k.smoothTrail(noisyT);
+  const jumpM = 0.005 * 111194;
+  const devM = Math.abs(sm2[10].lng - 0.001) * 111194;
+  check('RTS 粗差点被抑制(偏移<原始跳变一半)', devM < jumpM / 2, 'dev=' + devM + 'm, jump=' + jumpM + 'm');
+  // 时间断裂（>60s）自动分段，输出仍等长且无 NaN
+  const gapped = track.map(function (p, i) {
+    return i < 10 ? p : { lat: p.lat, lng: p.lng, time: p.time + 120000, accuracy: 5, speed: 11, ts: i };
+  });
+  const sm3 = k.smoothTrail(gapped);
+  eq('时间断裂(>60s)分段后仍等长', sm3.length, track.length);
+  check('时间断裂段无 NaN', sm3.every(function (p) { return isFinite(p.lat) && isFinite(p.lng); }));
+  // 精度失效（>2000m）自动分段
+  const badAcc = track.map(function (p, i) {
+    return i === 5 ? { lat: p.lat, lng: p.lng, time: p.time, accuracy: 3000, speed: 11, ts: i } : p;
+  });
+  const sm4 = k.smoothTrail(badAcc);
+  check('精度失效点(>2000m)不炸裂', sm4.length === track.length && sm4.every(function (p) { return isFinite(p.lng); }));
+  eq('空输入返回空数组', k.smoothTrail([]).length, 0);
 
   console.log('=== 12. TrailDenoise 跳变修复 (运行期) ===');
   const noisy = [];
@@ -249,6 +272,46 @@ const testCode = `
   check('denoiseTrail 跳变被修复(所有点<0.01°)', maxLng < 0.01, 'maxLng=' + maxLng);
   const clamped = TrailDenoise.kinematicClamp(noisy);
   check('kinematicClamp 返回非空数组', Array.isArray(clamped) && clamped.length > 0);
+
+  console.log('=== 13. GNSS 质量评分 qualScore 非 NaN（effUsed 先读后写回归）===');
+  const gps2 = new GPSManager();
+  const goodSats = [];
+  for (let i = 0; i < 8; i++) {
+    goodSats.push({
+      svid: i, constellation: i < 4 ? 'GPS' : 'BEIDOU',
+      cn0DbHz: 40, usedInFix: true, elevation: 80, carrierFreqHz: 1575.42,
+    });
+  }
+  const stGood = gps2._computeSatStats(goodSats);
+  check('qualScore 是有限数（此前恒为 NaN）',
+    typeof stGood.qualScore === 'number' && isFinite(stGood.qualScore), 'got ' + stGood.qualScore);
+  check('qualScore 落在 [0,1]', stGood.qualScore >= 0 && stGood.qualScore <= 1, 'got ' + stGood.qualScore);
+  check('effUsed 已赋值=加权有效星数', typeof stGood.effUsed === 'number' && stGood.effUsed > 0, 'got ' + stGood.effUsed);
+  check('8星双星座 评分偏高(>0.5)', stGood.qualScore > 0.5, 'got ' + stGood.qualScore);
+  const stWeak = gps2._computeSatStats([
+    { svid: 1, constellation: 'GPS', cn0DbHz: 20, usedInFix: true, elevation: 10, carrierFreqHz: 1575.42 },
+  ]);
+  check('单星单星座 评分偏低(<0.5)', stWeak.qualScore < 0.5, 'got ' + stWeak.qualScore);
+  check('单星场景标记 weak=true', stWeak.weak === true, 'got ' + stWeak.weak);
+
+  console.log('=== 14. 信号丢失段与健康分（SIGNAL_LOSS_ACC_M 回归）===');
+  check('CONFIG.SIGNAL_LOSS_ACC_M 已定义且>0',
+    typeof CONFIG.SIGNAL_LOSS_ACC_M === 'number' && CONFIG.SIGNAL_LOSS_ACC_M > 0,
+    'got ' + CONFIG.SIGNAL_LOSS_ACC_M);
+  // 中段 5 个点精度劣化到 500m（远超阈值）
+  const lossy = [];
+  for (let i = 0; i < 10; i++) {
+    lossy.push({ lat: 0, lng: i * 0.0001, time: (i + 1) * 1000, accuracy: (i >= 3 && i <= 7) ? 500 : 8, speed: 11 });
+  }
+  const sl = TrailAnalysis.detectSignalLoss(lossy);
+  const weakSegs = sl.segments.filter(function (s) { return s.reason === 'weak'; });
+  check('弱信号段被检出（此前 accLimit=undefined 恒检不出）', weakSegs.length === 1, 'got ' + weakSegs.length);
+  const hh = TrailAnalysis.analyzeHealth(lossy);
+  check('健康分 weakRatio>0', hh.weakRatio > 0, 'got ' + hh.weakRatio);
+  check('健康分因此被扣分(<1)', hh.score < 1, 'got ' + hh.score);
+  const cleanT = lossy.map(function (p) { return { lat: p.lat, lng: p.lng, time: p.time, accuracy: 8, speed: 11 }; });
+  eq('全好点 weakRatio=0', TrailAnalysis.analyzeHealth(cleanT).weakRatio, 0);
+  eq('全好点无丢星段', TrailAnalysis.detectSignalLoss(cleanT).segments.length, 0);
 
   console.log('\\n=== 结果: ' + pass + ' passed, ' + fail + ' failed ===');
   if (fail > 0) { console.log('失败项:'); failures.forEach(f => console.log('  - ' + f)); }
