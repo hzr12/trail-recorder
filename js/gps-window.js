@@ -18,13 +18,13 @@
 (function (global) {
   'use strict';
 
-  /** 升序中位数 */
+  /** 升序中位数（偶数长度取中间两数均值；修复原实现 a[mid] 非整数索引返回 undefined → NaN 的 bug） */
   function median(arr) {
     const a = arr.slice().sort((x, y) => x - y);
     const n = a.length;
     if (n === 0) return 0;
     const mid = (n - 1) / 2;
-    return n % 2 ? a[Math.floor(mid)] : (a[mid] + a[mid + 0.5]) / 2;
+    return n % 2 ? a[Math.floor(mid)] : (a[Math.floor(mid)] + a[Math.ceil(mid)]) / 2;
   }
 
   /** 绝对中位差 MAD（对中位数偏差的鲁棒标准差估计） */
