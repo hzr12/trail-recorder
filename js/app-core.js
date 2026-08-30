@@ -4,6 +4,19 @@
  * 协调 MapManager、GPSManager 与 UI 交互
  */
 
+/**
+ * 主题模式解析（纯函数，便于回归测试）。
+ * 三态偏好：'system' 跟随系统，'light'/'dark' 为手动选择。
+ * @param {string} pref 偏好：'system' | 'light' | 'dark'（其余值视为 system）
+ * @param {boolean} systemDark 系统是否深色（prefers-color-scheme: dark）
+ * @returns {'light'|'dark'} 实际生效的主题
+ */
+function resolveThemeMode(pref, systemDark) {
+  if (pref === 'light') return 'light';
+  if (pref === 'dark') return 'dark';
+  return systemDark ? 'dark' : 'light';
+}
+
 class App {
   constructor() {
     this.mapManager = new MapManager();
@@ -99,7 +112,10 @@ class App {
     this._lastCalcPos = null;
     this._lastCalcTime = null;
     this._lastAccuracy = null;
-    this._theme = 'dark';
+    this._theme = 'dark';          // 实际生效主题（由 _themePref 解析）
+    this._themePref = 'system';    // 用户偏好：'system' | 'light' | 'dark'
+    this._systemThemeMq = null;    // matchMedia 句柄（跟随系统）
+    this._systemThemeHandler = null;
     this._trailSmoothing = true;
     this._autoPauseEnabled = false;   // 自动暂停手动开关（默认关闭）
     this._autoPaused = false;         // 当前是否处于「静止自动暂停」状态
@@ -468,9 +484,11 @@ class App {
     const recordEl = document.getElementById('tab-record');
     const replayEl = document.getElementById('tab-replay');
     const historyEl = document.getElementById('tab-history');
+    const overviewEl = document.getElementById('tab-overview');
     if (recordEl) recordEl.style.display = tab === 'record' ? '' : 'none';
     if (replayEl) replayEl.style.display = tab === 'replay' ? '' : 'none';
     if (historyEl) historyEl.style.display = tab === 'history' ? '' : 'none';
+    if (overviewEl) overviewEl.style.display = tab === 'overview' ? '' : 'none';
     // 重触发内容方向滑入动画（强制 reflow 使相同元素重复播放）
     const targetEl = tab === 'record' ? recordEl : (tab === 'replay' ? replayEl : historyEl);
     if (targetEl) {
@@ -490,6 +508,7 @@ class App {
     }
     if (tab === 'history') this._renderTrailList();
     if (tab === 'replay') this._renderReplayTrailList();
+    if (tab === 'overview') this._renderOverview();
   }
 
   /**
@@ -1261,22 +1280,69 @@ class App {
     return m > 0 ? `${h}小时${m}分钟前` : `${h}小时前`;
   }
 
+  /**
+   * 恢复主题偏好并应用。
+   * 偏好三态：'system'（跟随系统）/ 'light' / 'dark'；
+   * 旧版本只存 'light'/'dark'，读到即视为手动选择，无需迁移。
+   */
   _restoreTheme() {
+    let pref = 'system';
     try {
       const saved = localStorage.getItem('trailcraft_theme');
-      if (saved === 'light' || saved === 'dark') {
-        this._theme = saved;
-      }
+      if (saved === 'light' || saved === 'dark' || saved === 'system') pref = saved;
     } catch (e) {}
-    document.documentElement.setAttribute('data-theme', this._theme);
-    this.mapManager.setTheme(this._theme);
+    this._themePref = pref;
+    // 首次应用：地图轨迹尚未渲染，跳过色板刷新
+    this._applyTheme({ refresh: false });
+    this._watchSystemTheme();
+  }
+
+  /** 系统是否偏好深色（无 matchMedia 时保守返回 true） */
+  _systemPrefersDark() {
+    try {
+      return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    } catch (e) {
+      return true;
+    }
+  }
+
+  /** 监听系统深浅色变化：仅偏好为 'system' 时实时跟随，不刷新页面即时生效 */
+  _watchSystemTheme() {
+    if (!window.matchMedia || this._systemThemeMq) return;
+    this._systemThemeMq = window.matchMedia('(prefers-color-scheme: dark)');
+    this._systemThemeHandler = (e) => {
+      if (this._themePref !== 'system') return;
+      const next = resolveThemeMode('system', !!(e && e.matches));
+      if (next !== this._theme) this._applyTheme();
+    };
+    if (typeof this._systemThemeMq.addEventListener === 'function') {
+      this._systemThemeMq.addEventListener('change', this._systemThemeHandler);
+    } else if (typeof this._systemThemeMq.addListener === 'function') {
+      this._systemThemeMq.addListener(this._systemThemeHandler); // Safari < 14 兜底
+    }
+  }
+
+  /**
+   * 按当前偏好解析并应用主题（DOM / 地图 / 图表 / 按钮）。
+   * 偏好变化不必然导致视觉变化（如系统为浅色时 'system' → 'light'），
+   * 此时 changed=false，不会触发多余重绘。
+   * @param {Object} [opts] opts.refresh=false 时跳过轨迹色板刷新（首次恢复用）
+   */
+  _applyTheme(opts) {
+    const next = resolveThemeMode(this._themePref, this._systemPrefersDark());
+    const changed = next !== this._theme;
+    this._theme = next;
+    document.documentElement.setAttribute('data-theme', next);
+    if (this.mapManager && typeof this.mapManager.setTheme === 'function') {
+      this.mapManager.setTheme(next);
+    }
+    if (changed && (!opts || opts.refresh !== false)) this._refreshThemeDependent();
+    this._updateChartTheme();
     this._updateThemeBtn();
   }
 
-  _toggleTheme() {
-    this._theme = this._theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', this._theme);
-    this.mapManager.setTheme(this._theme);
+  /** 主题变化后需重绘的部分（从原 _toggleTheme 抽出，供 _applyTheme 复用） */
+  _refreshThemeDependent() {
     if (this._isReplaying && this._replayPlayer) {
       // 回放中切主题：只刷新 TrailPlayer 的 zIndex 100/101（已播+未播预览）色板。
       // 不要刷新 zIndex 10 地图轨迹层——回放期间地图层要么已被 _startReplay clearTrail 清空
@@ -1285,12 +1351,6 @@ class App {
       if (typeof this._replayPlayer.refreshColors === 'function') {
         this._replayPlayer.refreshColors();
       }
-      this._updateChartTheme();
-      try {
-        localStorage.setItem('trailcraft_theme', this._theme);
-      } catch (e) {}
-      this._updateThemeBtn();
-      Toast.show(this._theme === 'light' ? ' 已切换为浅色主题' : ' 已切换为深色主题');
       return;
     }
     // 非回放状态：刷新地图当前实际显示的轨迹色板。
@@ -1298,7 +1358,7 @@ class App {
     // 不能用 _getTrailPositions()：后者返回滑动平滑后的会话轨迹，而地图可能正显示
     // 历史加载的原始轨迹（_loadTrailFromList 把 data.positions 塞进 trail.positions 后，
     // _getTrailPositions() 会对历史数据做平滑）→ 主题切换后轨迹形状被拉直/偏移，
-    // 与回放（原始数据）形成"两条不同轨迹"。用 _lastTrailInput 保证重绘形状与切换前逐点一致。
+    // 与回放（原始数据）形成"两条不同轨迹"。
     const trailInput = this.mapManager._lastTrailInput;
     const positions = trailInput && trailInput.length >= 2
       ? trailInput
@@ -1306,12 +1366,20 @@ class App {
     if (positions && positions.length >= 2) {
       this.mapManager.refreshTrailColors(positions);
     }
-    this._updateChartTheme();
+  }
+
+  /** 主题偏好三态循环：系统 → 浅色 → 深色 → 系统 */
+  _toggleTheme() {
+    const order = ['system', 'light', 'dark'];
+    const idx = order.indexOf(this._themePref);
+    this._themePref = order[(idx < 0 ? 0 : idx + 1) % order.length];
     try {
-      localStorage.setItem('trailcraft_theme', this._theme);
+      localStorage.setItem('trailcraft_theme', this._themePref);
     } catch (e) {}
-    this._updateThemeBtn();
-    Toast.show(this._theme === 'light' ? ' 已切换为浅色主题' : ' 已切换为深色主题');
+    this._applyTheme();
+    Toast.show(this._themePref === 'system'
+      ? ' 已跟随系统主题'
+      : (this._themePref === 'light' ? ' 已切换为浅色主题' : ' 已切换为深色主题'));
   }
 
   _updateChartTheme() {
@@ -1343,14 +1411,27 @@ class App {
     }
   }
 
+  /** 按偏好（而非实际主题）渲染图标：跟随系统用半填充圆，与手动的太阳/月亮区分 */
   _updateThemeBtn() {
     const btn = document.getElementById('theme-btn');
     if (!btn) return;
-    const isDark = this._theme === 'dark';
-    btn.innerHTML = isDark
-      ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>'
-      : '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
-    btn.title = isDark ? '切换浅色主题' : '切换深色主题';
+    const SVG = (body) =>
+      '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" ' +
+      'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + body + '</svg>';
+    // 半填充圆：左半实心表示"一半明一半暗" → 跟随系统
+    const ICON_SYSTEM = SVG('<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none"/>');
+    const ICON_LIGHT = SVG('<circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>');
+    const ICON_DARK = SVG('<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>');
+    if (this._themePref === 'light') {
+      btn.innerHTML = ICON_LIGHT;
+      btn.title = '主题：浅色（点击切换）';
+    } else if (this._themePref === 'dark') {
+      btn.innerHTML = ICON_DARK;
+      btn.title = '主题：深色（点击切换）';
+    } else {
+      btn.innerHTML = ICON_SYSTEM;
+      btn.title = '主题：跟随系统（点击切换）';
+    }
   }
 
   // 节流保存：_trailDirty 置位后，距上次真正写盘未超过 TRAIL_SAVE_THROTTLE_MS 则仅保留

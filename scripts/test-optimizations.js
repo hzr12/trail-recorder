@@ -63,7 +63,7 @@ const LOAD_ORDER = [
   'config.js', 'toast.js', 'storage.js', 'trail.js', 'trail-analysis.js',
   'map.js', 'gps-kalman.js', 'gps-window.js', 'trail-denoise.js',
   'gps-alt.js', 'gps-imu.js', 'gps-manager.js', 'replay.js', 'app-core.js',
-  'app-list.js', 'app-replay.js', 'app-export.js', 'app-stats.js',
+  'app-list.js', 'app-overview.js', 'app-replay.js', 'app-export.js', 'app-stats.js',
   'app-weather.js', 'app-background.js', 'app-battery.js', 'app-gps-ui.js',
 ];
 
@@ -313,6 +313,64 @@ const testCode = `
   eq('全好点 weakRatio=0', TrailAnalysis.analyzeHealth(cleanT).weakRatio, 0);
   eq('全好点无丢星段', TrailAnalysis.detectSignalLoss(cleanT).segments.length, 0);
 
+  console.log('=== 15. 主题三态解析 resolveThemeMode (阶段1) ===');
+  eq('system + 系统深色 → dark', resolveThemeMode('system', true), 'dark');
+  eq('system + 系统浅色 → light', resolveThemeMode('system', false), 'light');
+  eq('手动 light 优先于系统深色', resolveThemeMode('light', true), 'light');
+  eq('手动 dark 优先于系统浅色', resolveThemeMode('dark', false), 'dark');
+  eq('无效偏好退化为跟随系统', resolveThemeMode('__bad__', true), 'dark');
+  eq('缺失偏好退化为跟随系统', resolveThemeMode(undefined, false), 'light');
+
+  console.log('=== 16. 总览聚合 TrailOverview.aggregate (阶段2) ===');
+  const ov = [
+    { distance: 1000, duration: 600, createdAt: Date.parse('2026-01-01T10:00:00') },
+    { distance: 2000, duration: 1200, createdAt: Date.parse('2026-01-01T20:00:00') },
+    { distance: 3000, duration: 1800, createdAt: Date.parse('2026-01-02T08:00:00') }
+  ];
+  const agg = TrailOverview.aggregate(ov);
+  eq('轨迹条数=3', agg.trailCount, 3);
+  eq('累计里程=6000m', agg.totalDistance, 6000);
+  eq('活跃天数=2（1/1 与 1/2）', agg.activeDays, 2);
+  eq('总时长=3600s', agg.totalDuration, 3600);
+  eq('最长单条=3000m', agg.longestDistance, 3000);
+  eq('平均单条≈2000m', Math.round(agg.avgDistance), 2000);
+  eq('空数组不崩且 count=0', TrailOverview.aggregate([]).trailCount, 0);
+  eq('无效 meta(缺 distance/duration/createdAt)跳过', TrailOverview.aggregate([{}, { distance: 500 }]).trailCount, 1);
+
+  console.log('=== 17. GPS 健康分标签分级 gpsHealthLabel (阶段3) ===');
+  eq('100→优', gpsHealthLabel(100).grade, '优');
+  eq('85→优', gpsHealthLabel(85).grade, '优');
+  eq('80→优(边界)', gpsHealthLabel(80).grade, '优');
+  eq('79→良', gpsHealthLabel(79).grade, '良');
+  eq('60→良(边界)', gpsHealthLabel(60).grade, '良');
+  eq('59→中', gpsHealthLabel(59).grade, '中');
+  eq('40→中(边界)', gpsHealthLabel(40).grade, '中');
+  eq('39→差', gpsHealthLabel(39).grade, '差');
+  eq('极低分→差', gpsHealthLabel(5).grade, '差');
+  eq('NaN→无', gpsHealthLabel(NaN).grade, '无');
+  eq('非数值字符串→无', gpsHealthLabel('x').grade, '无');
+  eq('cls 与 grade 一致(优)', gpsHealthLabel(90).cls, 'good');
+  eq('cls 与 grade 一致(差)', gpsHealthLabel(10).cls, 'bad');
+
+  console.log('=== 18. 响应式：总览/主题按钮窄屏规则 (阶段4) ===');
+  const respCss = __readResponsiveCss();
+  check('响应式含总览窄屏网格规则', respCss.indexOf('#tab-overview .overview-grid') >= 0);
+  check('响应式含主题按钮窄屏触摸区', respCss.indexOf('.tab-theme-toggle') >= 0 && respCss.indexOf('max-width: 480px') >= 0);
+  check('响应式含 360 超小屏适配', respCss.indexOf('max-width: 360px') >= 0);
+
+  console.log('=== 19. 总览聚合边界容错 (阶段5) ===');
+  const one = TrailOverview.aggregate([{ distance: 1500, duration: 900, createdAt: Date.parse('2026-02-01T09:00:00') }]);
+  eq('单条 count=1', one.trailCount, 1);
+  eq('单条 avgDistance==distance', Math.round(one.avgDistance), 1500);
+  eq('单条 totalDistance==distance', one.totalDistance, 1500);
+  eq('单条 activeDays=1', one.activeDays, 1);
+  const strDist = TrailOverview.aggregate([{ distance: '2500', duration: 600, createdAt: Date.parse('2026-02-02T10:00:00') }]);
+  eq('字符串 distance 容错', strDist.totalDistance, 2500);
+  const nanDist = TrailOverview.aggregate([{ distance: NaN }]);
+  eq('NaN distance 且无 createdAt/duration 跳过', nanDist.trailCount, 0);
+  const strDate = TrailOverview.aggregate([{ distance: 100, duration: 10, createdAt: '2026-03-03T08:00:00' }]);
+  eq('字符串 createdAt 容错 activeDays=1', strDate.activeDays, 1);
+
   console.log('\\n=== 结果: ' + pass + ' passed, ' + fail + ' failed ===');
   if (fail > 0) { console.log('失败项:'); failures.forEach(f => console.log('  - ' + f)); }
   globalThis.__result = { pass, fail, failures };
@@ -322,6 +380,7 @@ const testCode = `
 // 提供给测试代码读取源文件的辅助
 sandbox.__readAppCore = () => fs.readFileSync(path.join(JS_DIR, 'app-core.js'), 'utf8');
 sandbox.__readConfig = () => fs.readFileSync(path.join(JS_DIR, 'config.js'), 'utf8');
+sandbox.__readResponsiveCss = () => fs.readFileSync(path.join(ROOT, 'css', 'responsive.css'), 'utf8');
 sandbox.captured = captured;
 
 try {

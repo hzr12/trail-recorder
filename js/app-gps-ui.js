@@ -210,7 +210,13 @@ App.prototype._updateStatusBar = function (force) {
   const dir = h != null ? bearingToDir(this._lastHeading) : '';
   const motionHtml = `<span class="gps-motion" title="实时运动数据">${arrow}${h != null ? h : '--'}°${dir ? ' ' + dir : ''} ${kmh}km/h · ${alt}</span>`;
 
-  const line2 = [sourceBadge, signalHtml, motionHtml].filter(Boolean).join('<span class="gps-sep">│</span>');
+  // 健康分标签（阶段3）：实时信号质量 0~100 → 护眼主色等级 + 数字药丸
+  let healthPill = '';
+  if (qInfo != null) {
+    const hl = gpsHealthLabel(qInfo.score);
+    healthPill = `<span class="gps-health ${hl.cls}" title="GPS 健康分：${qInfo.score} 分（${hl.grade}）">健康 ${qInfo.score}<i class="gps-health-grade">${hl.grade}</i></span>`;
+  }
+  const line2 = [sourceBadge, signalHtml, healthPill, motionHtml].filter(Boolean).join('<span class="gps-sep">│</span>');
   const line3 = this._weatherHtml ? `<div class="gps-line3">${this._weatherHtml}</div>` : '';
 
   this._statusEl.innerHTML =

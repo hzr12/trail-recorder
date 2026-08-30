@@ -487,3 +487,111 @@
   font-weight: 500;
   color: var(--text-secondary);
 }
+
+/* ---------- 总览页（阶段2） ---------- */
+#tab-overview .overview-hero {
+  text-align: center;
+  padding: 18px 8px 14px;
+}
+#tab-overview .overview-hero-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+}
+#tab-overview .overview-hero-value {
+  margin-top: 4px;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
+  font-family: var(--font-num);
+  font-size: var(--text-hero);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  background: var(--accent-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+#tab-overview .overview-hero-unit {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  -webkit-text-fill-color: var(--text-secondary);
+}
+#tab-overview .overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 10px;
+}
+#tab-overview .overview-stat {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 12px 8px;
+  text-align: center;
+}
+#tab-overview .overview-stat-value {
+  display: block;
+  font-family: var(--font-num);
+  font-size: var(--text-stat);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+#tab-overview .overview-stat-label {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+#tab-overview .overview-subgrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+#tab-overview .overview-substat {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+#tab-overview .overview-substat-value {
+  font-family: var(--font-num);
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+#tab-overview .overview-substat-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+#tab-overview .overview-loading {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+}
+
+/* 总览 Tab 主色语义（青）：滑块换色 + 文字主色光 */
+.bottom-panel .mode-tabs[data-tab="overview"] .mode-tab-slider {
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.45), rgba(0, 163, 255, 0.42));
+  box-shadow: 0 0 6px rgba(6, 182, 212, 0.45),
+              0 1px 10px rgba(0, 163, 255, 0.35),
+              0 3px 22px rgba(0, 163, 255, 0.2),
+              inset 0 0 8px rgba(255, 255, 255, 0.16);
+}
+.bottom-panel .mode-tabs .mode-tab[data-tab="overview"].active {
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(6, 182, 212, 0.5);
+  background: transparent;
+}

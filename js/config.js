@@ -521,3 +521,18 @@ function formatDurationLong(ms) {
   if (m > 0) return `${m}:${String(sec).padStart(2, '0')}`;
   return `${sec}秒`;
 }
+
+/**
+ * GPS 健康分标签（阶段3）：把 0~100 实时信号质量分映射为护眼主色等级。
+ * 单一来源——状态栏标签与回归测试共用，保证可视化分级一致。
+ * @param {number} score 0~100（对应 GPSManager.signalQualityScore）
+ * @returns {{grade:string, text:string, cls:string}}
+ */
+function gpsHealthLabel(score) {
+  const s = Number(score);
+  if (!Number.isFinite(s)) return { grade: '无', text: '无', cls: 'none' };
+  if (s >= 80) return { grade: '优', text: '优', cls: 'good' };
+  if (s >= 60) return { grade: '良', text: '良', cls: 'ok' };
+  if (s >= 40) return { grade: '中', text: '中', cls: 'mid' };
+  return { grade: '差', text: '差', cls: 'bad' };
+}

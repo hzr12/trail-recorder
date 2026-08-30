@@ -56,7 +56,7 @@
 
     <div class="panel-header">
       <h1 class="panel-title">途刻</h1>
-      <button id="theme-btn" class="theme-toggle" title="切换浅色主题">
+      <button id="theme-btn" class="theme-toggle" title="主题：跟随系统（点击切换）">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="5"/>
           <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
@@ -74,6 +74,14 @@
           <circle cx="17" cy="7" r="1.5"/>
         </svg>
         记录
+      </button>
+      <button class="mode-tab" data-tab="overview" id="tab-overview-btn">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="6" y1="20" x2="6" y2="13"/>
+          <line x1="12" y1="20" x2="12" y2="4"/>
+          <line x1="18" y1="20" x2="18" y2="9"/>
+        </svg>
+        总览
       </button>
       <button class="mode-tab" data-tab="replay" id="tab-replay-btn">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -293,6 +301,39 @@
         </div><!-- /card-history-list -->
       </div>
 
+      <!-- 总览 Tab -->
+      <div id="tab-overview" class="tab-pane" style="display:none">
+        <div class="overview-hero">
+          <span class="overview-hero-label" id="ov-hero-label">累计里程</span>
+          <div class="overview-hero-value"><span id="ov-total-distance">0</span><span class="overview-hero-unit">km</span></div>
+          <div class="overview-loading" id="ov-loading" style="display:none">统计中…</div>
+        </div>
+        <div class="overview-grid">
+          <div class="overview-stat">
+            <span class="overview-stat-value" id="ov-trail-count">0</span>
+            <span class="overview-stat-label">轨迹条数</span>
+          </div>
+          <div class="overview-stat">
+            <span class="overview-stat-value" id="ov-active-days">0</span>
+            <span class="overview-stat-label">活跃天数</span>
+          </div>
+          <div class="overview-stat">
+            <span class="overview-stat-value" id="ov-total-duration">0</span>
+            <span class="overview-stat-label">总时长</span>
+          </div>
+        </div>
+        <div class="overview-subgrid">
+          <div class="overview-substat">
+            <span class="overview-substat-value" id="ov-longest-distance">0</span>
+            <span class="overview-substat-label">最长单条</span>
+          </div>
+          <div class="overview-substat">
+            <span class="overview-substat-value" id="ov-avg-distance">0</span>
+            <span class="overview-substat-label">平均单条</span>
+          </div>
+        </div>
+      </div>
+
       <!-- 批量操作工具栏（多选时显示） -->
       <div class="batch-toolbar" id="batch-toolbar">
         <span class="batch-count">未选择</span>
@@ -329,6 +370,7 @@
   <script src="js/replay.js?t=20260810v21"></script>
   <script src="js/app-core.js?t=20260810v30"></script>
   <script src="js/app-list.js?t=20260810v2"></script>
+  <script src="js/app-overview.js?t=20260830v1"></script>
   <script src="js/app-replay.js?t=20260810v2"></script>
   <script src="js/app-export.js?t=20260810v2"></script>
   <script src="js/app-stats.js?t=20260810v2"></script>

@@ -311,4 +311,29 @@
   .gps-source.imu-active { animation: none; }
 }
 
+/* GPS 健康分标签（阶段3）：实时信号质量 0~100 → 护眼主色等级药丸 */
+.gps-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  line-height: 1.6;
+  padding: 0 8px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+  border: 1px solid currentColor;
+}
+.gps-health i {
+  font-style: normal;
+  font-weight: 700;
+  opacity: 0.9;
+}
+.gps-health.good { color: var(--accent-1); background: rgba(0, 212, 170, 0.1); }
+.gps-health.ok   { color: #4caf50;       background: rgba(76, 175, 80, 0.1); }
+.gps-health.mid  { color: var(--warning); background: rgba(255, 193, 7, 0.1); }
+.gps-health.bad  { color: #ef5350;       background: rgba(239, 83, 80, 0.1); } /* 柔红护眼 */
+.gps-health.none { color: var(--text-tertiary); background: var(--bg-input); border-color: var(--border-color); }
+
 

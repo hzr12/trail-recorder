@@ -228,6 +228,21 @@
     gap: 8px;
     margin-top: 8px;
   }
+
+  /* 阶段4：总览页窄屏适配（阶段2 新增） */
+  #tab-overview .overview-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  #tab-overview .overview-hero-value {
+    font-size: calc(var(--text-hero) * 0.82);
+  }
+  /* 阶段4：主题切换按钮移动端保证 44px 触摸区（阶段1 新增） */
+  .tab-theme-toggle {
+    width: 44px;
+    height: 44px;
+    top: -2px;
+  }
 }
 
 /* 超小屏进一步紧凑 */
@@ -259,6 +274,14 @@
 
   .fix-accuracy {
     min-width: 30px;
+  }
+
+  /* 阶段4：超小屏（≤360）总览进一步紧凑（阶段2 新增） */
+  #tab-overview .overview-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  #tab-overview .overview-subgrid {
+    grid-template-columns: 1fr;
   }
 }
 /* ---------- 响应式：平板 / 桌面（右侧浮动抽屉） ---------- */
