@@ -14,7 +14,9 @@
   --border-active: rgba(0, 212, 170, 0.5);
   --text-primary: #FFFFFF;
   --text-secondary: rgba(255, 255, 255, 0.55);
-  --text-tertiary: rgba(255, 255, 255, 0.30);
+  /* B1: 原 0.30 叠在深色面板上对比度仅 ~2.6:1（低于 AA 4.5:1 / 大字 3:1）。
+     提亮到 0.55（≈4.0:1），既保留次要信息弱层级，又接近可读下限 */
+  --text-tertiary: rgba(255, 255, 255, 0.55);
   --accent-1: #00D4AA;
   --accent-2: #00A3FF;
   --accent-gradient: linear-gradient(135deg, #00D4AA, #00A3FF);
@@ -124,7 +126,7 @@
   --border-color: rgba(0, 0, 0, 0.10);
   --text-primary: #1a1a2e;
   --text-secondary: rgba(0, 0, 0, 0.50);
-  --text-tertiary: rgba(0, 0, 0, 0.32);
+  --text-tertiary: rgba(0, 0, 0, 0.50);
   --shadow-panel: 0 -8px 40px rgba(0, 0, 0, 0.10);
   --shadow-fab: 0 4px 16px rgba(0, 0, 0, 0.12);
   --bg-danger-subtle: rgba(255, 71, 87, 0.08);
@@ -193,41 +195,4 @@
   }
 }
 
-/* ---------- 主色选择器 ---------- */
-.accent-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 0 20px 10px;
-}
-.accent-label {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  margin-right: 4px;
-  font-weight: normal;
-}
-.accent-dot {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--c, #00D4AA);
-  border: 2px solid transparent;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  flex-shrink: 0;
-  opacity: 0.5;
-}
-.accent-dot:hover {
-  opacity: 0.8;
-  transform: scale(1.15);
-}
-.accent-dot.active {
-  opacity: 1;
-  border-color: var(--text-primary);
-  transform: scale(1.1);
-  box-shadow: 0 0 8px var(--c, #00D4AA);
-}
-.accent-dot:active {
-  transform: scale(0.9);
-}
+/* ---------- 主色选择器（已由 data-accent 系统取代，主色选择 UI 未实现，样式留待后续） ---------- */

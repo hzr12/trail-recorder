@@ -16,14 +16,14 @@
   <link rel="icon" type="image/svg+xml" href="favicon.svg?v=20260805">
   <link rel="apple-touch-icon" href="favicon.svg?v=20260805">
   <link rel="stylesheet" href="css/fonts.css?t=20260805v9">
-  <link rel="stylesheet" href="css/theme.css?t=20260810v10">
-  <link rel="stylesheet" href="css/base.css?t=20260805v10">
+  <link rel="stylesheet" href="css/theme.css?t=20260830v12">
+  <link rel="stylesheet" href="css/base.css?t=20260830v11">
   <link rel="stylesheet" href="css/map.css?t=20260805v9">
   <link rel="stylesheet" href="css/panel.css?t=20260810v17">
-  <link rel="stylesheet" href="css/gps.css?t=20260809v11">
-  <link rel="stylesheet" href="css/trail.css?t=20260810v17">
+  <link rel="stylesheet" href="css/gps.css?t=20260830v13">
+  <link rel="stylesheet" href="css/trail.css?t=20260830v19">
   <link rel="stylesheet" href="css/toast-modal.css?t=20260810v11">
-  <link rel="stylesheet" href="css/responsive.css?t=20260805v9">
+  <link rel="stylesheet" href="css/responsive.css?t=20260830v10">
 </head>
 <body>
   <div id="map">
@@ -50,8 +50,10 @@
 
     <!-- GPS 状态条 -->
     <div class="gps-status" id="gps-status">
-      <span class="gps-dot"></span>
-      <span class="gps-offline">⊙ 未定位，点击 GPS 按钮定位</span>
+      <div class="gps-follow-wrap" id="gps-follow-wrap"></div>
+      <div class="gps-line1" id="gps-line1"></div>
+      <div class="gps-line2" id="gps-line2"></div>
+      <div class="gps-line3" id="gps-line3"></div>
     </div>
 
     <div class="panel-header">
@@ -65,9 +67,9 @@
     </div>
 
     <!-- Tab 切换 -->
-    <div class="mode-tabs" id="mode-tabs">
+    <div class="mode-tabs" id="mode-tabs" role="tablist" aria-label="功能切换">
       <span class="mode-tab-slider" aria-hidden="true"></span>
-      <button class="mode-tab active" data-tab="record" id="tab-record-btn">
+      <button class="mode-tab active" role="tab" aria-selected="true" aria-controls="tab-record" id="tab-record-btn" data-tab="record">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M4 20c2-5 5-7 7-13"/>
           <circle cx="4" cy="20" r="1.5"/>
@@ -75,7 +77,7 @@
         </svg>
         记录
       </button>
-      <button class="mode-tab" data-tab="overview" id="tab-overview-btn">
+      <button class="mode-tab" role="tab" aria-selected="false" aria-controls="tab-overview" id="tab-overview-btn" data-tab="overview">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="6" y1="20" x2="6" y2="13"/>
           <line x1="12" y1="20" x2="12" y2="4"/>
@@ -83,14 +85,14 @@
         </svg>
         总览
       </button>
-      <button class="mode-tab" data-tab="replay" id="tab-replay-btn">
+      <button class="mode-tab" role="tab" aria-selected="false" aria-controls="tab-replay" id="tab-replay-btn" data-tab="replay">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polygon points="5,3 19,12 5,21" fill="currentColor" stroke="none"/>
           <line x1="19" y1="4" x2="19" y2="20"/>
         </svg>
         回放
       </button>
-      <button class="mode-tab" data-tab="history" id="tab-history-btn">
+      <button class="mode-tab" role="tab" aria-selected="false" aria-controls="tab-history" id="tab-history-btn" data-tab="history">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 8v4l3 3"/>
           <circle cx="12" cy="12" r="10"/>
@@ -101,7 +103,7 @@
 
     <div class="panel-body">
       <!-- 记录 Tab -->
-      <div id="tab-record" class="tab-pane">
+      <div id="tab-record" class="tab-pane" role="tabpanel" aria-labelledby="tab-record-btn">
       <div class="panel-card card-record">
       <!-- 轨迹记录 -->
       <div class="trail-section">
@@ -133,19 +135,23 @@
           <button id="trail-pause-btn" class="btn btn-secondary btn-sm" disabled>结束并保存</button>
           <button id="trail-clear-btn" class="btn btn-secondary btn-sm" disabled>清除</button>
         </div>
-        <div class="trail-actions">
-          <button id="trail-stats-btn" class="btn-sm" disabled> 统计</button>
-          <button id="trail-smooth-btn" class="btn-sm active"> 平滑</button>
-          <button id="export-report-btn" class="btn-sm" title="导出活动报告图片（含轨迹、速度曲线、统计）"> 报告</button>
-        </div>
+        <!-- A3: 操作行/省电收进「更多」折叠，默认收起；速度图例按用户要求常驻可见 -->
+        <details class="record-more">
+          <summary>更多操作</summary>
+          <div class="trail-actions">
+            <button id="trail-stats-btn" class="btn-sm" disabled> 统计</button>
+            <button id="trail-smooth-btn" class="btn-sm active"> 平滑</button>
+            <button id="export-report-btn" class="btn-sm" title="导出活动报告图片（含轨迹、速度曲线、统计）"> 报告</button>
+          </div>
 
-        <!-- 后台+省电模块 -->
-        <div class="power-section" id="power-section">
-          <span class="power-status" id="power-status">定位间隔: 2s</span>
-          <button id="trail-autopause-btn" class="btn-sm" title="开启后连续静止自动暂停计时，恢复移动自动继续">自动暂停</button>
-          <button id="power-saving-btn" class="btn-sm" title="省电模式">省电</button>
-        </div>
-        <!-- 速度色阶图例 -->
+          <!-- 后台+省电模块 -->
+          <div class="power-section" id="power-section">
+            <span class="power-status" id="power-status">定位间隔: 2s</span>
+            <button id="trail-autopause-btn" class="btn-sm" title="开启后连续静止自动暂停计时，恢复移动自动继续">自动暂停</button>
+            <button id="power-saving-btn" class="btn-sm" title="省电模式">省电</button>
+          </div>
+        </details>
+        <!-- 速度色阶图例：常驻可见，不放进折叠 -->
         <div class="speed-legend">
           <div class="speed-legend-row">
             <span class="speed-legend-item"><i class="legend-walk"></i>0-10 km/h</span>
@@ -193,7 +199,7 @@
       </div><!-- /tab-record -->
 
       <!-- 回放 Tab -->
-      <div id="tab-replay" class="tab-pane" style="display:none">
+      <div id="tab-replay" class="tab-pane" role="tabpanel" aria-labelledby="tab-replay-btn" style="display:none">
         <div class="replay-empty" id="replay-empty">
           <div class="replay-empty-icon">
             <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -246,7 +252,7 @@
         <div class="replay-trails-section">
           <div class="replay-trails-header">
             <span>可回放轨迹</span>
-            <input type="text" class="trail-search-input" id="replay-search" placeholder="搜索…" />
+            <input type="text" class="trail-search-input" id="replay-search" placeholder="搜索…" aria-label="搜索可回放轨迹" />
             <select class="trail-time-select" id="replay-time-range">
               <option value="all">全部</option>
               <option value="today">今天</option>
@@ -276,7 +282,7 @@
       <div id="tab-history" class="tab-pane" style="display:none">
         <div class="panel-card card-history-list">
         <div class="trail-list-header">
-          <input type="text" class="trail-search-input" id="history-search" placeholder="搜索名称/日期/距离…" />
+          <input type="text" class="trail-search-input" id="history-search" placeholder="搜索名称/日期/距离…" aria-label="搜索历史轨迹" />
           <select class="trail-time-select" id="history-time-range">
             <option value="all">全部时间</option>
             <option value="today">今天</option>
@@ -302,7 +308,7 @@
       </div>
 
       <!-- 总览 Tab -->
-      <div id="tab-overview" class="tab-pane" style="display:none">
+      <div id="tab-overview" class="tab-pane" role="tabpanel" aria-labelledby="tab-overview-btn" style="display:none">
         <div class="overview-hero">
           <span class="overview-hero-label" id="ov-hero-label">累计里程</span>
           <div class="overview-hero-value"><span id="ov-total-distance">0</span><span class="overview-hero-unit">km</span></div>
@@ -335,7 +341,7 @@
       </div>
 
       <!-- 批量操作工具栏（多选时显示） -->
-      <div class="batch-toolbar" id="batch-toolbar">
+      <div class="batch-toolbar" id="batch-toolbar" role="region" aria-label="批量操作" aria-live="polite">
         <span class="batch-count">未选择</span>
         <div class="batch-actions">
           <button class="batch-btn batch-export" id="batch-export" disabled>分享合集</button>
@@ -368,7 +374,7 @@
   <script src="js/gps-imu.js?t=20260813v2"></script>
   <script src="js/gps-manager.js?t=20260813v2"></script>
   <script src="js/replay.js?t=20260810v21"></script>
-  <script src="js/app-core.js?t=20260810v30"></script>
+  <script src="js/app-core.js?t=20260830v31"></script>
   <script src="js/app-list.js?t=20260810v2"></script>
   <script src="js/app-overview.js?t=20260830v1"></script>
   <script src="js/app-replay.js?t=20260810v2"></script>
@@ -377,6 +383,6 @@
   <script src="js/app-weather.js?t=20260810v2"></script>
   <script src="js/app-background.js?t=20260810v2"></script>
   <script src="js/app-battery.js?t=20260810v2"></script>
-  <script src="js/app-gps-ui.js?t=20260810v11"></script>
+  <script src="js/app-gps-ui.js?t=20260830v13"></script>
 </body>
 </html>

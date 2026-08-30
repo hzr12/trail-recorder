@@ -116,3 +116,42 @@ input[type="number"] {
   outline-offset: 2px;
   border-radius: inherit;
 }
+
+/* B2: 小尺寸控件把命中区扩展到 ≥44px（视觉尺寸不变，符合 WCAG/Apple HIG 触摸目标） */
+.trail-item-btn,
+.favorite-btn,
+.replay-btn.stop-btn,
+.replay-btn.follow-btn,
+.speed-btn {
+  position: relative;
+}
+.trail-item-btn::after {
+  content: '';
+  position: absolute;
+  inset: -4px; /* 与相邻按钮 4px 间隙刚好相接，避免命中区重叠误触；有效 ~40px */
+  border-radius: inherit;
+}
+.favorite-btn::after,
+.replay-btn.stop-btn::after,
+.replay-btn.follow-btn::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: inherit;
+}
+.speed-btn::after {
+  content: '';
+  position: absolute;
+  inset: -13px -6px;
+  border-radius: inherit;
+}
+/* 桌面（有 hover 指针）无需放大命中区，还原紧凑尺寸 */
+@media (hover: hover) {
+  .trail-item-btn::after,
+  .favorite-btn::after,
+  .replay-btn.stop-btn::after,
+  .replay-btn.follow-btn::after,
+  .speed-btn::after {
+    display: none;
+  }
+}

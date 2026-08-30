@@ -129,11 +129,15 @@ App.prototype._updateSpeedChart = function () {
 /* ── GPS 状态条 ────────────────────────────────────── */
 
 App.prototype._updateStatusBar = function (force) {
-  if (!this._statusEl) return;
+  if (!this._statusEl || !this._gpsLine1) return;
   if (!this.myPosition) {
-    this._statusEl.innerHTML = '<div class="gps-line1"><span class="gps-dot"></span><span class="gps-offline">⊙ 未定位，点击 GPS 按钮定位</span></div>';
+    if (this._gpsFollowBtn) this._gpsFollowBtn.style.display = 'none';
+    this._gpsLine1.innerHTML = '<span class="gps-dot"></span><span class="gps-offline">⊙ 未定位，点击 GPS 按钮定位</span>';
+    if (this._gpsLine2) this._gpsLine2.innerHTML = '';
+    if (this._gpsLine3) this._gpsLine3.innerHTML = '';
     return;
   }
+  if (this._gpsFollowBtn) this._gpsFollowBtn.style.display = '';
   const now = Date.now();
   if (!force && this._lastStatusUpdate && now - this._lastStatusUpdate < CONFIG.STATUS_THROTTLE_MS) return;
   this._lastStatusUpdate = now;
@@ -164,8 +168,7 @@ App.prototype._updateStatusBar = function (force) {
     sourceTitle += `，当前精度 ±${Math.round(this._lastAccuracy)}m`;
   }
   const sourceBadge = `<span class="gps-source ${isGnssSource ? 'gnss' : 'web'}${this.gpsManager.imuAssistActive ? ' imu-active' : ''}" title="${sourceTitle}${this.gpsManager.imuAssistActive ? '（IMU 惯性校准辅助中）' : ''}">${isGnssSource ? 'GPS' : '网络'}</span>`;
-  // 跟随模式独立为按钮，避免整条状态栏误触切换
-  const followIcon = ` <button class="gps-follow-toggle${this._followMode ? ' active' : ''}" title="切换地图跟随">${this._followMode ? '跟随中' : '跟随'}</button>`;
+  // 跟随模式按钮改为持久元素（见 _setupUI 的 this._gpsFollowBtn），此处只更新其状态
 
   // 信号质量：按等级分格信号条（格数=等级数，沿用 4 档 80/60/40 阈值），亮格=当前档
   // 连评分都算不出（从未定位）时回退 accuracy 信号条
@@ -217,12 +220,20 @@ App.prototype._updateStatusBar = function (force) {
     healthPill = `<span class="gps-health ${hl.cls}" title="GPS 健康分：${qInfo.score} 分（${hl.grade}）">健康 ${qInfo.score}<i class="gps-health-grade">${hl.grade}</i></span>`;
   }
   const line2 = [sourceBadge, signalHtml, healthPill, motionHtml].filter(Boolean).join('<span class="gps-sep">│</span>');
-  const line3 = this._weatherHtml ? `<div class="gps-line3">${this._weatherHtml}</div>` : '';
+  const line3 = this._weatherHtml ? this._weatherHtml : '';
 
-  this._statusEl.innerHTML =
-    `<div class="gps-line1"><span class="${dotClass}" title="${stale ? '定位过期' : isTracking ? '持续追踪中' : '已定位'}"></span><span class="gps-online">已定位</span>${weakBadge}${followIcon} <span class="gps-elapsed">(${elapsed})</span></div>` +
-    `<div class="gps-line2">${line2}</div>` +
-    line3;
+  // C2: 只更新三个行容器，持久跟随按钮由 this._gpsFollowBtn 单独维护，避免整段重建丢点击
+  this._gpsLine1.innerHTML =
+    `<span class="${dotClass}" title="${stale ? '定位过期' : isTracking ? '持续追踪中' : '已定位'}"></span>` +
+    `<span class="gps-online">已定位</span>${weakBadge} <span class="gps-elapsed">(${elapsed})</span>`;
+  this._gpsLine2.innerHTML = line2;
+  this._gpsLine3.innerHTML = line3;
+
+  if (this._gpsFollowBtn) {
+    this._gpsFollowBtn.classList.toggle('active', this._followMode);
+    this._gpsFollowBtn.textContent = this._followMode ? '跟随中' : '跟随';
+    this._gpsFollowBtn.setAttribute('aria-pressed', this._followMode ? 'true' : 'false');
+  }
 };
 
 /* ── 跟随模式切换 ─────────────────────────────────── */

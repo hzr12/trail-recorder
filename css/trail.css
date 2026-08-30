@@ -1278,3 +1278,48 @@
   color: #BF40FF;
   font-weight: 500;
 }
+
+/* ---------- A3: 记录页「更多」折叠（原生 details，零 JS） ---------- */
+.record-more {
+  margin-top: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  overflow: hidden;
+}
+.record-more > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.record-more > summary::-webkit-details-marker { display: none; }
+.record-more > summary::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--text-tertiary);
+  border-bottom: 2px solid var(--text-tertiary);
+  transform: rotate(45deg);
+  transition: transform 0.2s ease;
+  margin-right: 2px;
+}
+.record-more[open] > summary::after {
+  transform: rotate(-135deg);
+}
+.record-more > summary:hover {
+  color: var(--text-primary);
+}
+/* details 内部区块与折叠容器留出呼吸间距 */
+.record-more .trail-actions,
+.record-more .power-section {
+  margin-left: 10px;
+  margin-right: 10px;
+}

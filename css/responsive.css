@@ -65,10 +65,6 @@
     font-size: 14px;
   }
 
-  .panel-subtitle {
-    display: none;
-  }
-
   .gps-status {
     font-size: 10px;
     padding: 2px 12px 4px;
@@ -237,12 +233,6 @@
   #tab-overview .overview-hero-value {
     font-size: calc(var(--text-hero) * 0.82);
   }
-  /* 阶段4：主题切换按钮移动端保证 44px 触摸区（阶段1 新增） */
-  .tab-theme-toggle {
-    width: 44px;
-    height: 44px;
-    top: -2px;
-  }
 }
 
 /* 超小屏进一步紧凑 */
@@ -299,21 +289,29 @@
   }
 
   /* 桌面端忽略移动折叠态：抽屉始终可滚动展示 */
+  /* C4: 桌面端也允许折叠——折叠为紧凑条形（把手+标题+Tab），点击/拖拽把手展开为抽屉 */
   .bottom-panel.collapsed {
-    max-height: calc(100vh - 48px);
-    overflow-y: auto;
+    max-height: 124px;
+    overflow: hidden;
   }
 
-  .bottom-panel.collapsed .panel-header,
-  .bottom-panel.collapsed .mode-tabs,
-  .bottom-panel.collapsed .panel-body,
-  .bottom-panel.collapsed .gps-status {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  .panel-handle {
+  .bottom-panel.collapsed .panel-body {
     display: none;
+  }
+
+  .bottom-panel.collapsed .gps-status {
+    opacity: 0.6;
+  }
+
+  /* 折叠态只保留状态条首行，次级指标行收起，保证紧凑条形不溢出 */
+  .bottom-panel.collapsed .gps-line2,
+  .bottom-panel.collapsed .gps-line3 {
+    display: none;
+  }
+
+  /* 桌面端保留把手用于折叠/展开拖拽（不再隐藏） */
+  .panel-handle {
+    display: flex;
   }
 
   .panel-header {
@@ -381,6 +379,19 @@
   .fab-btn::after {
     animation: none !important;
     opacity: 0 !important;
+  }
+  /* C7: 补全其余常驻动画的降级（面板流光/玻璃 sheen/把手箭头/脉动/呼吸/辉光） */
+  .bottom-panel::before,
+  .panel-card::after,
+  .handle-bar::after,
+  .speed-chart-toggle,
+  .gps-source.imu-active,
+  .trailPulse,
+  .replayGlow,
+  .gnssWeakPulse,
+  .imu-pulse,
+  .gpsRing {
+    animation: none !important;
   }
   .bottom-panel {
     transition: max-height 0.2s ease, box-shadow 0.2s ease;

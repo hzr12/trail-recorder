@@ -15,12 +15,20 @@
   user-select: none;
   /* 胶囊化 + 与面板统一的玻璃质感（G13）：背景用变量自动适配明暗 */
   background: var(--bg-input);
-  -webkit-backdrop-filter: blur(14px) saturate(160%);
-  backdrop-filter: blur(14px) saturate(160%);
+  /* C7: 去掉状态条自身的 backdrop-filter——面板已有一层 blur(40px)，
+     此处再叠 blur(14px) 纯属合成层浪费，记录时长时间前台易掉帧；视觉几乎无差 */
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-lg); /* 用户要求「改方一点」：全圆胶囊→圆角矩形 */
   box-shadow: var(--shadow-glass);
   transition: border-color 0.2s;
+}
+
+/* 持久跟随按钮容器（C2）：独立一行居中，避免每 2s 重建 */
+.gps-follow-wrap {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  margin: 1px 0 2px;
 }
 .gps-status:hover {
   border-color: rgba(0, 212, 170, 0.3);

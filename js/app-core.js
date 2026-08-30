@@ -203,6 +203,8 @@ class App {
       if (this._panelUserToggled) return;
       this._panelCollapsed = e.matches;
       this._bottomPanel.classList.toggle('collapsed', e.matches);
+      // 断点切换后容器宽度变化，重新对齐 Tab 滑块
+      this._syncTabSlider(this._currentTab);
     };
     this._panelMediaQuery.addEventListener('change', this._panelMediaqueryChange);
 
@@ -212,6 +214,13 @@ class App {
     this._loadState();
     this._updateTrailUI();
     this._syncTabSlider('record');
+
+    // C3: 旋屏 / 窗口尺寸变化后重算 Tab 滑块位置（offsetLeft/Width 在断点切换或折叠态下会失效）
+    this._syncTabSliderOnResize = () => this._syncTabSlider(this._currentTab);
+    window.addEventListener('resize', this._syncTabSliderOnResize);
+    window.addEventListener('orientationchange', () => {
+      setTimeout(() => this._syncTabSlider(this._currentTab), 250);
+    });
 
     window._app = this;
     this._fetchWeather();
@@ -324,11 +333,20 @@ class App {
     });
 
     this._statusEl = document.getElementById('gps-status');
+    this._gpsLine1 = document.getElementById('gps-line1');
+    this._gpsLine2 = document.getElementById('gps-line2');
+    this._gpsLine3 = document.getElementById('gps-line3');
 
-    // GPS 状态条：仅点击跟随按钮切换跟随模式，避免整条误触
-    this._statusEl.addEventListener('click', (e) => {
-      if (e.target.closest('.gps-follow-toggle')) this._toggleFollowMode();
-    });
+    // C2: 持久跟随按钮——只创建一次并常驻 #gps-follow-wrap，
+    // 状态栏刷新只改其 class/text，不再整段 innerHTML 重建（此前每 2s 重建会销毁按钮导致点击丢失）
+    this._gpsFollowBtn = document.createElement('button');
+    this._gpsFollowBtn.className = 'gps-follow-toggle';
+    this._gpsFollowBtn.type = 'button';
+    this._gpsFollowBtn.title = '切换地图跟随';
+    this._gpsFollowBtn.setAttribute('aria-pressed', 'false');
+    this._gpsFollowBtn.addEventListener('click', () => this._toggleFollowMode());
+    const followWrap = document.getElementById('gps-follow-wrap');
+    if (followWrap) followWrap.appendChild(this._gpsFollowBtn);
 
     let pressTimer = null;
     let isLongPress = false;
@@ -348,10 +366,33 @@ class App {
       if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
     });
 
-    this._panelHandle.addEventListener('click', () => {
-      this._panelCollapsed = !this._panelCollapsed;
+    // C5: 把手支持拖拽展开/折叠（上拖展开、下拖折叠；位移不足视为点击 toggle）
+    // 此前只绑 click 且 cursor:grab 语义误导，拖拽让抓取光标有了真实含义
+    let handleDragY = 0;
+    let handleDragged = false;
+    this._panelHandle.addEventListener('pointerdown', (e) => {
+      handleDragY = e.clientY;
+      handleDragged = false;
+      if (this._panelHandle.setPointerCapture) {
+        try { this._panelHandle.setPointerCapture(e.pointerId); } catch (_) {}
+      }
+    });
+    this._panelHandle.addEventListener('pointermove', (e) => {
+      if (!handleDragY) return;
+      if (Math.abs(e.clientY - handleDragY) > 6) handleDragged = true;
+    });
+    this._panelHandle.addEventListener('pointerup', (e) => {
+      if (!handleDragY) return;
+      const dy = e.clientY - handleDragY;
+      handleDragY = 0;
+      if (handleDragged) {
+        this._panelCollapsed = dy > 0; // 下拖折叠、上拖展开
+      } else {
+        this._panelCollapsed = !this._panelCollapsed;
+      }
       this._panelUserToggled = true;
       this._bottomPanel.classList.toggle('collapsed', this._panelCollapsed);
+      this._syncTabSlider(this._currentTab); // 展开后 offsetWidth 生效，立即重对齐滑块
     });
 
     document.getElementById('theme-btn').addEventListener('click', () => this._toggleTheme());
@@ -476,9 +517,12 @@ class App {
   }
 
   _setTab(tab) {
+    const prev = this._currentTab;
     this._currentTab = tab;
     document.querySelectorAll('.mode-tab').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.tab === tab);
+      const on = btn.dataset.tab === tab;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');
     });
     this._syncTabSlider(tab);
     const recordEl = document.getElementById('tab-record');
@@ -494,7 +538,6 @@ class App {
     if (targetEl) {
       // Tab 顺序固定 record(0)/replay(1)/history(2)，比较索引决定滑入方向
       const order = { record: 0, replay: 1, history: 2 };
-      const prev = this._currentTab;
       const dir = (prev in order && order[tab] > order[prev]) ? 'next' : 'prev';
       // 窄屏（≤480px）不做横向方向滑入，避免与纵向滚动冲突，留空走默认上滑
       if (window.matchMedia && window.matchMedia('(max-width: 480px)').matches) {

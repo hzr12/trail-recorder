@@ -355,7 +355,8 @@ const testCode = `
   console.log('=== 18. 响应式：总览/主题按钮窄屏规则 (阶段4) ===');
   const respCss = __readResponsiveCss();
   check('响应式含总览窄屏网格规则', respCss.indexOf('#tab-overview .overview-grid') >= 0);
-  check('响应式含主题按钮窄屏触摸区', respCss.indexOf('.tab-theme-toggle') >= 0 && respCss.indexOf('max-width: 480px') >= 0);
+  const themeCss = __readThemeCss();
+  check('主题按钮窄屏触摸区(≥44px)', themeCss.indexOf('.theme-toggle') >= 0 && themeCss.indexOf('max-width: 480px') >= 0);
   check('响应式含 360 超小屏适配', respCss.indexOf('max-width: 360px') >= 0);
 
   console.log('=== 19. 总览聚合边界容错 (阶段5) ===');
@@ -381,6 +382,7 @@ const testCode = `
 sandbox.__readAppCore = () => fs.readFileSync(path.join(JS_DIR, 'app-core.js'), 'utf8');
 sandbox.__readConfig = () => fs.readFileSync(path.join(JS_DIR, 'config.js'), 'utf8');
 sandbox.__readResponsiveCss = () => fs.readFileSync(path.join(ROOT, 'css', 'responsive.css'), 'utf8');
+sandbox.__readThemeCss = () => fs.readFileSync(path.join(ROOT, 'css', 'theme.css'), 'utf8');
 sandbox.captured = captured;
 
 try {
