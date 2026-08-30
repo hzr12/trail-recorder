@@ -25,8 +25,11 @@
 }
 
 .mode-tab.active {
-  background: rgba(0, 212, 170, 0.15);
+  background: rgba(0, 212, 170, 0.16);
   color: var(--accent-1);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow: inset 0 0 0 1px rgba(0, 212, 170, 0.28);
 }
 
 .mode-tab:active {
@@ -70,8 +73,15 @@
   animation-delay: calc(var(--i, 0) * 40ms);
 }
 
+@media (hover: hover) {
+  .trail-list-item:hover {
+    transform: translateX(2px);
+    background: var(--bg-hover);
+  }
+}
 .trail-list-item:active {
   background: var(--bg-hover);
+  transform: scale(0.99);
 }
 
 .trail-item-dot {
@@ -128,7 +138,7 @@
   justify-content: center;
   width: 32px;
   height: 32px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-btn);
   background: transparent;
   color: var(--text-secondary);
   border: 1px solid var(--border-color);
@@ -258,7 +268,9 @@
 }
 
 .trail-search-input:focus {
-  border-color: var(--border-active);
+  border-color: var(--accent-1);
+  box-shadow: 0 0 0 3px rgba(0, 212, 170, 0.18);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .trail-search-input::placeholder {
@@ -280,7 +292,9 @@
 
 .trail-sort-select:focus,
 .trail-time-select:focus {
-  border-color: var(--border-active);
+  border-color: var(--accent-1);
+  box-shadow: 0 0 0 3px rgba(0, 212, 170, 0.18);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .header-btn {
@@ -627,7 +641,7 @@
   justify-content: center;
   gap: 2px;
   padding: 8px 2px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-btn);
   background: var(--bg-input);
   border: 1px solid var(--border-color);
   min-width: 0;
@@ -635,13 +649,17 @@
 
 .rec-stat-label {
   font-size: 10px;
+  letter-spacing: 0.04em;
   color: var(--text-tertiary);
   white-space: nowrap;
 }
 
 .rec-stat-value {
-  font-size: 12px;
+  font-size: 14px;
+  font-weight: 600;
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
   color: var(--accent-1);
   white-space: nowrap;
   max-width: 100%;
@@ -661,7 +679,7 @@
   justify-content: center;
   gap: 6px;
   padding: 10px 16px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-btn);
   font-size: 13px;
   font-weight: normal;
   background: var(--bg-input);
@@ -996,7 +1014,7 @@
   color: var(--text-tertiary);
   background: transparent;
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-btn);
   cursor: pointer;
   transition: all 0.15s ease;
   min-width: 32px;
@@ -1092,9 +1110,17 @@
 }
 
 .replay-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
   color: var(--text-tertiary);
-  margin-bottom: 12px;
-  opacity: 0.6;
+  margin-bottom: 14px;
+  opacity: 0.75;
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px var(--border-color);
 }
 
 .replay-empty-title {
@@ -1233,7 +1259,9 @@
 }
 
 .modal-input:focus {
-  border-color: var(--border-active);
+  border-color: var(--accent-1);
+  box-shadow: 0 0 0 3px rgba(0, 212, 170, 0.18);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 /* ---------- 轨迹详情：分段区块 ---------- */

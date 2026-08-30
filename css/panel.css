@@ -384,7 +384,7 @@
 /* 回放空态卡片化，与其余区块呼吸一致 */
 #tab-replay .replay-empty {
   background: var(--bg-input);
-  border: 1px solid var(--border-color);
+  border: 1px dashed var(--border-color);
   border-radius: var(--radius-md);
   margin-bottom: 10px;
   animation: cardIn 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
@@ -442,7 +442,7 @@
   justify-content: center;
   gap: 6px;
   padding: 12px 16px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-btn);
   font-size: 14px;
   font-weight: normal;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -490,8 +490,11 @@
 
 /* ---------- 总览页（阶段2） ---------- */
 #tab-overview .overview-hero {
+  position: relative;
   text-align: center;
   padding: 18px 8px 14px;
+  background: radial-gradient(120% 80% at 50% 0%, rgba(0, 212, 170, 0.12), transparent 70%);
+  border-radius: var(--radius-md);
 }
 #tab-overview .overview-hero-label {
   display: block;

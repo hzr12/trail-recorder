@@ -63,6 +63,18 @@
   --space-5: 24px;
   --space-6: 32px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  /* 重构 Phase0：统一设计令牌（圆角 / 字号 / 动效） */
+  --radius-btn: 12px;
+  --text-xs: 10px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-lg: 15px;
+  --text-xl: 20px;
+  --dur-fast: 0.15s;
+  --dur-normal: 0.25s;
+  --dur-slow: 0.42s;
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* ---------- 主色彩色方案 ---------- */

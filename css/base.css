@@ -57,7 +57,7 @@ input[type="number"] {
   padding: 10px 10px;
   font-size: 12px;
   font-weight: normal;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-btn);
   white-space: nowrap;
   background: var(--bg-input);
   color: var(--text-secondary);
@@ -83,7 +83,7 @@ input[type="number"] {
 
 /* ---------- 滚动条美化 ---------- */
 .bottom-panel::-webkit-scrollbar {
-  width: 3px;
+  width: 4px;
 }
 
 .bottom-panel::-webkit-scrollbar-track {
@@ -91,12 +91,12 @@ input[type="number"] {
 }
 
 .bottom-panel::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
+  background: rgba(0, 212, 170, 0.22);
+  border-radius: 4px;
 }
 
 .bottom-panel::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(0, 212, 170, 0.4);
 }
 
 /* 全局滚动行为 */
@@ -108,4 +108,11 @@ input[type="number"] {
 .bottom-panel {
   overscroll-behavior-y: contain;
   touch-action: pan-y;
+}
+
+/* 重构 Phase1-A3：全站键盘焦点态（无障碍 + 精致度） */
+:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 2px;
+  border-radius: inherit;
 }
