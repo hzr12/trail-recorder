@@ -134,6 +134,10 @@ class KalmanFilter {
     Pf[0] = 2500; Pf[5] = 2500; // 初始位置不确定度 50m²，速度未知
     let x0 = 0, x1 = 0, x2 = 0, x3 = 0;
     let lastTime = fixes[0].time;
+    // 强跟踪（STF 思路）：上一步归一化新息平方和的 EMA。真实机动（转弯/加减速）时
+    // 残差系统性增大 → 下一步按比例放大 Q，让模型「敢」跟测量走；直线段 nis≈2，
+    // qBoost=1 完全不影响原有平滑度。EMA 抑制单点粗差误触发（Huber 已单独兜底粗差）。
+    let emaNis = 2;
 
     for (let i = 1; i < n; i++) {
       let dt = (fixes[i].time - lastTime) / 1000;
@@ -146,7 +150,26 @@ class KalmanFilter {
       // 动态 q：精度好时跟手（响应快），精度差时平滑（抑制噪声）；速度越快机动越强，q 越大
       const accClamped = Math.max(Math.min(fixes[i].accuracy || 10, 2000), 1);
       const speedFactor = Math.min(12, Math.max(1, (fixes[i].speed || 0) / 0.5));
-      const q = Math.max(0.1, (0.5 / accClamped) * speedFactor);
+      // 测量方差提前算（update 阶段复用）：accuracy 加权（RTS_ACC_WEIGHT），
+      // 低精度点噪声方差放大，RTS 反向递推更信任模型预测而非该测量。
+      const sigma = Math.max(3, Math.min(accClamped, 2000));
+      const rExp = CONFIG.RTS_ACC_WEIGHT || 1;
+      const r = sigma * sigma * Math.pow(sigma / 50, rExp - 1);
+      // 强跟踪放大：nis 显著超过 χ²(2) 期望值 2（阈值 6 ≈ 95% 分位）说明 CV 模型失锁，
+      // Q 按 nis/6 线性放大（上限 25 倍防炸），机动段弯道跟手；静态/匀速段恒为 1。
+      // 注：曾试验「GPS speed 与模型速度失配」作为额外 boost 信号——实测全面变差
+      // （停顿段滤波转而跟随噪声测量，散布 0.54→2.21m，拖尾也没治好），已撤销。
+      // 拖尾本质是平滑器固有的减速坡道，用位置观测治它得不偿失。
+      const qBoost = Math.min(25, Math.max(1, emaNis / 6));
+      // q 下限与测量方差联动（治弱信号切角）：accuracy 报大时 r 巨大、测量被大幅降权，
+      // 若 Q 不跟随，滤波增益趋零、输出退化为「匀速模型外推」——弯道大切角（实测 11m vs 原始 6m）。
+      // sqrt(r)/9 对应等效平滑窗 ~3 步（CV 模型时间常数 ~(r/q²)^(1/4)），保证模型「够得着」测量；
+      // 正常精度（sigma≤10m）下该下限不主导，维持原有平滑度。
+      const q = Math.max(
+        0.1,
+        (0.5 / accClamped) * speedFactor * qBoost,
+        (Math.sqrt(r) / 9) * qBoost
+      );
       const dt2 = dt * dt, q2 = q * q;
       const q00 = 0.25 * q2 * dt2 * dt2, q02 = 0.5 * q2 * dt2 * dt, q22 = q2 * dt2;
 
@@ -188,13 +211,7 @@ class KalmanFilter {
       Pp.set(Ppred, i * 16);
 
       // Update：S、K 计算
-      const sigma = Math.max(3, Math.min(accClamped, 2000));
-      // accuracy 加权（RTS_ACC_WEIGHT）：低精度点（sigma 大）的噪声方差被放大，
-      // RTS 反向递推时更信任模型预测而非该测量；高精度点反之亦然。
-      // 以 50m 为参考基准：rExp=1 退化为原 sigma^2；rExp>1 时低精度权重更陡峭，
-      // 等价于隐式运动学一致性约束（与实时 IMU clamp 解耦）。
-      const rExp = CONFIG.RTS_ACC_WEIGHT || 1;
-      const r = sigma * sigma * Math.pow(sigma / 50, rExp - 1);
+      // （sigma/r 已在 predict 段提前算好，此处直接用）
       const s00 = Ppred[0] + r, s01 = Ppred[1], s10 = Ppred[4], s11 = Ppred[5] + r;
       const det = s00 * s11 - s01 * s10;
       // 数值稳定性：S 奇异（det→0）时直接求逆溢出。退化时跳过卡尔曼增益（K=0），
@@ -218,9 +235,12 @@ class KalmanFilter {
       // K 按该点速度/精度自适应
       let e0 = zx[i] - px0;
       let e1 = zy[i] - px1;
+      // 归一化残差（Huber 降权前）：同步喂给强跟踪 EMA——若用降权后的值，
+      // 真实机动的持续大残差会被 Huber 掩盖，强跟踪失灵
+      const n0 = e0 * e0 / s00, n1 = e1 * e1 / s11;
+      emaNis = emaNis * 0.7 + Math.min(100, n0 + n1) * 0.3;
       const hk = this._huberKFor(speedFactor, accClamped);
       if (hk > 0) {
-        const n0 = e0 * e0 / s00, n1 = e1 * e1 / s11;
         if (n0 > hk * hk) e0 *= hk / Math.sqrt(n0);
         if (n1 > hk * hk) e1 *= hk / Math.sqrt(n1);
       }
@@ -319,13 +339,22 @@ class KalmanFilter {
       xs[p4 + 3] = xf[p4 + 3] + C[12] * dx0 + C[13] * dx1 + C[14] * dx2 + C[15] * dx3;
     }
 
-    // 平滑状态 → lat/lng
+    // 平滑状态 → lat/lng（端点保真混合，只治首点）
+    // 首点没有历史信息（初始态速度未知、P 大），RTS 修正不足，滞后可达数米，
+    // 表现为「保存后起点不在脚下」→ 按 50%/25% 向原始测量收敛。
+    // 末点是全量数据的收敛态，通常已优于带噪测量（实测混 raw 反而拉差），不混。
     const out = new Array(n);
     for (let i = 0; i < n; i++) {
       const p4 = i * 4;
+      let sx = xs[p4], sy = xs[p4 + 1];
+      const wRaw = i === 0 ? 0.5 : (i === 1 && n > 2 ? 0.25 : 0);
+      if (wRaw > 0) {
+        sx += (zx[i] - sx) * wRaw;
+        sy += (zy[i] - sy) * wRaw;
+      }
       out[i] = {
-        lat: refLat + xs[p4 + 1] / M_PER_DEG,
-        lng: refLng + xs[p4] / (M_PER_DEG * cosLat),
+        lat: refLat + sy / M_PER_DEG,
+        lng: refLng + sx / (M_PER_DEG * cosLat),
         time: fixes[i].time,
         ts: fixes[i].ts
       };
