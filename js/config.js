@@ -174,6 +174,14 @@ const CONFIG = {
   NMEA_SPEED_CONFLICT_RATIO: 0.3,   // VTG vs RMC 速度相对偏差比例阈值（超过触发冲突）
   NMEA_SPEED_CONFLICT_ABS: 2.0,     // VTG vs RMC 速度绝对偏差阈值（m/s）
   NMEA_HEADING_CONFLICT_DEG: 30,    // VTG vs RMC 航向偏差阈值（度）
+
+  // ----- P1 GST 定位误差统计 + accuracy 融合（榨 Java 插件）-----
+  NMEA_GST_MAX_AGE_MS: 5000,    // $G?GST σ 误差统计有效窗口
+  ACC_GST_MIN_M: 0.5,           // GST σ_h 低于此值视为芯片未就绪（部分芯片常年报 0）
+  ACC_GST_MAX_M: 500,           // GST σ_h 超此值视为野值拒绝
+  ACC_UERE_MIN_M: 1.2,          // HDOP→accuracy 换算的 UERE 下限（C/N0=40dB 基准）
+  ACC_UERE_MAX_M: 4.0,          // UERE 上限（低 SNR 封顶）
+  ACC_LOWBALL_PLAT_M: 30,       // 平台 accuracy 超此值启用低估护栏（防 GST/HDOP 低估遮挡误差）
   NMEA_HEADING_MIN_SPEED: 0.4,      // 低于此速度（m/s）航向无意义，不参与交叉验证
   NMEA_COORD_CONFLICT_M: 30,        // 原生 GGA/RMC 经纬度 vs 浏览器点偏差阈值（米），超过标记可疑
   NMEA_COORD_CONFLICT_STREAK: 3,    // 连续 N 次偏差超阈才判定"原生坐标不可信"（防抖）
@@ -280,6 +288,16 @@ const CONFIG = {
   IMU_FEED_MAX_AGE_MS: 2000,       // 聚合值新鲜度上限：超时视为过期不注入（防陈旧数据）
   IMU_ACC_LPF_ALPHA: 0.4,          // 窗口均值后一阶低通系数（0=保持旧值，1=全信最新均值）
   IMU_ACC_CLAMP: 30,               // 加速度绝对安全上限（m/s²，防传感器粗差）
+
+  // ----- 榨插件 P5：陀螺仪通道（gx/gy/gz 已上桥此前未消费）-----
+  IMU_TURN_ENABLED: true,          // 陀螺仪转弯检测总开关（低速 GPS 航向差分失效区的保弯兜底）
+  IMU_TURN_ANGLE_DEG: 20,          // 两次定位间累计转角阈值（度），超此值强制入库（对齐 TRAIL_TURN_ANGLE_DEG）
+  IMU_TURN_MIN_SPEED: 0.2,         // 低于此速度(m/s)不计陀螺仪转弯（原地转身不采点，防污染抖动门限）
+  IMU_TURN_DEADBAND: 0.01,         // 角速率死区（rad/s≈0.57°/s），抑制静止陀螺仪零偏累积
+  IMU_TURN_RATE_CLAMP: 3.0,        // 角速率绝对上限（rad/s≈172°/s），防粗差尖峰
+  IMU_TURN_STALE_MS: 5000,         // 距上次排水超此时长视为陈旧清零（防非记录期/跨会话残留）
+  IMU_HEADING_HOLD_MS: 10000,      // 陀螺仪航向桥最长保持时长（ms），超窗回退（仅影响箭头显示）
+  GPS_GYRO_HEADING_HOLD: true,     // 陀螺仪短时航向保持总开关；GPS 仍为航向权威，桥仅填低速盲区
   IMU_MIN_USED_SATS: 5,            // 参与定位（解算中）卫星数阈值：仅当 usedInFix 卫星数 > 此值时才启用 IMU
   IMU_ROT_MAX_DT_MS: 200,          // 姿态-加速度最大时间差（毫秒）：偏差超此值视为不匹配，安全降级不注入
   IMU_ROT_BUF_MAX: 32,             // 姿态环形缓冲容量（姿态约 5-10Hz，32 条 ≈ 3-6s 历史）

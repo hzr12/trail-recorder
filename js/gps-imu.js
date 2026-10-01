@@ -55,6 +55,18 @@ class ImuManager {
     this._lastAccEnu = null;
     this._lastSampleTime = 0;  // 最近一次 IMU 事件时间戳（新鲜度判断，Date.now 毫秒）
 
+    // 榨插件 P5：陀螺仪通道（gx/gy/gz 此前上桥未消费）
+    // _turnDeltaDeg：自上次排水累计的罗盘转角（度，顺时针为正）——低速转弯强制采样
+    // _headingDeltaDeg：自基线重置累计的罗盘转角——短时航向桥（GPS 航向缺失时）
+    // 陀螺仪不改变「GPS 航向权威」架构：转弯检测只触发采样决策，航向桥只影响箭头显示。
+    this._lastGyroTsNs = 0;
+    this._turnDeltaDeg = 0;
+    this._headingDeltaDeg = 0;
+    this._lastTurnDrainAt = 0;
+    this._turnDeadband = C.IMU_TURN_DEADBAND != null ? C.IMU_TURN_DEADBAND : 0.01;
+    this._turnRateClamp = C.IMU_TURN_RATE_CLAMP != null ? C.IMU_TURN_RATE_CLAMP : 3.0;
+    this._turnStaleMs = C.IMU_TURN_STALE_MS != null ? C.IMU_TURN_STALE_MS : 5000;
+
     // 姿态-加速度时间对齐——带时间戳的姿态环形缓冲
     // 姿态事件时间戳与加速度事件时间戳同源（Android sensor clock，纳秒）。
     this._rotBufMax = Math.max(4, C.IMU_ROT_BUF_MAX != null ? C.IMU_ROT_BUF_MAX : 32);
@@ -126,6 +138,10 @@ class ImuManager {
     try { this._plugin.stopImuListening(); } catch (_) {}
     this._lastAccEnu = null;
     this._lastSampleTime = 0;
+    this._lastGyroTsNs = 0;
+    this._turnDeltaDeg = 0;
+    this._headingDeltaDeg = 0;
+    this._lastTurnDrainAt = 0;
     this._rotBuf.length = 0;
     this._resetWindow();
   }
@@ -139,6 +155,45 @@ class ImuManager {
     if (!this._listening || !this._lastAccEnu) return null;
     if (this._lastSampleTime <= 0 || Date.now() - this._lastSampleTime > this._feedMaxAge) return null;
     return this._lastAccEnu;
+  }
+
+  /**
+   * 排水：返回自上次调用以来累计的罗盘转角（度，顺时针为正），并清零累计器。
+   * 消费方：App 转弯强制采样（每定位周期调用一次）。距上次排水超过 IMU_TURN_STALE_MS
+   * （非记录期/跨会话）视为陈旧，直接清零返回 0，防旧转角误触发采样。
+   * 未监听（web 无插件）→ 返回 null，调用方跳过（零回归）。
+   * @returns {number|null}
+   */
+  drainTurnDelta() {
+    if (!this._listening) return null;
+    const now = Date.now();
+    if (this._lastTurnDrainAt && now - this._lastTurnDrainAt > this._turnStaleMs) {
+      this._turnDeltaDeg = 0;
+    }
+    this._lastTurnDrainAt = now;
+    const d = this._turnDeltaDeg;
+    this._turnDeltaDeg = 0;
+    return isFinite(d) ? d : null;
+  }
+
+  /**
+   * 航向桥读取：返回自基线重置以来累计的罗盘转角（度，顺时针为正）。
+   * 非破坏性（不清零）——中间定位点不消费积分，保证「基线→桥」全程转角完整。
+   * 基线由 GPSManager 在取得权威航向时调 resetHeadingDelta() 重置。
+   * 未监听 → null。
+   * @returns {number|null}
+   */
+  readHeadingDelta() {
+    if (!this._listening) return null;
+    const d = this._headingDeltaDeg;
+    return isFinite(d) ? d : null;
+  }
+
+  /**
+   * 航向桥基线重置（GPSManager 取得 GPS 权威航向 / 差分航向更新时调用）。
+   */
+  resetHeadingDelta() {
+    this._headingDeltaDeg = 0;
   }
 
   _resetWindow() {
@@ -201,6 +256,31 @@ class ImuManager {
 
     const accEnu = this._rotateAccToEnu([ax, ay, az], rotQ);
     if (!accEnu) return;
+
+    // 榨插件 P5：陀螺仪通道——同姿态把角速度旋到 ENU，U 轴即绕重力轴角速率。
+    // 罗盘航向（顺时针为正）角速率 = -ω_z_ENU；按传感器时间戳差分积分累计转角。
+    // gx/gy/gz 缺失/非法/时间戳回跳 → 只推进基线不积分（安全降级，仅丢失转弯辅助）。
+    const gx = Number(sample.gx), gy = Number(sample.gy), gz = Number(sample.gz);
+    if (isFinite(gx) && isFinite(gy) && isFinite(gz) && tsNs > 0) {
+      const prevGyroTs = this._lastGyroTsNs;
+      this._lastGyroTsNs = tsNs;
+      if (prevGyroTs > 0 && tsNs > prevGyroTs) {
+        const gyroDt = (tsNs - prevGyroTs) / 1e9; // 秒
+        if (gyroDt > 0 && gyroDt <= 1.0) { // 正常 10Hz≈0.1s；超 1s 视为流中断不积分
+          const gyroEnu = this._rotateAccToEnu([gx, gy, gz], rotQ);
+          if (gyroEnu) {
+            let w = -gyroEnu[2]; // 罗盘航向角速率（rad/s，顺时针为正）
+            if (w > this._turnDeadband || w < -this._turnDeadband) {
+              if (w > this._turnRateClamp) w = this._turnRateClamp;
+              else if (w < -this._turnRateClamp) w = -this._turnRateClamp;
+              const degDelta = w * gyroDt * 180 / Math.PI;
+              this._turnDeltaDeg += degDelta;
+              this._headingDeltaDeg += degDelta;
+            }
+          }
+        }
+      }
+    }
 
     const now = Date.now();
     this._lastSampleTime = now;

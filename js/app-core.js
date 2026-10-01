@@ -1203,12 +1203,24 @@ class App {
             if (angDiff > CONFIG.TRAIL_TURN_ANGLE_DEG) forceSample = true;
           }
         }
+        // 榨插件 P5：陀螺仪转弯检测——低速（GPS 航向差分在 <0.5m/s 失效）也能保弯。
+        // 每 fix 排水一次（IMU_TURN_STALE_MS 防非记录期残留）；原地静止（<0.2m/s）
+        // 不采点，防「原地转身」绕过抖动门限入库。
+        const gyroTurnDeg = (this.gpsManager && typeof this.gpsManager.drainGyroTurnDelta === 'function')
+          ? this.gpsManager.drainGyroTurnDelta() : null;
+        if (!forceSample && last && CONFIG.TRAIL_TURN_FORCE_SAMPLE && CONFIG.IMU_TURN_ENABLED &&
+            gyroTurnDeg != null && spd >= CONFIG.IMU_TURN_MIN_SPEED &&
+            Math.abs(gyroTurnDeg) >= CONFIG.IMU_TURN_ANGLE_DEG) {
+          forceSample = true;
+        }
         if (last) {
           const dM = calcDistance({ lat: last.lat, lng: last.lng }, convPos);
           if (!forceSample) {
           // 抖动门限：低速且位移小于 accuracy×ratio → 视为 GPS 噪声，不入库（地图标记已更新）
+          // 榨插件 P1：门限吃融合精度 accuracyEst（GST/HDOP 更可信），无融合时回退平台值
+          const accForGate = pos.accuracyEst != null ? pos.accuracyEst : (pos.accuracy || 10);
           if (spd < CONFIG.TRAIL_JITTER_MAX_SPEED &&
-              dM < (pos.accuracy || 10) * jitterRatio) {
+              dM < accForGate * jitterRatio) {
             added = false; // 仅更新地图标记，不入库
           } else if (CONFIG.POS_FILTER.ENABLED) {
             // 显示层 Hampel 鬼点拒绝：用最近若干 fix 的中位数作参考，若当前点
@@ -1235,7 +1247,7 @@ class App {
           lng: convPos.lng,
           time: this.gpsManager.calibratedNow,
           ts: this.gpsManager.getCompensatedTs(pos.timestamp), // 时钟漂移补偿(任务D)
-          accuracy: pos.accuracy || 0,
+          accuracy: pos.accuracyEst != null ? pos.accuracyEst : (pos.accuracy || 0),
           speed: pos.speed,
           heading: pos.heading,
           altitude: this._recordAltitude(pos.altitude) // 相对基准海拔(任务B)

@@ -372,6 +372,73 @@ const testCode = `
   const strDate = TrailOverview.aggregate([{ distance: 100, duration: 10, createdAt: '2026-03-03T08:00:00' }]);
   eq('字符串 createdAt 容错 activeDays=1', strDate.activeDays, 1);
 
+  console.log('=== 20. GST 定位误差解析 + accuracy 融合链（榨插件 P1）===');
+  check('CONFIG.NMEA_GST_MAX_AGE_MS 定义且>0',
+    typeof CONFIG.NMEA_GST_MAX_AGE_MS === 'number' && CONFIG.NMEA_GST_MAX_AGE_MS > 0,
+    'got ' + CONFIG.NMEA_GST_MAX_AGE_MS);
+  check('CONFIG.ACC_GST_MIN/MAX_M 定义合理',
+    typeof CONFIG.ACC_GST_MIN_M === 'number' && CONFIG.ACC_GST_MIN_M > 0 &&
+    typeof CONFIG.ACC_GST_MAX_M === 'number' && CONFIG.ACC_GST_MAX_M > CONFIG.ACC_GST_MIN_M);
+  const gpsG = new GPSManager();
+  eq('无任何 NMEA 时融合返回 null（调用方回退平台值）', gpsG._resolveMeasurementAccuracy(12), null);
+  // GST 3-4-5：σlat=3, σlon=4 → σ_h=√(3²+4²)=5
+  gpsG._parseNmea('$GPGST,083559.00,1.0,2.0,1.5,0.0,3.0,4.0,5.0*7A');
+  check('gstSigmaH=√(3²+4²)=5', Math.abs(gpsG.gstSigmaH - 5) < 1e-9, 'got ' + gpsG.gstSigmaH);
+  eq('gstSigmaAlt=5（parseFloat 截断校验和）', gpsG.gstSigmaAlt, 5);
+  eq('GST 优先：融合=σ_h=5', gpsG._resolveMeasurementAccuracy(12), 5);
+  // 低估护栏：平台很差（>30m）且估计 < 平台/3 → 取几何平均 √(5×90)≈21.21
+  const guarded = gpsG._resolveMeasurementAccuracy(90);
+  check('低估护栏取几何平均 √(5×90)', Math.abs(guarded - Math.sqrt(450)) < 1e-6, 'got ' + guarded);
+  // 芯片常年报 0 → σ≤0 视为未就绪
+  const gpsZ = new GPSManager();
+  gpsZ._parseNmea('$GPGST,083559.00,1.0,2.0,1.5,0.0,0.0,0.0,0.0*71');
+  eq('GST σ=0 视为无效返回 null', gpsZ.gstSigmaH, null);
+  eq('σ=0 时融合走 HDOP 路径（无 GSA 仍为 null）', gpsZ._resolveMeasurementAccuracy(12), null);
+  // 仅 GSA：HDOP×UERE（无卫星缓存 → SNR 视为未知 → UERE 取中值 2.6）
+  const gpsH = new GPSManager();
+  gpsH._parseNmea('$GPGSA,A,3,01,02,03,04,05,06,07,08,09,10,11,12,2.5,1.6,2.0*33');
+  check('HDOP 路径：1.6×2.6=4.16', Math.abs(gpsH._resolveMeasurementAccuracy(9) - 4.16) < 1e-6,
+    'got ' + gpsH.hdop + '×2.6 → ' + gpsH._resolveMeasurementAccuracy(9));
+  // _clearNmeaCache 同步清 GST（源切换/停止监听后不得残留旧 σ）
+  gpsG._clearNmeaCache();
+  eq('清缓存后 gstSigmaH 为 null', gpsG.gstSigmaH, null);
+
+  console.log('=== 21. 陀螺仪转弯检测 + 航向桥（榨插件 P5）===');
+  check('CONFIG.IMU_TURN_* / GPS_GYRO_HEADING_HOLD 定义合理',
+    CONFIG.IMU_TURN_ENABLED === true && CONFIG.IMU_TURN_ANGLE_DEG > 0 &&
+    CONFIG.IMU_TURN_MIN_SPEED >= 0 && CONFIG.IMU_TURN_DEADBAND > 0 &&
+    CONFIG.IMU_TURN_RATE_CLAMP > CONFIG.IMU_TURN_DEADBAND &&
+    CONFIG.IMU_TURN_STALE_MS > 0 && CONFIG.IMU_HEADING_HOLD_MS > 0 &&
+    CONFIG.GPS_GYRO_HEADING_HOLD === true);
+  const imu = new ImuManager();
+  imu._listening = true; // 测试直连事件流（生产由插件监听置位）
+  // 恒等四元数 [1,0,0,0]：设备系 z 轴=ENU 天轴。gz=-0.5 rad/s → 罗盘航向率 +0.5 rad/s（顺时针）
+  const ts0 = 1000000000; // 1s（纳秒）
+  imu._onSample({ ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: 0, rotation: [1, 0, 0, 0], rotationTs: ts0, timestamp: ts0 });
+  let tsP5 = ts0;
+  for (let i = 1; i <= 10; i++) { tsP5 += 100000000; imu._onSample({ ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: -0.5, rotation: [1, 0, 0, 0], rotationTs: tsP5, timestamp: tsP5 }); }
+  const turnDeg = imu.drainTurnDelta();
+  check('10×0.1s×0.5rad/s 累计 ≈ +28.65°（顺时针为正）',
+    turnDeg != null && Math.abs(turnDeg - 28.6479) < 0.5, 'got ' + turnDeg);
+  eq('排水后归零', imu.drainTurnDelta(), 0);
+  for (let i = 0; i < 10; i++) { tsP5 += 100000000; imu._onSample({ ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: -0.005, rotation: [1, 0, 0, 0], rotationTs: tsP5, timestamp: tsP5 }); }
+  eq('死区内角速率不累计', imu.drainTurnDelta(), 0);
+  imu.resetHeadingDelta();
+  for (let i = 0; i < 5; i++) { tsP5 += 100000000; imu._onSample({ ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: -1.0, rotation: [1, 0, 0, 0], rotationTs: tsP5, timestamp: tsP5 }); }
+  const hd1 = imu.readHeadingDelta();
+  const hd2 = imu.readHeadingDelta();
+  check('readHeadingDelta 非破坏 ≈ +28.65°', hd1 != null && Math.abs(hd1 - 28.6479) < 0.5 && hd1 === hd2, 'got ' + hd1);
+  imu.resetHeadingDelta();
+  eq('基线重置后读数=0', imu.readHeadingDelta(), 0);
+  imu._listening = false;
+  eq('未监听时排水返回 null（web 零回归）', imu.drainTurnDelta(), null);
+  const gpsP5 = new GPSManager();
+  eq('无插件 drainGyroTurnDelta=null', gpsP5.drainGyroTurnDelta(), null);
+  const gmSrc = __readGpsManager();
+  check('App 转弯采样已消费陀螺仪排水', __readAppCore().indexOf('drainGyroTurnDelta') >= 0);
+  check('航向桥已接入 _resolveHeadingFallback', gmSrc.indexOf('GPS_GYRO_HEADING_HOLD') >= 0 && gmSrc.indexOf('readHeadingDelta') >= 0);
+  check('stopWatching 重置航向桥基线', gmSrc.indexOf('this._gyroHeadingBase = null') >= 0);
+
   console.log('\\n=== 结果: ' + pass + ' passed, ' + fail + ' failed ===');
   if (fail > 0) { console.log('失败项:'); failures.forEach(f => console.log('  - ' + f)); }
   globalThis.__result = { pass, fail, failures };
@@ -381,6 +448,7 @@ const testCode = `
 // 提供给测试代码读取源文件的辅助
 sandbox.__readAppCore = () => fs.readFileSync(path.join(JS_DIR, 'app-core.js'), 'utf8');
 sandbox.__readConfig = () => fs.readFileSync(path.join(JS_DIR, 'config.js'), 'utf8');
+sandbox.__readGpsManager = () => fs.readFileSync(path.join(JS_DIR, 'gps-manager.js'), 'utf8');
 sandbox.__readResponsiveCss = () => fs.readFileSync(path.join(ROOT, 'css', 'responsive.css'), 'utf8');
 sandbox.__readThemeCss = () => fs.readFileSync(path.join(ROOT, 'css', 'theme.css'), 'utf8');
 sandbox.captured = captured;

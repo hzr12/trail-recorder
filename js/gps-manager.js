@@ -62,6 +62,7 @@ class GPSManager {
     this._lastGga = null;          // $GPGGA：海拔 MSL + 大地水准面分离 + 经纬度
     this._geoidBaseline = null;    // 大地水准面分离基准（米），计划 D：首个可信 GGA sep 锁定
     this._lastGsa = null;          // $G?GSA：PDOP/HDOP/VDOP
+    this._lastGst = null;          // $G?GST：芯片直出定位误差统计 σlat/σlon/σalt（榨插件 P1）
     this._gpsSource = 'fallback';  // 定位源状态：native（原生主导）| browser（浏览器顶上）| fallback（无插件）
     this._sourceNativeCnt = 0;     // 切 native 持续计数（滞回防抖）
     this._sourceBrowserCnt = 0;    // 切 browser 持续计数（滞回防抖）
@@ -128,6 +129,7 @@ class GPSManager {
 
     // 位置差分航向兜底（GPS 航向缺失/低速时，用滤波后相邻点位移反推航向 + 一阶低通）
     this._diffHeading = null;          // 低通后的差分航向（度，0~360）
+    this._gyroHeadingBase = null;      // 陀螺仪航向桥基线 {h, at}（榨插件 P5，GPS 权威时刷新）
     this._diffHeadingPos = null;       // 上一次用于差分的滤波后位置 {lat, lng}
 
   }
@@ -652,6 +654,19 @@ class GPSManager {
         vdop: isNaN(vdop) ? null : vdop,
         receivedAt: Date.now()
       };
+    } else if (type === 'GST') {
+      // $G?GST,<utc>,<rms>,<长半轴σ>,<短半轴σ>,<长半轴方位>,<σlat>,<σlon>,<σalt>
+      // 芯片直出的定位误差统计（1σ，米），比浏览器 accuracy 可信一个量级（榨插件 P1）。
+      // 部分芯片 GST 常年报 0 → σ≤0 视为无效（解析仍缓存，getter 层过滤）。
+      const sLat = parseFloat(parts[6]);
+      const sLng = parseFloat(parts[7]);
+      const sAlt = parseFloat(parts[8]);
+      this._lastGst = {
+        sigmaLat: isNaN(sLat) ? null : sLat,
+        sigmaLng: isNaN(sLng) ? null : sLng,
+        sigmaAlt: isNaN(sAlt) ? null : sAlt,
+        receivedAt: Date.now()
+      };
     }
     // 数据更新 → 重估定位源（节流：最多每 1s 一次，避免高频 NMEA 反复评估）
     this._maybeEvaluateSource();
@@ -798,6 +813,45 @@ class GPSManager {
     this._lastRmc = null;
     this._lastGga = null;
     this._lastGsa = null;
+    this._lastGst = null;
+  }
+
+  /**
+   * accuracy 融合链（榨插件 P1）：为滤波数学（RTS 的 R / 实时 Hampel 门限 / Huber）
+   * 提供比平台报告更可信的水平误差估计。优先级：
+   *   1. GST σ_h（芯片直出 1σ 误差，NMEA_GST 窗口内且未越界）
+   *   2. HDOP × UERE（几何精度先验；UERE 按 C/N0 线性换算，1.2~4m 封顶）
+   *   3. 平台 accuracy 兜底（都无 NMEA 数据时返回 null，调用方回退原值）
+   * 低估护栏：平台报很差（> ACC_LOWBALL_PLAT_M）而估计小于其 1/3 时，
+   * GST/HDOP 大概率没反映遮挡（城市峡谷芯片常自信），取几何平均折中。
+   * @param {number} platformAcc 平台原始 accuracy（m）
+   * @returns {number|null} 融合精度（m，1~500），null 表示无可用估计
+   */
+  _resolveMeasurementAccuracy(platformAcc) {
+    let est = null;
+    const gst = this.gstSigmaH;
+    if (gst != null) {
+      est = gst;
+    } else {
+      const h = this.hdop;
+      if (h != null && h > 0 && h < 50) {
+        // 注意：gnssAvgSnr 无卫星缓存时返回 0 而非 null，这里必须按缓存有无判断
+        // 「是否有卫星数据」，否则无数据被当成最差信噪比（UERE 顶格 4m）
+        const snr = this._satStatsCache ? this.gnssAvgSnr : null;
+        const uere = snr == null
+          ? (CONFIG.ACC_UERE_MIN_M + CONFIG.ACC_UERE_MAX_M) / 2
+          : Math.min(CONFIG.ACC_UERE_MAX_M,
+              Math.max(CONFIG.ACC_UERE_MIN_M,
+                (40 - snr) * 0.12 + CONFIG.ACC_UERE_MIN_M));
+        est = h * uere;
+      }
+    }
+    if (est == null) return null;
+    const plat = Number(platformAcc) || 0;
+    if (plat > CONFIG.ACC_LOWBALL_PLAT_M && est < plat / 3) {
+      est = Math.sqrt(est * plat);
+    }
+    return Math.max(1, Math.min(500, est));
   }
 
   /**
@@ -1451,6 +1505,9 @@ class GPSManager {
           lat: position.coords.latitude,
           lng: position.coords.longitude,
           accuracy: position.coords.accuracy,
+          // 榨插件 P1：融合精度估计（GST σ_h > HDOP×UERE > 平台值），供滤波数学消费；
+          // accuracy 保留平台原值，UI 状态栏展示不变
+          accuracyEst: this._resolveMeasurementAccuracy(position.coords.accuracy),
           altitude: this._resolveAltitude(position.coords.altitude),
           speed: this._resolveSpeed(position.coords.speed),
           heading: this._resolveHeading(position.coords.heading),
@@ -1518,7 +1575,8 @@ class GPSManager {
           this._rawFixes.push({
             lat: fixLatLng.lat,          // GCJ02（与轨迹点同系，RTS 全程 GCJ02 空间平滑）
             lng: fixLatLng.lng,          // GCJ02
-            accuracy: pos.accuracy || 0,
+            // 榨插件 P1：RTS 的 R 矩阵吃融合精度（GST/HDOP 更可信），无融合时回退平台值
+            accuracy: pos.accuracyEst != null ? pos.accuracyEst : (pos.accuracy || 0),
             speed: pos.speed,
             altitude: rawAltitude,       // 原始海拔（质量门后），供离线 1D RTS 平滑
             time: this.getCompensatedTs(pos.timestamp),  // GPS 事件时刻（时钟漂移补偿，任务D）
@@ -1531,7 +1589,7 @@ class GPSManager {
         // 原始 rawPos 已存入 _rawFixes 供离线 RTS，此处只改蓝点/入库用的 pos 经纬度。
         // 平滑后 pos 同时供航向兜底（消费平滑后相邻点位移，更稳）。
         // 模块1：传入 GNSS 质量评分，供平滑强度自适应（Hampel/静止门限）
-        const smoothed = this._posSmoother.push({ lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, time: pos.timestamp || Date.now() }, this.qualScore);
+        const smoothed = this._posSmoother.push({ lat: pos.lat, lng: pos.lng, accuracy: pos.accuracyEst != null ? pos.accuracyEst : pos.accuracy, time: pos.timestamp || Date.now() }, this.qualScore);
         pos.lat = smoothed.lat;
         pos.lng = smoothed.lng;
 
@@ -1589,6 +1647,7 @@ class GPSManager {
     // 重置位置差分航向状态，防止跨会话用陈旧基线推算航向
     this._diffHeading = null;
     this._diffHeadingPos = null;
+    this._gyroHeadingBase = null; // 陀螺仪航向桥基线同步失效（榨插件 P5）
     // 重置实时位置滑动窗，防止跨会话/源切换时旧观测点混入新窗造成跳变
     if (this._posSmoother) this._posSmoother.reset();
     // 重置 GPS 时钟漂移估计，防止跨会话旧偏移串入（任务D）
@@ -1613,6 +1672,28 @@ class GPSManager {
     if (!this._imuManager) return;
     this._imuStarted = false;
     this._imuManager.stop();
+  }
+
+  /**
+   * 陀螺仪转弯排水（榨插件 P5）：返回自上次调用以来累计的罗盘转角（度，顺时针为正）。
+   * 消费方：App 转弯强制采样——低速（GPS 航向差分失效区）也能检出转弯保弯。
+   * web 无插件 / IMU 未运行 → null（调用方跳过，零回归）。
+   * @returns {number|null}
+   */
+  drainGyroTurnDelta() {
+    return this._imuManager ? this._imuManager.drainTurnDelta() : null;
+  }
+
+  /**
+   * 更新陀螺仪航向桥基线（榨插件 P5）：GPS 取得权威航向 / 差分航向更新时调用，
+   * 记录基线航向与时刻，并清零 IMU 转角积分（桥 = 基线 + 基线后积分）。
+   * @param {number} headingDeg 权威航向（度 0~360）
+   */
+  _setGyroHeadingBase(headingDeg) {
+    if (this._imuManager && typeof this._imuManager.resetHeadingDelta === 'function') {
+      this._imuManager.resetHeadingDelta();
+    }
+    this._gyroHeadingBase = { h: headingDeg, at: Date.now() };
   }
 
   /**
@@ -1983,6 +2064,30 @@ class GPSManager {
   }
 
   /**
+   * $G?GST 水平定位误差 σ_h = √(σlat² + σlon²)（米），过期/无效返回 null。
+   * 芯片直出的 1σ 误差估计，accuracy 融合链的第一优先级来源（榨插件 P1）；
+   * 部分芯片常年报 0 → σ≤0 或越界（ACC_GST_MIN/MAX）都按无效处理。
+   */
+  get gstSigmaH() {
+    if (!this._lastGst) return null;
+    if (Date.now() - this._lastGst.receivedAt > CONFIG.NMEA_GST_MAX_AGE_MS) return null;
+    const a = this._lastGst.sigmaLat, b = this._lastGst.sigmaLng;
+    if (a == null || b == null || !(a > 0) || !(b > 0)) return null;
+    const s = Math.hypot(a, b);
+    return (s >= CONFIG.ACC_GST_MIN_M && s <= CONFIG.ACC_GST_MAX_M) ? s : null;
+  }
+
+  /**
+   * $G?GST 垂直定位误差 σalt（米），过期/无效返回 null（供海拔链后续接入）。
+   */
+  get gstSigmaAlt() {
+    if (!this._lastGst) return null;
+    if (Date.now() - this._lastGst.receivedAt > CONFIG.NMEA_GST_MAX_AGE_MS) return null;
+    const v = this._lastGst.sigmaAlt;
+    return (v != null && v > 0) ? v : null;
+  }
+
+  /**
    * 融合精度因子（3D Dilution of Precision 综合评估）。
    * PDOP = sqrt(HDOP² + VDOP²) 是三维几何精度的总度量，作为融合主值；
    * 缺失 PDOP 时用 sqrt(HDOP² + VDOP²) 兜底合成。
@@ -2275,9 +2380,10 @@ class GPSManager {
     const prev = this._diffHeadingPos;
     this._diffHeadingPos = { lat: pos.lat, lng: pos.lng };
 
-    // GPS 航向有效 且 非低速 → GPS 权威，清掉差分状态防遗留
+    // GPS 航向有效 且 非低速 → GPS 权威，清掉差分状态防遗留；同步刷新陀螺仪桥基线
     if (gpsHeadingValid && !isLowSpeed) {
       this._diffHeading = null;
+      this._setGyroHeadingBase(gpsHeading);
       return gpsHeading;
     }
 
@@ -2298,6 +2404,22 @@ class GPSManager {
         if (delta > 180) delta -= 360;
         if (delta < -180) delta += 360;
         this._diffHeading = (this._diffHeading + alpha * delta + 360) % 360;
+      }
+      // 差分航向产生可信值 → 刷新陀螺仪桥基线（榨插件 P5）
+      this._setGyroHeadingBase(this._diffHeading);
+    }
+    // 陀螺仪航向桥：位移差分不可用（无历史点或位移 < minM）且 GPS 航向缺失时，
+    // 用「最近权威航向 + 陀螺仪积分转角」短时保持（≤ IMU_HEADING_HOLD_MS）。
+    // 仅影响箭头显示（不回写入库），GPS 航向仍是权威；web 无 IMU → readHeadingDelta=null 跳过。
+    if (this._diffHeading == null && !isLowSpeed &&
+        C.GPS_GYRO_HEADING_HOLD !== false &&
+        this._gyroHeadingBase && this._imuManager &&
+        Date.now() - this._gyroHeadingBase.at <= (C.IMU_HEADING_HOLD_MS != null ? C.IMU_HEADING_HOLD_MS : 10000)) {
+      const gyroDeg = this._imuManager.readHeadingDelta();
+      if (gyroDeg != null) {
+        let bridge = (this._gyroHeadingBase.h + gyroDeg) % 360;
+        if (bridge < 0) bridge += 360;
+        return bridge;
       }
     }
     return this._diffHeading != null ? this._diffHeading : gpsHeading;
