@@ -73,6 +73,11 @@ export interface ImuSample {
    * 旧插件未下发时为 0，JS 侧退化为使用加速度自身时间戳（与旧行为等价）。
    */
   rotationTs: number;
+  /**
+   * 气压（hPa，榨插件 P3）：设备有气压计且已有读数时随样本携带下发。
+   * 无气压计设备 / 旧插件缺失该字段 → JS 侧静默降级（不做海拔趋势填充）。
+   */
+  pressure?: number;
   /** 传感器时间戳（nanosecond） */
   timestamp: number;
 }

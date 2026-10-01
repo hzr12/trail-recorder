@@ -50,6 +50,7 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
     private Sensor linearAccelSensor;
     private Sensor gyroSensor;
     private Sensor rotationSensor;
+    private Sensor pressureSensor;
 
     // 最近一次样本快照（线程安全，getLastImuSample 兜底）
     private final Object sampleLock = new Object();
@@ -68,6 +69,12 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
     // 避免加速度被旋转到"错误时刻的姿态"（方向 1：姿态-加速度时间对齐）。
     private long rotationTimestamp = 0;
 
+    // 气压计（榨插件 P3）：随样本流携带下发（pressure 字段，hPa）。
+    // 设备无气压计 → pressureSensor 为 null，不下发该字段，JS 侧静默缺席零回归。
+    private final Object pressureLock = new Object();
+    private float pressureValue = 0f;
+    private boolean pressureValid = false;
+
     @Override
     public void load() {
         super.load();
@@ -79,8 +86,11 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
                 gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
                 rotationSensor = Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2
                         ? sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR) : null;
+                // 气压计（榨插件 P3）：无该硬件时为 null，registerSensor 内部跳过，零回归
+                pressureSensor = sensorManager.getDefaultSensor(Sensor.TYPE_PRESSURE);
                 Log.d(TAG, "Plugin loaded. linearAccel=" + (linearAccelSensor != null)
-                        + ", gyro=" + (gyroSensor != null) + ", rotation=" + (rotationSensor != null));
+                        + ", gyro=" + (gyroSensor != null) + ", rotation=" + (rotationSensor != null)
+                        + ", pressure=" + (pressureSensor != null));
             }
         }
     }
@@ -112,6 +122,7 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
             registerSensor(linearAccelSensor);
             registerSensor(gyroSensor);
             registerSensor(rotationSensor);
+            registerSensor(pressureSensor); // 无气压计设备 sensor 为 null → 内部跳过
             Log.d(TAG, "IMU listening started (10Hz)");
             call.resolve();
         } catch (Exception e) {
@@ -161,6 +172,9 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
             case Sensor.TYPE_ROTATION_VECTOR:
                 handleRotation(event);
                 break;
+            case Sensor.TYPE_PRESSURE:
+                handlePressure(event);
+                break;
             default:
                 break;
         }
@@ -196,6 +210,15 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
         }
     }
 
+    /** 气压事件（榨插件 P3）：单值 hPa，随样本流携带下发 */
+    private void handlePressure(SensorEvent e) {
+        if (e.values == null || e.values.length < 1) return;
+        synchronized (pressureLock) {
+            pressureValue = e.values[0];
+            pressureValid = true;
+        }
+    }
+
     /**
      * 每次线性加速度到达时装配一份完整样本推送（约 10Hz）。
      * 陀螺仪/旋转向量可能晚于首次加速度到达，此时用最近缓存值。
@@ -219,6 +242,10 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
         obj.put("rotation", rot != null ? rotationToJSArray(rot) : new JSArray());
         // 姿态事件时间戳（纳秒，与 timestamp 同源时钟）；无姿态时为 0，JS 侧降级用 ts
         obj.put("rotationTs", rot != null ? rotationTimestamp : 0);
+        // 气压（榨插件 P3）：有气压计且已有读数才下发；字段缺失时 JS 侧视为无气压计
+        synchronized (pressureLock) {
+            if (pressureValid) obj.put("pressure", pressureValue);
+        }
         obj.put("timestamp", ts);
 
         synchronized (sampleLock) {
@@ -292,5 +319,6 @@ public class ImuSensorPlugin extends Plugin implements SensorEventListener {
         synchronized (rotationLock) { rotationValues = null; }
         accelTimestamp = 0;
         rotationTimestamp = 0;
+        synchronized (pressureLock) { pressureValid = false; pressureValue = 0f; }
     }
 }

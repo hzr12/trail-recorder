@@ -1703,6 +1703,9 @@ class GPSManager {
    */
   _imuShouldRun() {
     if (!this._imuManager || !this.isWatching || this._powerSaving) return false;
+    // 榨插件 P3：弱信号（隧道/峡谷，卫星数不足）不关 IMU——气压计趋势与 U 轴注入
+    // 正是此时最需要；卫星恢复后 _syncImuState 自然维持运行
+    if (this._weakSignal) return true;
     return this.gnssUsedCount > CONFIG.IMU_MIN_USED_SATS;
   }
 
@@ -2430,6 +2433,8 @@ class GPSManager {
    * 弱信号（GNSS 降级）时不再返回 null（旧逻辑会让海拔滤波链重置、曲线断崖），
    * 改为保持最近一次可信 GPS 海拔基准 _lastGoodAlt（由 IMU 垂直 U 轴持续注入推演），
    * 信号恢复后由 GPS 重新校正该基准，消除累积漂移（零基准仍由 GPS 持续掌控，绝不做纯积分）。
+   * 榨插件 P3：弱信号平坦保持升级为「基准 + 气压相对高差」趋势填充——隧道/峡谷爬坡
+   * 不再画平线；无气压计/气压超时自动回退平坦保持（零回归）。
    */
   _resolveAltitude(browserAltitude) {
     const corr = this.geoidCorrectionM; // null=放弃校正, 0=无基准不校, 数值=校正量
@@ -2437,13 +2442,19 @@ class GPSManager {
     let raw = gga != null ? gga : (browserAltitude != null ? browserAltitude : null);
     if (this._weakSignal) {
       // 弱信号：保持基准（无基准则真实 null，让滤波链重置，仍安全）
-      return this._lastGoodAlt != null ? this._lastGoodAlt : null;
+      if (this._lastGoodAlt == null) return null;
+      const baroDh = (CONFIG.ALT_BARO_ENABLED !== false && this._imuManager)
+        ? this._imuManager.getBaroRelAltitude() : null;
+      return baroDh != null ? this._lastGoodAlt + baroDh : this._lastGoodAlt;
     }
     if (raw == null) return null;
     // 校正：把椭球高换算到以本地 geoid 基准对齐的口径，跨口径（GGA↔browser）不跳变
     const resolved = corr == null ? raw : raw - corr;
-    // 记录可信基准（供弱信号保持；仅在非弱信号且有效时更新）
+    // 记录可信基准（供弱信号保持；仅在非弱信号且有效时更新）+ 重设气压锚点
     this._lastGoodAlt = resolved;
+    if (this._imuManager && typeof this._imuManager.markBaroAnchor === 'function') {
+      this._imuManager.markBaroAnchor();
+    }
     return resolved;
   }
 }

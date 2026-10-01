@@ -439,6 +439,37 @@ const testCode = `
   check('航向桥已接入 _resolveHeadingFallback', gmSrc.indexOf('GPS_GYRO_HEADING_HOLD') >= 0 && gmSrc.indexOf('readHeadingDelta') >= 0);
   check('stopWatching 重置航向桥基线', gmSrc.indexOf('this._gyroHeadingBase = null') >= 0);
 
+  console.log('=== 22. 气压计海拔趋势（榨插件 P3）===');
+  check('CONFIG.ALT_BARO_* 定义合理',
+    CONFIG.ALT_BARO_ENABLED === true && CONFIG.ALT_BARO_SCALE_H_M > 7000 &&
+    CONFIG.ALT_BARO_MAX_AGE_MS > 0 && CONFIG.ALT_BARO_MAX_DRIFT_M > 0);
+  const imuB = new ImuManager();
+  imuB._listening = true;
+  imuB.markBaroAnchor();
+  eq('无气压读数时锚点为空 → Δh=null', imuB.getBaroRelAltitude(), null);
+  // 采样 1000 hPa → 锚定 → 降到 995 hPa：Δh = −H·ln(995/1000) ≈ +42.3m（气压降→高度升，
+  // 取值需在 ±ALT_BARO_MAX_DRIFT_M 钳制内，压差过大场景由下一条钳制断言覆盖）
+  imuB._onSample({ ax: 0, ay: 0, az: 0, rotation: [1, 0, 0, 0], timestamp: 2000000000, pressure: 1000 });
+  imuB.markBaroAnchor();
+  check('锚点已建立（p=1000）', imuB._baroAnchor != null && Math.abs(imuB._baroAnchor.p - 1000) < 1e-9);
+  imuB._onSample({ ax: 0, ay: 0, az: 0, rotation: [1, 0, 0, 0], timestamp: 2000100000, pressure: 995 });
+  const dhB = imuB.getBaroRelAltitude();
+  const dhExp = -CONFIG.ALT_BARO_SCALE_H_M * Math.log(995 / 1000);
+  check('压高公式 Δh=−H·ln(p/p锚)', dhB != null && Math.abs(dhB - dhExp) < 1e-6, 'got ' + dhB + ' expected ' + dhExp);
+  imuB._onSample({ ax: 0, ay: 0, az: 0, rotation: [1, 0, 0, 0], timestamp: 2000200000, pressure: 900 });
+  check('粗差钳制 ±ALT_BARO_MAX_DRIFT_M', imuB.getBaroRelAltitude() != null &&
+    Math.abs(imuB.getBaroRelAltitude()) <= CONFIG.ALT_BARO_MAX_DRIFT_M + 1e-9, 'got ' + imuB.getBaroRelAltitude());
+  imuB._onSample({ ax: 0, ay: 0, az: 0, rotation: [1, 0, 0, 0], timestamp: 2000300000, pressure: 2000 });
+  check('2000hPa 越界读数不采纳（维持上一有效值）', imuB.getBaroRelAltitude() != null &&
+    Math.abs(imuB.getBaroRelAltitude()) <= CONFIG.ALT_BARO_MAX_DRIFT_M + 1e-9);
+  imuB._pressureAt = Date.now() - 60000;
+  eq('气压超时返回 null（回退平坦保持）', imuB.getBaroRelAltitude(), null);
+  imuB._listening = false;
+  eq('未监听返回 null（web 零回归）', imuB.getBaroRelAltitude(), null);
+  const gmSrc3 = __readGpsManager();
+  check('_resolveAltitude 已接气压趋势填充与锚点', gmSrc3.indexOf('getBaroRelAltitude') >= 0 && gmSrc3.indexOf('markBaroAnchor') >= 0);
+  check('_imuShouldRun 弱信号保持 IMU（隧道场景前提）', gmSrc3.indexOf('if (this._weakSignal) return true;') >= 0);
+
   console.log('\\n=== 结果: ' + pass + ' passed, ' + fail + ' failed ===');
   if (fail > 0) { console.log('失败项:'); failures.forEach(f => console.log('  - ' + f)); }
   globalThis.__result = { pass, fail, failures };

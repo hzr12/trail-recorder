@@ -67,6 +67,15 @@ class ImuManager {
     this._turnRateClamp = C.IMU_TURN_RATE_CLAMP != null ? C.IMU_TURN_RATE_CLAMP : 3.0;
     this._turnStaleMs = C.IMU_TURN_STALE_MS != null ? C.IMU_TURN_STALE_MS : 5000;
 
+    // 榨插件 P3：气压计通道（sample.pressure，hPa；旧插件/无气压计设备不下发 → 通道静默缺席）
+    // 压高公式相对高差：Δh = −H·ln(p/p锚)，锚点在每次可信 GPS 海拔处重设（零基准仍归 GPS）
+    this._pressureHpa = null;
+    this._pressureAt = 0;
+    this._baroAnchor = null;    // { p: hPa, at: ms }；弱信号填充的参考气压
+    this._baroScaleH = C.ALT_BARO_SCALE_H_M != null ? C.ALT_BARO_SCALE_H_M : 8434;
+    this._baroMaxAge = C.ALT_BARO_MAX_AGE_MS != null ? C.ALT_BARO_MAX_AGE_MS : 3000;
+    this._baroMaxDrift = C.ALT_BARO_MAX_DRIFT_M != null ? C.ALT_BARO_MAX_DRIFT_M : 50;
+
     // 姿态-加速度时间对齐——带时间戳的姿态环形缓冲
     // 姿态事件时间戳与加速度事件时间戳同源（Android sensor clock，纳秒）。
     this._rotBufMax = Math.max(4, C.IMU_ROT_BUF_MAX != null ? C.IMU_ROT_BUF_MAX : 32);
@@ -142,6 +151,10 @@ class ImuManager {
     this._turnDeltaDeg = 0;
     this._headingDeltaDeg = 0;
     this._lastTurnDrainAt = 0;
+    this._pressureHpa = null;
+    this._pressureAt = 0;
+    // 注意：_baroAnchor 故意不在这里清——卫星数波动会让 IMU 短暂启停，
+    // 锚点被下一次可信 GPS 海拔的 markBaroAnchor 不断刷新，跨会话首个好点即重锚
     this._rotBuf.length = 0;
     this._resetWindow();
   }
@@ -194,6 +207,39 @@ class ImuManager {
    */
   resetHeadingDelta() {
     this._headingDeltaDeg = 0;
+  }
+
+  /**
+   * 重设气压锚点（榨插件 P3）：GPSManager 每接受一次可信 GPS 海拔时调用，
+   * 快照当前气压为弱信号趋势填充的参考点（零基准持续归 GPS 校正）。
+   * 无当前气压（未采样/超时）→ 锚点置 null（下次好点再锚）。
+   */
+  markBaroAnchor() {
+    if (this._pressureHpa != null && this._pressureAt > 0 &&
+        Date.now() - this._pressureAt <= this._baroMaxAge) {
+      this._baroAnchor = { p: this._pressureHpa, at: Date.now() };
+    } else {
+      this._baroAnchor = null;
+    }
+  }
+
+  /**
+   * 气压相对高差（米，榨插件 P3）：自锚点以来的 Δh = −H·ln(p/p锚)。
+   * 弱信号海拔填充用：GPS 锁海拔时以「最后可信基准 + 本值」替代平坦保持。
+   * 未监听 / 无锚点 / 气压超时 → null（调用方回退平坦保持，零回归）；
+   * 结果按 ALT_BARO_MAX_DRIFT_M 绝对值限幅，防气压粗差/天气突变误填充。
+   * @returns {number|null}
+   */
+  getBaroRelAltitude() {
+    if (!this._listening || !this._baroAnchor) return null;
+    if (this._pressureHpa == null || this._pressureAt <= 0 ||
+        Date.now() - this._pressureAt > this._baroMaxAge) return null;
+    if (!(this._baroAnchor.p > 0) || !(this._pressureHpa > 0)) return null;
+    let dh = -this._baroScaleH * Math.log(this._pressureHpa / this._baroAnchor.p);
+    if (!isFinite(dh)) return null;
+    if (dh > this._baroMaxDrift) dh = this._baroMaxDrift;
+    else if (dh < -this._baroMaxDrift) dh = -this._baroMaxDrift;
+    return dh;
   }
 
   _resetWindow() {
@@ -280,6 +326,14 @@ class ImuManager {
           }
         }
       }
+    }
+
+    // 榨插件 P3：气压计通道——sample.pressure（hPa）随样本流携带更新。
+    // 300~1100 hPa 合理性门（地球表面范围），越界视为传感器粗差不采纳。
+    const pr = Number(sample.pressure);
+    if (isFinite(pr) && pr > 300 && pr < 1100) {
+      this._pressureHpa = pr;
+      this._pressureAt = Date.now();
     }
 
     const now = Date.now();

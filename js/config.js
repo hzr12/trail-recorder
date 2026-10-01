@@ -310,6 +310,12 @@ const CONFIG = {
   ALT_FILTER_ENABLED: true,           // 实时海拔融合总开关
   ALT_IMU_ENABLED: true,              // 海拔 IMU 融合（垂直加速度注入 CA 模型）总开关；web 无插件自动跳过
   ALT_IMU_TRUST: 0.5,                 // 垂直注入强度（0=纯 GPS，1=完全信任；U 轴依赖姿态四元数，默认比水平略保守）
+
+  // ----- 榨插件 P3：气压计海拔趋势（TYPE_PRESSURE，无传感器/无插件静默降级）-----
+  ALT_BARO_ENABLED: true,             // 总开关：弱信号海拔平坦保持改为「基准+气压相对高差」趋势填充
+  ALT_BARO_SCALE_H_M: 8434,           // 压高公式尺度高度 H（m，ISA 288.15K）：Δh = −H·ln(p/p₀)
+  ALT_BARO_MAX_AGE_MS: 3000,          // 气压读数新鲜度上限（超时不填充，防陈值）
+  ALT_BARO_MAX_DRIFT_M: 50,           // 单次填充相对高差绝对上限（防气压粗差/天气突变误填充）
   ALT_IMU_U_CLAMP_LEVELS: [           // 垂直注入 clamp 分级（垂直动作幅度通常大于水平，略微放宽）
     { maxSpeed: 1, clamp: 2.0 },
     { maxSpeed: 3, clamp: 4.0 },
